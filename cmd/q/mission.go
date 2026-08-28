@@ -6,9 +6,7 @@ import (
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/spf13/cobra"
 )
 
@@ -58,15 +56,15 @@ func buildMissionListSubcommand() *cobra.Command {
 				return writeJSONOut(cmd.OutOrStdout(), snap.Missions)
 			}
 
-			lanes := domain.Lanes
+			lanes := mission.Lanes
 
 			if lane != "" {
-				status, err := domain.ParseStatus(lane)
+				status, err := mission.ParseStatus(lane)
 				if err != nil {
 					return err
 				}
 
-				lanes = []domain.Status{status}
+				lanes = []mission.Status{status}
 			}
 
 			return renderBoard(cmd.OutOrStdout(), snap, lanes)
@@ -98,7 +96,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
-			parsedTool, err := domain.ParseTool(tool)
+			parsedTool, err := mission.ParseTool(tool)
 			if err != nil {
 				return err
 			}
@@ -108,8 +106,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
-			mission, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
-				OperationID: domain.OperationID(operation),
+			ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
+				OperationID: mission.OperationID(operation),
 				Name:        args[0],
 				Prompt:      prompt,
 				Tool:        parsedTool,
@@ -120,7 +118,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", mission.ID)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", ms.ID)
 
 			return err
 		},
@@ -128,7 +126,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&operation, "operation", "", "Operation id this mission belongs to (required)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "What the agent should do (required)")
-	cmd.Flags().StringVar(&tool, "tool", string(domain.ToolClaude), "Agent to run: claude or codex")
+	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude or codex")
 	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude only)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
 
@@ -162,12 +160,12 @@ func buildMissionMoveSubcommand() *cobra.Command {
 				return err
 			}
 
-			status, err := domain.ParseStatus(args[1])
+			status, err := mission.ParseStatus(args[1])
 			if err != nil {
 				return err
 			}
 
-			mission, err := c.SetStatus(cmd.Context(), domain.MissionID(args[0]), api.SetStatusRequest{
+			ms, err := c.SetStatus(cmd.Context(), mission.MissionID(args[0]), api.SetStatusRequest{
 				To:      status,
 				Message: message,
 				Force:   force,
@@ -176,10 +174,10 @@ func buildMissionMoveSubcommand() *cobra.Command {
 				return err
 			}
 
-			if mission.Status == domain.StatusClosed {
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is done; resources reclaimed\n", mission.Name)
+			if ms.Status == mission.StatusClosed {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is done; resources reclaimed\n", ms.Name)
 			} else {
-				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is now %s\n", mission.Name, mission.Status.Label())
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is now %s\n", ms.Name, ms.Status.Label())
 			}
 
 			return err
@@ -215,7 +213,7 @@ func buildMissionRemoveSubcommand() *cobra.Command {
 				return err
 			}
 
-			id := domain.MissionID(args[0])
+			id := mission.MissionID(args[0])
 
 			if dryRun {
 				plan, err := c.DeletePlan(cmd.Context(), id)
@@ -242,7 +240,7 @@ func buildMissionRemoveSubcommand() *cobra.Command {
 }
 
 // renderDeletePlan prints what deleting a mission would discard.
-func renderDeletePlan(out io.Writer, plan launch.Plan) error {
+func renderDeletePlan(out io.Writer, plan mission.Plan) error {
 	rep := newReport()
 
 	if plan.SessionAlive {
@@ -270,7 +268,7 @@ func renderDeletePlan(out io.Writer, plan launch.Plan) error {
 }
 
 // planDetail explains one repo's disposition.
-func planDetail(repo launch.RepoDisposition) string {
+func planDetail(repo mission.RepoDisposition) string {
 	parts := make([]string, 0, 3)
 
 	if repo.Dirty {
@@ -297,7 +295,7 @@ func planDetail(repo launch.RepoDisposition) string {
 }
 
 // renderDeleteReport prints what a delete actually did.
-func renderDeleteReport(out io.Writer, report launch.Report) error {
+func renderDeleteReport(out io.Writer, report mission.Report) error {
 	rep := newReport()
 
 	for _, path := range report.Removed {
@@ -328,8 +326,8 @@ func renderDeleteReport(out io.Writer, report launch.Report) error {
 
 // renderBoard prints missions grouped by lane, which is the terminal equivalent of
 // the board and the quickest way to watch status transitions land.
-func renderBoard(out io.Writer, snap state.Snapshot, lanes []domain.Status) error {
-	operations := make(map[domain.OperationID]string, len(snap.Operations))
+func renderBoard(out io.Writer, snap mission.Snapshot, lanes []mission.Status) error {
+	operations := make(map[mission.OperationID]string, len(snap.Operations))
 	for _, t := range snap.Operations {
 		operations[t.ID] = t.Name
 	}
@@ -344,9 +342,9 @@ func renderBoard(out io.Writer, snap state.Snapshot, lanes []domain.Status) erro
 
 		rep.line("%s (%d)", strings.ToUpper(lane.Label()), len(missions))
 
-		for _, mission := range missions {
+		for _, ms := range missions {
 			rep.row("  %s\t%s\t%s\t%s\t%s",
-				mission.ID, mission.Name, mission.Tool, operations[mission.OperationID], missionDetail(mission))
+				ms.ID, ms.Name, ms.Tool, operations[ms.OperationID], missionDetail(ms))
 		}
 
 		rep.line("")
@@ -362,22 +360,22 @@ func renderBoard(out io.Writer, snap state.Snapshot, lanes []domain.Status) erro
 }
 
 // missionDetail summarizes what a card would show beneath its title.
-func missionDetail(mission domain.Mission) string {
+func missionDetail(ms mission.Mission) string {
 	parts := make([]string, 0, 4)
 
-	if mission.PlanMode {
+	if ms.PlanMode {
 		parts = append(parts, "plan")
 	}
 
-	if mission.AgentState != "" && mission.AgentState != domain.AgentUnknown {
-		parts = append(parts, mission.AgentState.String())
+	if ms.AgentState != "" && ms.AgentState != mission.AgentUnknown {
+		parts = append(parts, ms.AgentState.String())
 	}
 
-	if mission.WaitingFor != "" {
-		parts = append(parts, mission.WaitingFor)
+	if ms.WaitingFor != "" {
+		parts = append(parts, ms.WaitingFor)
 	}
 
-	for _, b := range mission.Badges {
+	for _, b := range ms.Badges {
 		if b.Detail != "" {
 			parts = append(parts, b.Kind+":"+b.Detail)
 
@@ -387,8 +385,8 @@ func missionDetail(mission domain.Mission) string {
 		parts = append(parts, b.Kind)
 	}
 
-	if mission.LaunchError != "" {
-		parts = append(parts, "launch failed: "+firstLine(mission.LaunchError))
+	if ms.LaunchError != "" {
+		parts = append(parts, "launch failed: "+firstLine(ms.LaunchError))
 	}
 
 	return strings.Join(parts, " · ")

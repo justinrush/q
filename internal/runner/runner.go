@@ -18,7 +18,7 @@ import (
 )
 
 // Spec describes one process to run. Name must be an absolute path; resolve it
-// with the binpath package rather than relying on the inherited PATH.
+// at process start rather than relying on the inherited PATH.
 type Spec struct {
 	// Name is the absolute path to the executable.
 	Name string

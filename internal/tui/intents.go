@@ -6,8 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
+	"github.com/justinrush/q/internal/mission"
 )
 
 // handleIntent turns a view's intent into a dialog or a daemon call.
@@ -26,7 +25,7 @@ func (a *App) handleIntent(msg tea.Msg) tea.Cmd {
 func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 	switch m := msg.(type) {
 	case newMissionMsg:
-		a.showMissionForm(domain.Mission{})
+		a.showMissionForm(mission.Mission{})
 
 		return nil, true
 	case editMissionMsg:
@@ -74,7 +73,7 @@ func (a *App) handleOperationIntent(msg tea.Msg) tea.Cmd {
 	case setFilterMsg:
 		a.board.SetFilter(m.OperationID)
 	case newOperationMsg:
-		return a.showOperationForm(domain.Operation{})
+		return a.showOperationForm(mission.Operation{})
 	case editOperationMsg:
 		return a.showOperationForm(m.Operation)
 	case deleteOperationMsg:
@@ -90,12 +89,12 @@ func (a *App) handleOperationIntent(msg tea.Msg) tea.Cmd {
 }
 
 // showMissionForm opens the mission editor.
-func (a *App) showMissionForm(mission domain.Mission) {
-	a.modal = newMissionForm(mission, a.snapshot.Operations, a.currentOperationID(), a.opts)
+func (a *App) showMissionForm(ms mission.Mission) {
+	a.modal = newMissionForm(ms, a.snapshot.Operations, a.currentOperationID(), a.opts)
 }
 
 // showOperationForm opens the operation editor.
-func (a *App) showOperationForm(operation domain.Operation) tea.Cmd {
+func (a *App) showOperationForm(operation mission.Operation) tea.Cmd {
 	a.modal = newOperationForm(operation, a.opts)
 
 	return nil
@@ -124,16 +123,16 @@ func (a *App) handleOperationSubmit(msg submitOperationMsg) tea.Cmd {
 // The question is asked first rather than after, because deleting a mission removes real
 // worktrees and can throw away an agent's uncommitted work. A dialog that only says "are
 // you sure" gives the human nothing to be sure about.
-func (a *App) confirmDeleteMission(mission domain.Mission) tea.Cmd {
-	if !mission.Launched() {
+func (a *App) confirmDeleteMission(ms mission.Mission) tea.Cmd {
+	if !ms.Launched() {
 		// A mission still in briefing provisioned nothing, so there is nothing to enumerate.
-		a.modal = newConfirm("Delete mission", fmt.Sprintf("Delete %q?\n\nIt was never launched.", mission.Name),
-			"delete", true, a.deleteMissionCmd(mission, false))
+		a.modal = newConfirm("Delete mission", fmt.Sprintf("Delete %q?\n\nIt was never launched.", ms.Name),
+			"delete", true, a.deleteMissionCmd(ms, false))
 
 		return nil
 	}
 
-	return a.fetchDeletePlan(mission)
+	return a.fetchDeletePlan(ms)
 }
 
 // showDeleteConfirm presents what deleting a mission would discard.
@@ -174,7 +173,7 @@ func (a *App) showDeleteConfirm(msg deletePlanMsg) {
 // uncommitted changes or leaving an unpushed branch behind.
 func (a *App) handleFinishPlan(msg finishPlanMsg) tea.Cmd {
 	if !msg.Plan.NeedsForce && len(msg.Plan.KeptBranches) == 0 {
-		return a.setStatus(msg.Mission.ID, domain.StatusClosed, "")
+		return a.setStatus(msg.Mission.ID, mission.StatusClosed, "")
 	}
 
 	lines := []string{fmt.Sprintf("Finish %q?", msg.Mission.Name)}
@@ -192,19 +191,19 @@ func (a *App) handleFinishPlan(msg finishPlanMsg) tea.Cmd {
 	}
 
 	a.modal = newConfirm("Finish mission", strings.Join(lines, "\n"), confirm, true,
-		a.setStatusForce(msg.Mission.ID, domain.StatusClosed, "", msg.Plan.NeedsForce))
+		a.setStatusForce(msg.Mission.ID, mission.StatusClosed, "", msg.Plan.NeedsForce))
 
 	return nil
 }
 
 // describeDisposition renders one repo's fate in the delete dialog.
-func describeDisposition(repo launch.RepoDisposition) string {
+func describeDisposition(repo mission.RepoDisposition) string {
 	switch repo.Action {
-	case launch.ActionNeedsForce:
+	case mission.ActionNeedsForce:
 		return fmt.Sprintf("%s  uncommitted changes will be discarded", repo.Repo)
-	case launch.ActionKeepBranch:
+	case mission.ActionKeepBranch:
 		return fmt.Sprintf("%s  %d commit(s), branch %s kept", repo.Repo, repo.Ahead, repo.Branch)
-	case launch.ActionUnavailable:
+	case mission.ActionUnavailable:
 		return fmt.Sprintf("%s  cannot be inspected: %s", repo.Repo, repo.Reason)
 	default:
 		return fmt.Sprintf("%s  nothing to lose", repo.Repo)
@@ -212,7 +211,7 @@ func describeDisposition(repo launch.RepoDisposition) string {
 }
 
 // confirmDeleteOperation asks before deleting an operation and its missions.
-func (a *App) confirmDeleteOperation(operation domain.Operation) tea.Cmd {
+func (a *App) confirmDeleteOperation(operation mission.Operation) tea.Cmd {
 	active := a.snapshot.ActiveMissionsForOperation(operation.ID)
 	total := a.snapshot.MissionsForOperation(operation.ID)
 
@@ -234,30 +233,30 @@ func (a *App) confirmDeleteOperation(operation domain.Operation) tea.Cmd {
 }
 
 // handleTogglePlan flips plan mode, explaining when it cannot be flipped.
-func (a *App) handleTogglePlan(mission domain.Mission) tea.Cmd {
-	if mission.Launched() {
+func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
+	if ms.Launched() {
 		return emit(toastMsg{
 			text: "plan mode is fixed once a mission has launched",
 			err:  true,
 		})
 	}
 
-	if !mission.Tool.SupportsPlanMode() {
+	if !ms.Tool.SupportsPlanMode() {
 		return emit(toastMsg{
-			text: mission.Tool.String() + " has no plan mode",
+			text: ms.Tool.String() + " has no plan mode",
 			err:  true,
 		})
 	}
 
-	return a.setPlanMode(mission, !mission.PlanMode)
+	return a.setPlanMode(ms, !ms.PlanMode)
 }
 
 // handleReorder computes the mission's new position and sends it.
 func (a *App) handleReorder(msg reorderMsg) tea.Cmd {
 	missions := a.snapshot.MissionsInLane(msg.Mission.Status)
 
-	for i, mission := range missions {
-		if mission.ID != msg.Mission.ID {
+	for i, ms := range missions {
+		if ms.ID != msg.Mission.ID {
 			continue
 		}
 
@@ -277,26 +276,26 @@ func (a *App) handleReorder(msg reorderMsg) tea.Cmd {
 //
 // An empty answer is allowed and means "just move the card", which is why the prompt
 // says so: sometimes the lane is wrong and the agent needs nothing.
-func (a *App) showResumePrompt(mission domain.Mission) {
+func (a *App) showResumePrompt(ms mission.Mission) {
 	hint := "sent to the live session; leave empty to only move the card"
-	if mission.AgentState == domain.AgentDead {
+	if ms.AgentState == mission.AgentDead {
 		hint = "the session has ended, so this restarts the agent and resumes the conversation"
 	}
 
-	a.modal = newPrompt("Back to work: "+mission.Name, hint, "", true, true, func(text string) tea.Cmd {
+	a.modal = newPrompt("Back to work: "+ms.Name, hint, "", true, true, func(text string) tea.Cmd {
 		if strings.TrimSpace(text) == "" {
-			return a.setStatus(mission.ID, domain.StatusActive, "")
+			return a.setStatus(ms.ID, mission.StatusActive, "")
 		}
 
-		return a.messageAgentCmd(mission.ID, text)
+		return a.messageAgentCmd(ms.ID, text)
 	})
 }
 
 // showMessagePrompt asks for text to send to a live agent.
-func (a *App) showMessagePrompt(mission domain.Mission) tea.Cmd {
-	a.modal = newPrompt("Message "+mission.Name, "delivered to the agent's live session", "", true, false,
+func (a *App) showMessagePrompt(ms mission.Mission) tea.Cmd {
+	a.modal = newPrompt("Message "+ms.Name, "delivered to the agent's live session", "", true, false,
 		func(text string) tea.Cmd {
-			return a.messageAgentCmd(mission.ID, text)
+			return a.messageAgentCmd(ms.ID, text)
 		})
 
 	return nil
@@ -306,28 +305,28 @@ func (a *App) showMessagePrompt(mission domain.Mission) tea.Cmd {
 //
 // Stepping a card lane by lane with H and L is fine for one hop and tedious for two, and
 // this is also the only way to reach a non-adjacent lane in a single decision.
-func (a *App) showStatusMenu(mission domain.Mission) tea.Cmd {
-	items := make([]listItem, 0, len(domain.Lanes))
+func (a *App) showStatusMenu(ms mission.Mission) tea.Cmd {
+	items := make([]listItem, 0, len(mission.Lanes))
 
-	for _, lane := range domain.Lanes {
+	for _, lane := range mission.Lanes {
 		item := listItem{Key: string(lane), Label: lane.Label()}
 
 		switch {
-		case lane == mission.Status:
+		case lane == ms.Status:
 			item.Detail = "current"
-		case lane == domain.StatusActive && mission.Launched():
+		case lane == mission.StatusActive && ms.Launched():
 			item.Detail = "resumes the agent"
-		case lane == domain.StatusActive:
+		case lane == mission.StatusActive:
 			item.Detail = "launches the agent"
-		case lane == domain.StatusClosed && mission.Launched():
+		case lane == mission.StatusClosed && ms.Launched():
 			item.Detail = "stops agent and reclaims worktrees"
 		}
 
 		items = append(items, item)
 	}
 
-	a.modal = newList("Move "+mission.Name, "pick a lane", items, func(picked string) tea.Cmd {
-		return a.moveToLane(mission, domain.Status(picked))
+	a.modal = newList("Move "+ms.Name, "pick a lane", items, func(picked string) tea.Cmd {
+		return a.moveToLane(ms, mission.Status(picked))
 	})
 
 	return nil
@@ -335,24 +334,24 @@ func (a *App) showStatusMenu(mission domain.Mission) tea.Cmd {
 
 // moveToLane moves a mission to a chosen lane, taking the same route a lane-by-lane move
 // would so the two cannot behave differently.
-func (a *App) moveToLane(mission domain.Mission, to domain.Status) tea.Cmd {
-	if to == mission.Status {
+func (a *App) moveToLane(ms mission.Mission, to mission.Status) tea.Cmd {
+	if to == ms.Status {
 		return nil
 	}
 
 	// Follow the card, so the selection lands on it wherever it went.
-	a.board.Follow(mission.ID)
+	a.board.Follow(ms.ID)
 
 	// Putting a launched mission back to work resumes an agent, which needs a message.
-	if to == domain.StatusActive && mission.Launched() {
-		return emit(resumePromptMsg{Mission: mission})
+	if to == mission.StatusActive && ms.Launched() {
+		return emit(resumePromptMsg{Mission: ms})
 	}
 
-	if to == domain.StatusClosed && mission.Launched() {
-		return a.fetchFinishPlan(mission)
+	if to == mission.StatusClosed && ms.Launched() {
+		return a.fetchFinishPlan(ms)
 	}
 
-	return a.setStatus(mission.ID, to, "")
+	return a.setStatus(ms.ID, to, "")
 }
 
 // showOperationFilter offers the board's operation filter.
@@ -372,7 +371,7 @@ func (a *App) showOperationFilter() tea.Cmd {
 	}
 
 	a.modal = newList("Filter board", "show only one operation", items, func(picked string) tea.Cmd {
-		return emit(setFilterMsg{OperationID: domain.OperationID(picked)})
+		return emit(setFilterMsg{OperationID: mission.OperationID(picked)})
 	})
 
 	return nil

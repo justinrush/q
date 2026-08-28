@@ -7,20 +7,20 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/styles"
 )
 
 // submitMissionMsg carries a completed mission form.
 type submitMissionMsg struct {
 	// ID is empty when creating.
-	ID          domain.MissionID
+	ID          mission.MissionID
 	Name        string
 	Prompt      string
-	Tool        domain.Tool
+	Tool        mission.Tool
 	PlanMode    bool
-	OperationID domain.OperationID
-	ExtraRepos  []domain.Repo
+	OperationID mission.OperationID
+	ExtraRepos  []mission.Repo
 	// Launch requests that the mission be started immediately after saving.
 	Launch bool
 }
@@ -28,22 +28,22 @@ type submitMissionMsg struct {
 // submitOperationMsg carries a completed operation form.
 type submitOperationMsg struct {
 	// ID is empty when creating.
-	ID      domain.OperationID
+	ID      mission.OperationID
 	Name    string
 	Summary string
-	Repos   []domain.Repo
+	Repos   []mission.Repo
 }
 
 // missionForm creates or edits a mission.
 type missionForm struct {
-	id         domain.MissionID
-	operations []domain.Operation
+	id         mission.MissionID
+	operations []mission.Operation
 
 	name   *textArea
 	prompt *textArea
 	repos  *repoField
 
-	tool         domain.Tool
+	tool         mission.Tool
 	planMode     bool
 	operationIdx int
 	field        int
@@ -67,24 +67,24 @@ const (
 )
 
 // newMissionForm builds a mission form. Pass the zero mission to create.
-func newMissionForm(mission domain.Mission, operations []domain.Operation, defaultOperation domain.OperationID, opts Options) *missionForm {
+func newMissionForm(ms mission.Mission, operations []mission.Operation, defaultOperation mission.OperationID, opts Options) *missionForm {
 	form := &missionForm{
-		id:          mission.ID,
+		id:          ms.ID,
 		operations:  operations,
-		name:        newTextArea(mission.Name, false),
-		prompt:      newTextArea(mission.Prompt, true),
-		repos:       newRepoField(mission.ExtraRepos, opts.Repos),
-		tool:        mission.Tool,
-		planMode:    mission.PlanMode,
-		launched:    mission.Launched(),
-		reposLocked: mission.Status != "" && mission.Status != domain.StatusBriefing,
+		name:        newTextArea(ms.Name, false),
+		prompt:      newTextArea(ms.Prompt, true),
+		repos:       newRepoField(ms.ExtraRepos, opts.Repos),
+		tool:        ms.Tool,
+		planMode:    ms.PlanMode,
+		launched:    ms.Launched(),
+		reposLocked: ms.Status != "" && ms.Status != mission.StatusBriefing,
 	}
 
 	if form.tool == "" {
 		form.tool = opts.DefaultTool
 	}
 
-	wanted := mission.OperationID
+	wanted := ms.OperationID
 	if wanted == "" {
 		wanted = defaultOperation
 	}
@@ -201,11 +201,7 @@ func (f *missionForm) cycleTool(keyName string) {
 
 	switch keyName {
 	case keyLeft, keyVimLeft, keyRight, keyVimRight, keyUp, keyVimUp, keyDown, keyVimDown, keySpace:
-		if f.tool == domain.ToolClaude {
-			f.tool = domain.ToolCodex
-		} else {
-			f.tool = domain.ToolClaude
-		}
+		f.tool = f.tool.Next()
 	}
 }
 
@@ -360,7 +356,7 @@ func (f *missionForm) planValue() string {
 
 // operationForm creates or edits an operation.
 type operationForm struct {
-	id domain.OperationID
+	id mission.OperationID
 
 	name    *textArea
 	summary *textArea
@@ -378,7 +374,7 @@ const (
 )
 
 // newOperationForm builds an operation form. Pass the zero operation to create.
-func newOperationForm(operation domain.Operation, opts Options) *operationForm {
+func newOperationForm(operation mission.Operation, opts Options) *operationForm {
 	form := &operationForm{
 		id:      operation.ID,
 		name:    newTextArea(operation.Name, false),

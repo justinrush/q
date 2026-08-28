@@ -9,10 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/justinrush/q/internal/gadgets"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/runner"
-	"github.com/justinrush/q/internal/settings"
 	"github.com/spf13/cobra"
 )
 
@@ -21,11 +19,11 @@ const versionFlag = "--version"
 
 // versionArgs are the arguments used to ask each tool its version. Tools absent
 // from this map are only checked for presence.
-var versionArgs = map[gadgets.Tool][]string{
-	gadgets.Git:    {versionFlag},
-	gadgets.Tmux:   {"-V"},
-	gadgets.Claude: {versionFlag},
-	gadgets.Codex:  {versionFlag},
+var versionArgs = map[toolName][]string{
+	toolGit:    {versionFlag},
+	toolTmux:   {"-V"},
+	toolClaude: {versionFlag},
+	toolCodex:  {versionFlag},
 }
 
 // envWarnings are environment variables that silently degrade q. Each is
@@ -147,7 +145,7 @@ func reportConfig(rep *report) {
 func reportEditor(rep *report) {
 	command := cfg.Editor.Command
 	if len(command) == 0 {
-		command = settings.DefaultEditorCommand()
+		command = defaultEditorCommand()
 	}
 
 	path, err := exec.LookPath(command[0])
@@ -165,10 +163,10 @@ func reportEditor(rep *report) {
 func reportTools(ctx context.Context, rep *report) {
 	rep.line("tools")
 
-	res := gadgets.New(gadgets.From(cfg))
+	res := newToolResolver(toolOptionsFor(cfg))
 	run := runner.OS{}
 
-	for _, tool := range gadgets.All {
+	for _, tool := range allTools {
 		path, err := res.Path(tool)
 		if err != nil {
 			rep.row("  %s\tMISSING\t%v", tool, err)
@@ -178,14 +176,14 @@ func reportTools(ctx context.Context, rep *report) {
 
 		rep.row("  %s\t%s\t%s", tool, path, toolVersion(ctx, run, tool, path))
 
-		if tool == gadgets.Codex {
+		if tool == toolCodex {
 			reportCodexAppServer(ctx, rep, run, path)
 		}
 	}
 
 	reportEditor(rep)
 
-	if cfg.Terminal.Mode == settings.TerminalGhostty {
+	if cfg.Terminal.Mode == terminalGhostty {
 		reportGhostty(rep)
 	}
 
@@ -209,7 +207,7 @@ func reportCodexAppServer(ctx context.Context, rep *report, run runner.Runner, p
 }
 
 // toolVersion asks a tool its version, returning a short single-line answer.
-func toolVersion(ctx context.Context, run runner.Runner, tool gadgets.Tool, path string) string {
+func toolVersion(ctx context.Context, run runner.Runner, tool toolName, path string) string {
 	args, ok := versionArgs[tool]
 	if !ok {
 		return ""
@@ -230,14 +228,14 @@ func toolVersion(ctx context.Context, run runner.Runner, tool gadgets.Tool, path
 
 // reportGhostty checks for the app bundle q controls in Ghostty terminal mode.
 func reportGhostty(rep *report) {
-	if fi, err := os.Stat(gadgets.GhosttyApp); err == nil && fi.IsDir() {
-		rep.row("  ghostty\t%s\t1.3+ required", gadgets.GhosttyApp)
+	if fi, err := os.Stat(ghosttyApp); err == nil && fi.IsDir() {
+		rep.row("  ghostty\t%s\t1.3+ required", ghosttyApp)
 
 		return
 	}
 
 	rep.row("  ghostty\tMISSING\t%s not found; install Ghostty 1.3 or newer",
-		gadgets.GhosttyApp)
+		ghosttyApp)
 }
 
 // reportDirs prints where q stores its data, creating anything absent.

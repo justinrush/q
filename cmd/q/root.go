@@ -5,8 +5,6 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-
-	"github.com/justinrush/q/internal/buildinfo"
 )
 
 // BuildRootCommand assembles the q command tree.
@@ -24,7 +22,7 @@ func BuildRootCommand() *cobra.Command {
 		Args:              cobra.NoArgs,
 		SilenceErrors:     true,
 		SilenceUsage:      true,
-		Version:           buildinfo.String(),
+		Version:           versionString(),
 		PersistentPreRunE: applyConfig,
 		RunE:              runTUI,
 	}

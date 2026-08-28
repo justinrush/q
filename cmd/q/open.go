@@ -6,8 +6,7 @@ import (
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/debrief"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +43,7 @@ func buildOpenSubcommand() *cobra.Command {
 				mode = api.DebriefSteal
 			}
 
-			result, err := c.OpenDebrief(cmd.Context(), domain.MissionID(args[0]), mode)
+			result, err := c.OpenDebrief(cmd.Context(), mission.MissionID(args[0]), mode)
 			if err != nil {
 				return err
 			}
@@ -61,7 +60,7 @@ func buildOpenSubcommand() *cobra.Command {
 }
 
 // renderOpenResult explains what opening the debrief did.
-func renderOpenResult(out io.Writer, result debrief.Result) error {
+func renderOpenResult(out io.Writer, result api.Result) error {
 	rep := newReport()
 
 	rep.line("session  %s", result.Session)
@@ -105,7 +104,7 @@ func renderOpenResult(out io.Writer, result debrief.Result) error {
 }
 
 // describeTouched summarizes one repo's changes.
-func describeTouched(item debrief.Touched) string {
+func describeTouched(item api.Touched) string {
 	parts := make([]string, 0, 3)
 
 	if item.Ahead > 0 {

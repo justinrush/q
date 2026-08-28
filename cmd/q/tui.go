@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/justinrush/q/internal/client"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/repofind"
 	"github.com/justinrush/q/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -37,7 +37,7 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 	defer restore()
 
-	c, err := client.Ensure(cmd.Context(), dirs)
+	c, err := api.Ensure(cmd.Context(), dirs)
 	if err != nil {
 		return err
 	}
@@ -80,11 +80,11 @@ func redirectLogging(cmd *cobra.Command, dirs paths.Dirs) (func(), error) {
 // talks to the daemon for everything else.
 func tuiOptions() tui.Options {
 	return tui.Options{
-		Repos: repofind.Options{
+		Repos: git.ScanOptions{
 			Roots:    cfg.Repos.Roots,
 			MaxDepth: cfg.Repos.MaxDepth,
 			Skip:     cfg.Repos.Skip,
 		},
-		DefaultTool: domain.Tool(cfg.Agents.Default),
+		DefaultTool: mission.Tool(cfg.Agents.Default),
 	}
 }

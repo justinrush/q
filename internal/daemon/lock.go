@@ -43,15 +43,6 @@ func AcquireLock(path string) (*Lock, error) {
 	return &Lock{f: f}, nil
 }
 
-// processAlive reports whether a pid exists.
-//
-// Signal 0 runs the kernel's permission and existence checks without delivering
-// anything, which is the cheapest liveness probe available for a process we do
-// not own.
-func processAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
-}
-
 // Release unlocks and closes the lock file. The file itself is left in place;
 // its existence carries no meaning, only the lock does.
 func (l *Lock) Release() error {

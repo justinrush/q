@@ -1,16 +1,19 @@
-// Package api holds the request and response types exchanged between the q
-// daemon and its clients.
+// Package api is q's daemon protocol: the request and response types, the
+// rendezvous handle that says where a daemon is listening, and the client that
+// speaks to one.
 //
-// It exists as its own package so the HTTP client does not have to import the
-// daemon: the TUI, the CLI subcommands, and the hook bridge all speak this
-// vocabulary without pulling in a server.
+// Both ends of the protocol live here so an endpoint's request type, the client
+// method that sends it, and the handler that answers it stay in sight of one
+// another. The server half lives with the service it exposes, in
+// internal/daemon, because it is that service's transport rather than a thing
+// of its own.
 package api
 
 import (
 	"encoding/json"
 	"time"
 
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 )
 
 // ClientHeader must be present on every request.
@@ -49,41 +52,41 @@ type Error struct {
 
 // CreateOperationRequest creates an operation.
 type CreateOperationRequest struct {
-	Name    string        `json:"name"`
-	Summary string        `json:"summary"`
-	Repos   []domain.Repo `json:"repos,omitempty"`
+	Name    string         `json:"name"`
+	Summary string         `json:"summary"`
+	Repos   []mission.Repo `json:"repos,omitempty"`
 }
 
 // UpdateOperationRequest patches an operation. Nil fields are left unchanged, which is
 // what lets the TUI send only what the user edited.
 type UpdateOperationRequest struct {
-	Name     *string        `json:"name,omitempty"`
-	Summary  *string        `json:"summary,omitempty"`
-	Repos    *[]domain.Repo `json:"repos,omitempty"`
-	ColorIdx *int           `json:"colorIdx,omitempty"`
-	Archived *bool          `json:"archived,omitempty"`
+	Name     *string         `json:"name,omitempty"`
+	Summary  *string         `json:"summary,omitempty"`
+	Repos    *[]mission.Repo `json:"repos,omitempty"`
+	ColorIdx *int            `json:"colorIdx,omitempty"`
+	Archived *bool           `json:"archived,omitempty"`
 }
 
 // CreateMissionRequest creates a mission. New missions always land in the draft lane;
 // launching is a separate, explicit action.
 type CreateMissionRequest struct {
-	OperationID domain.OperationID `json:"operationId"`
-	Name        string             `json:"name"`
-	Prompt      string             `json:"prompt"`
-	Tool        domain.Tool        `json:"tool"`
-	PlanMode    bool               `json:"planMode"`
-	ExtraRepos  []domain.Repo      `json:"extraRepos,omitempty"`
+	OperationID mission.OperationID `json:"operationId"`
+	Name        string              `json:"name"`
+	Prompt      string              `json:"prompt"`
+	Tool        mission.Tool        `json:"tool"`
+	PlanMode    bool                `json:"planMode"`
+	ExtraRepos  []mission.Repo      `json:"extraRepos,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
 type UpdateMissionRequest struct {
-	Name        *string             `json:"name,omitempty"`
-	Prompt      *string             `json:"prompt,omitempty"`
-	Tool        *domain.Tool        `json:"tool,omitempty"`
-	PlanMode    *bool               `json:"planMode,omitempty"`
-	OperationID *domain.OperationID `json:"operationId,omitempty"`
-	ExtraRepos  *[]domain.Repo      `json:"extraRepos,omitempty"`
-	Order       *int                `json:"order,omitempty"`
+	Name        *string              `json:"name,omitempty"`
+	Prompt      *string              `json:"prompt,omitempty"`
+	Tool        *mission.Tool        `json:"tool,omitempty"`
+	PlanMode    *bool                `json:"planMode,omitempty"`
+	OperationID *mission.OperationID `json:"operationId,omitempty"`
+	ExtraRepos  *[]mission.Repo      `json:"extraRepos,omitempty"`
+	Order       *int                 `json:"order,omitempty"`
 }
 
 // SetStatusRequest moves a mission between lanes.
@@ -92,8 +95,8 @@ type UpdateMissionRequest struct {
 // active from a waiting or debrief lane delivers Message to the live session, if
 // one is supplied. Moving to closed reclaims the live session and worktrees first.
 type SetStatusRequest struct {
-	To      domain.Status `json:"to"`
-	Message string        `json:"message,omitempty"`
+	To      mission.Status `json:"to"`
+	Message string         `json:"message,omitempty"`
 	// Force permits finishing to discard uncommitted work. Other lane moves
 	// ignore it.
 	Force bool `json:"force,omitempty"`
@@ -131,7 +134,7 @@ type DiscoverReposRequest struct {
 
 // DiscoverReposResponse lists candidate repositories.
 type DiscoverReposResponse struct {
-	Repos []domain.Repo `json:"repos"`
+	Repos []mission.Repo `json:"repos"`
 }
 
 // HookRequest reports one agent hook event.
@@ -140,10 +143,10 @@ type DiscoverReposResponse struct {
 // knows it exactly: q put it in the session environment at launch. SessionID
 // and CWD are fallbacks for the cases where that environment did not survive.
 type HookRequest struct {
-	Tool  domain.Tool `json:"tool"`
-	Event string      `json:"event"`
+	Tool  mission.Tool `json:"tool"`
+	Event string       `json:"event"`
 	// MissionID comes from the hook's environment and is the primary identity.
-	MissionID domain.MissionID `json:"missionId,omitempty"`
+	MissionID mission.MissionID `json:"missionId,omitempty"`
 	// HookEpoch is the launch generation the hook was configured for, so events
 	// from a session q has already abandoned can be discarded.
 	HookEpoch int `json:"hookEpoch"`

@@ -10,14 +10,13 @@ import (
 	"strings"
 
 	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/settings"
 )
 
 // cfg is the resolved configuration for this process. It is populated once by
 // the root command's PersistentPreRunE, before any subcommand runs, so every
 // command sees the same values and a malformed config file fails immediately
 // rather than halfway through provisioning something.
-var cfg = settings.Default()
+var cfg = defaultSettings()
 
 // configFlag holds the --config value, when one was given.
 var configFlag string
@@ -107,8 +106,8 @@ type pathsConfig struct {
 // A missing config file is not an error — q is expected to work with no
 // configuration at all — but a malformed one is, because silently falling back
 // to defaults would hide the typo that caused it.
-func loadConfig(path string) (settings.Settings, error) {
-	out := settings.Default()
+func loadConfig(path string) (settings, error) {
+	out := defaultSettings()
 
 	file, err := readConfigFile(path)
 	if err != nil {
@@ -186,7 +185,7 @@ func configPath() string {
 
 // applyFile layers the config file over the defaults. Only keys the file
 // actually set are applied, which is why the sections are pointers.
-func applyFile(out *settings.Settings, file fileConfig) {
+func applyFile(out *settings, file fileConfig) {
 	if r := file.Repos; r != nil {
 		if len(r.Roots) > 0 {
 			out.Repos.Roots = r.Roots
@@ -236,7 +235,7 @@ func applyFile(out *settings.Settings, file fileConfig) {
 }
 
 // applyAgents layers the agents section.
-func applyAgents(out *settings.Settings, agents *agentsConfig) {
+func applyAgents(out *settings, agents *agentsConfig) {
 	if agents == nil {
 		return
 	}
@@ -264,7 +263,7 @@ func applyAgents(out *settings.Settings, agents *agentsConfig) {
 }
 
 // applyEnv layers environment variables over the file.
-func applyEnv(out *settings.Settings) {
+func applyEnv(out *settings) {
 	if v := strings.TrimSpace(os.Getenv(EnvRepoRoots)); v != "" {
 		out.Repos.Roots = splitList(v)
 	}
@@ -300,7 +299,7 @@ func applyEnv(out *settings.Settings) {
 
 // expandSettings resolves ~ in every path-shaped value, so the rest of q never
 // has to wonder whether a path has been expanded yet.
-func expandSettings(out *settings.Settings) {
+func expandSettings(out *settings) {
 	for i, root := range out.Repos.Roots {
 		out.Repos.Roots[i] = expandHome(root)
 	}
@@ -369,7 +368,7 @@ func pathOverrides() paths.Overrides {
 //
 // Every key is written with its current effective value, which makes the file
 // double as documentation of what q resolved on this machine.
-func writeSampleConfig(w io.Writer, s settings.Settings) error {
+func writeSampleConfig(w io.Writer, s settings) error {
 	file := fileConfig{
 		Repos: &reposConfig{Roots: s.Repos.Roots, MaxDepth: s.Repos.MaxDepth, Skip: s.Repos.Skip},
 		Git:   &gitConfig{BranchPrefix: branchPrefixOrUser(s)},
@@ -398,7 +397,7 @@ func writeSampleConfig(w io.Writer, s settings.Settings) error {
 
 // branchPrefixOrUser resolves the branch prefix the way the launcher will, so a
 // generated config shows the real value rather than an empty string.
-func branchPrefixOrUser(s settings.Settings) string {
+func branchPrefixOrUser(s settings) string {
 	if s.Git.BranchPrefix != "" {
 		return s.Git.BranchPrefix
 	}

@@ -9,18 +9,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/justinrush/q/internal/api"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/gadgets"
-	"github.com/justinrush/q/internal/gitx"
-	"github.com/justinrush/q/internal/settings"
-	"github.com/justinrush/q/internal/termopen"
-	"github.com/justinrush/q/internal/tmuxc"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // agentWindow is the window the agent runs in, and the one debrief panes are added to.
@@ -29,143 +27,94 @@ const agentWindow = "agent"
 // mainVertical keeps the agent as the wide left pane with editors stacked beside it.
 const mainVertical = "main-vertical"
 
-// Mode selects how the debrief session is presented.
-type Mode string
-
-// The presentation modes.
-const (
-	// ModeAttach opens a new terminal attached to the session.
-	ModeAttach Mode = "attach"
-	// ModeSteal detaches any other client first, which is wanted when a stale client
-	// on another machine or terminal is holding the session.
-	ModeSteal Mode = "steal"
-	// ModeRaise brings an already-attached window forward instead of opening another.
-	ModeRaise Mode = "raise"
-	// ModePrepare arranges the panes but does not attach, which is what the board
-	// wants when it is only refreshing the layout.
-	ModePrepare Mode = "prepare"
-)
-
-// Result describes what opening a debrief did.
-type Result struct {
-	Session string `json:"session"`
-	// Touched lists the repos with changes worth a look.
-	Touched []Touched `json:"touched"`
-	// PanesAdded counts editor panes created by this call.
-	PanesAdded int `json:"panesAdded"`
-	// AlreadyAttached lists the ttys of clients already viewing the session.
-	AlreadyAttached []string `json:"alreadyAttached,omitempty"`
-	// Attached reports that this call brought a client to the session.
-	Attached bool `json:"attached"`
-	// AttachCommand is the command to run by hand when q was configured not to
-	// open windows itself. It is empty whenever q did open one.
-	AttachCommand string `json:"attachCommand,omitempty"`
-	// NeedsRelaunch reports that the session is gone and the agent must be
-	// restarted before there is anything to attach to.
-	NeedsRelaunch bool `json:"needsRelaunch"`
-}
-
-// Touched is one repo with debriefable changes.
-type Touched struct {
-	Repo         string `json:"repo"`
-	WorktreePath string `json:"worktreePath"`
-	Branch       string `json:"branch"`
-	Dirty        bool   `json:"dirty"`
-	Ahead        int    `json:"ahead"`
-	ShortStat    string `json:"shortStat,omitempty"`
-}
-
-// Config configures an Opener.
-type Config struct {
-	Git    *gitx.Git
-	Tmux   *tmuxc.Tmux
-	Term   *termopen.Opener
-	Bins   *gadgets.Resolver
-	Logger *slog.Logger
-	// Editor is the argv opened on each changed worktree. Empty means the
-	// built-in default, which follows $VISUAL and $EDITOR.
-	Editor []string
-}
-
 // Opener arranges and attaches debrief sessions.
 type Opener struct {
-	git    *gitx.Git
-	tmux   *tmuxc.Tmux
-	term   *termopen.Opener
-	bins   *gadgets.Resolver
+	git    *git.Client
+	tmux   *terminal.Tmux
+	term   terminal.Opener
 	logger *slog.Logger
 	editor []string
 }
 
-// New returns an Opener.
-func New(cfg Config) *Opener {
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
+// Option configures an Opener.
+type Option func(*Opener)
+
+// WithEditor sets the argv opened on each changed worktree, e.g.
+// ["nvim", "+Neotree"]. The worktree is the process's working directory, so no
+// path argument is needed.
+func WithEditor(argv []string) Option {
+	return func(o *Opener) { o.editor = argv }
+}
+
+// WithLogger sets where the opener reports problems it does not fail on.
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *Opener) { o.logger = logger }
+}
+
+// New returns an Opener that inspects worktrees with gitc, arranges panes in
+// tmux, and opens windows through window.
+func New(gitc *git.Client, tmux *terminal.Tmux, window terminal.Opener, opts ...Option) *Opener {
+	o := &Opener{git: gitc, tmux: tmux, term: window, logger: slog.Default()}
+
+	for _, opt := range opts {
+		opt(o)
 	}
 
-	return &Opener{
-		git:    cfg.Git,
-		tmux:   cfg.Tmux,
-		term:   cfg.Term,
-		bins:   cfg.Bins,
-		logger: logger,
-		editor: cfg.Editor,
-	}
+	return o
 }
 
 // Open arranges the debrief session and attaches to it according to mode.
 //
 // The mission is returned alongside the result because arranging panes records their ids,
 // which the caller persists so a second open does not duplicate them.
-func (o *Opener) Open(ctx context.Context, mission domain.Mission, mode Mode) (Result, domain.Mission, error) {
-	if mission.TmuxSession == "" {
-		return Result{}, mission, fmt.Errorf("mission %s has never been launched", mission.ID)
+func (o *Opener) Open(ctx context.Context, ms mission.Mission, mode api.Mode) (api.Result, mission.Mission, error) {
+	if ms.TmuxSession == "" {
+		return api.Result{}, ms, fmt.Errorf("mission %s has never been launched", ms.ID)
 	}
 
-	result := Result{Session: mission.TmuxSession}
+	result := api.Result{Session: ms.TmuxSession}
 
-	touched, err := o.touchedRepos(ctx, mission)
+	touched, err := o.touchedRepos(ctx, ms)
 	if err != nil {
-		return result, mission, err
+		return result, ms, err
 	}
 
 	result.Touched = touched
 
-	if !o.tmux.HasSession(ctx, mission.TmuxSession) {
+	if !o.tmux.HasSession(ctx, ms.TmuxSession) {
 		// Nothing to attach to. The caller decides whether to relaunch, because
 		// reviving an agent is a bigger step than opening a window.
 		result.NeedsRelaunch = true
 
-		return result, mission, nil
+		return result, ms, nil
 	}
 
-	added, mission, err := o.arrangePanes(ctx, mission, touched)
+	added, ms, err := o.arrangePanes(ctx, ms, touched)
 	result.PanesAdded = added
 	if err != nil {
-		return result, mission, err
+		return result, ms, err
 	}
 
-	clients, err := o.tmux.HasClients(ctx, mission.TmuxSession)
+	clients, err := o.tmux.HasClients(ctx, ms.TmuxSession)
 	if err != nil {
-		return result, mission, err
+		return result, ms, err
 	}
 
 	result.AlreadyAttached = clients
 
-	if err := o.attach(ctx, mission, mode, &result); err != nil {
-		return result, mission, err
+	if err := o.attach(ctx, ms, mode, &result); err != nil {
+		return result, ms, err
 	}
 
-	return result, mission, nil
+	return result, ms, nil
 }
 
 // Touched reports what a mission changed, without touching tmux.
 //
 // This is the read-only view the board uses to label cards; arranging panes is a
 // separate, deliberate act.
-func (o *Opener) Touched(ctx context.Context, mission domain.Mission) ([]Touched, error) {
-	return o.touchedRepos(ctx, mission)
+func (o *Opener) Touched(ctx context.Context, ms mission.Mission) ([]api.Touched, error) {
+	return o.touchedRepos(ctx, ms)
 }
 
 // touchedRepos reports which of a mission's worktrees have changes worth a look.
@@ -173,10 +122,10 @@ func (o *Opener) Touched(ctx context.Context, mission domain.Mission) ([]Touched
 // The comparison is against each worktree's pinned branch point rather than against
 // origin, so it needs no network and cannot drift when someone else's fetch moves the
 // default branch.
-func (o *Opener) touchedRepos(ctx context.Context, mission domain.Mission) ([]Touched, error) {
-	var touched []Touched
+func (o *Opener) touchedRepos(ctx context.Context, ms mission.Mission) ([]api.Touched, error) {
+	var touched []api.Touched
 
-	for _, work := range mission.Worktrees() {
+	for _, work := range ms.Worktrees() {
 		if !work.Created {
 			continue
 		}
@@ -196,7 +145,7 @@ func (o *Opener) touchedRepos(ctx context.Context, mission domain.Mission) ([]To
 			continue
 		}
 
-		touched = append(touched, Touched{
+		touched = append(touched, api.Touched{
 			Repo:         work.RepoName,
 			WorktreePath: work.WorktreePath,
 			Branch:       work.Branch,
@@ -216,16 +165,16 @@ func (o *Opener) touchedRepos(ctx context.Context, mission domain.Mission) ([]To
 // reports, so a pane the user closed is recreated while an existing one is left alone.
 func (o *Opener) arrangePanes(
 	ctx context.Context,
-	mission domain.Mission,
-	touched []Touched,
-) (int, domain.Mission, error) {
+	ms mission.Mission,
+	touched []api.Touched,
+) (int, mission.Mission, error) {
 	if len(touched) == 0 {
-		return 0, mission, nil
+		return 0, ms, nil
 	}
 
-	panes, err := o.tmux.ListPanes(ctx, tmuxc.Session(mission.TmuxSession))
+	panes, err := o.tmux.ListPanes(ctx, terminal.Session(ms.TmuxSession))
 	if err != nil {
-		return 0, mission, err
+		return 0, ms, err
 	}
 
 	live := make(map[string]bool, len(panes))
@@ -235,54 +184,54 @@ func (o *Opener) arrangePanes(
 
 	editor, err := o.editorArgv()
 	if err != nil {
-		return 0, mission, err
+		return 0, ms, err
 	}
 
 	var added int
 
 	for _, item := range touched {
-		work := mission.Work[item.Repo]
+		work := ms.Work[item.Repo]
 
 		if work.DebriefPaneID != "" && live[work.DebriefPaneID] {
 			continue
 		}
 
-		paneID, err := o.tmux.SplitWindow(ctx, tmuxc.SplitOptions{
-			Target:  tmuxc.Window(mission.TmuxSession, agentWindow),
+		paneID, err := o.tmux.SplitWindow(ctx, terminal.SplitOptions{
+			Target:  terminal.Window(ms.TmuxSession, agentWindow),
 			Dir:     item.WorktreePath,
 			Command: editor,
 		})
 		if err != nil {
-			return added, mission, err
+			return added, ms, err
 		}
 
 		work.DebriefPaneID = paneID
-		mission.Work[item.Repo] = work
+		ms.Work[item.Repo] = work
 		added++
 
 		// Reflow before the next split. Without this, tmux repeatedly halves the
 		// active pane until it is too small to split, even when the window has
 		// ample room for the finished main-vertical layout.
-		o.finishLayout(ctx, mission)
+		o.finishLayout(ctx, ms)
 	}
 
-	return added, mission, nil
+	return added, ms, nil
 }
 
 // finishLayout tidies the window and leaves the agent pane focused.
 //
 // Failures here are logged rather than returned: the panes exist and are usable, and
 // losing the debrief over a layout call would be the wrong trade.
-func (o *Opener) finishLayout(ctx context.Context, mission domain.Mission) {
-	window := tmuxc.Window(mission.TmuxSession, agentWindow)
+func (o *Opener) finishLayout(ctx context.Context, ms mission.Mission) {
+	window := terminal.Window(ms.TmuxSession, agentWindow)
 
 	if err := o.tmux.SelectLayout(ctx, window, mainVertical); err != nil {
 		o.logger.Warn("applying the debrief layout", "error", err)
 	}
 
 	// The user is here to talk to the agent, so land on it rather than in an editor.
-	if mission.AgentPaneID != "" {
-		if err := o.tmux.SelectPane(ctx, tmuxc.Pane(mission.AgentPaneID)); err != nil {
+	if ms.AgentPaneID != "" {
+		if err := o.tmux.SelectPane(ctx, terminal.Pane(ms.AgentPaneID)); err != nil {
 			o.logger.Warn("focusing the agent pane", "error", err)
 		}
 	}
@@ -297,7 +246,7 @@ func (o *Opener) finishLayout(ctx context.Context, mission domain.Mission) {
 func (o *Opener) editorArgv() ([]string, error) {
 	command := o.editor
 	if len(command) == 0 {
-		command = settings.DefaultEditorCommand()
+		return nil, errors.New("no editor is configured")
 	}
 
 	bin, err := exec.LookPath(command[0])
@@ -314,23 +263,23 @@ func (o *Opener) editorArgv() ([]string, error) {
 }
 
 // attach brings a client to the session according to mode.
-func (o *Opener) attach(ctx context.Context, mission domain.Mission, mode Mode, result *Result) error {
+func (o *Opener) attach(ctx context.Context, ms mission.Mission, mode api.Mode, result *api.Result) error {
 	switch mode {
-	case ModePrepare:
+	case api.ModePrepare:
 		return nil
-	case ModeRaise:
+	case api.ModeRaise:
 		result.Attached = true
 
 		return o.term.Raise(ctx)
 	}
 
-	argv := o.tmux.AttachArgs(mission.TmuxSession, mode == ModeSteal)
+	argv := o.tmux.AttachArgs(ms.TmuxSession, mode == api.ModeSteal)
 
-	err := o.term.Open(ctx, termopen.Spec{Dir: mission.MissionDir, Argv: argv})
+	err := o.term.Open(ctx, terminal.Spec{Dir: ms.MissionDir, Argv: argv})
 
 	// Opening no window is a configured choice, not a failure. The panes are
 	// arranged either way, so the useful thing to return is how to reach them.
-	if errors.Is(err, termopen.ErrNoTerminal) {
+	if errors.Is(err, terminal.ErrNoTerminal) {
 		result.AttachCommand = strings.Join(argv, " ")
 
 		return nil

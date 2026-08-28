@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/state"
 	"io"
+
+	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
 )
 
 // newTestService returns a Service backed by a temp-directory store.
@@ -21,7 +21,7 @@ func newTestService(t *testing.T) *Service {
 	root := t.TempDir()
 	dirs := paths.Dirs{Data: filepath.Join(root, "data"), State: filepath.Join(root, "state")}
 
-	store, err := state.Open(dirs)
+	store, err := mission.Open(dirs)
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
@@ -29,17 +29,23 @@ func newTestService(t *testing.T) *Service {
 	hub := NewHub()
 	t.Cleanup(hub.Close)
 
-	return NewService(ServiceConfig{
-		Store:  store,
-		Hub:    hub,
-		Dirs:   dirs,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now:    time.Now,
-	})
+	return NewService(store, hub, dirs,
+		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
+		WithClock(time.Now),
+	)
+}
+
+// apply attaches dependencies after construction. Production wiring passes every
+// option to NewService; tests build one service and vary a single dependency per
+// case, which is the only reason this exists.
+func (s *Service) apply(opts ...Option) {
+	for _, opt := range opts {
+		opt(s)
+	}
 }
 
 // seedOperation creates an operation for mission tests.
-func seedOperation(t *testing.T, svc *Service) domain.Operation {
+func seedOperation(t *testing.T, svc *Service) mission.Operation {
 	t.Helper()
 
 	operation, err := svc.CreateOperation(api.CreateOperationRequest{Name: "Discussions API"})
@@ -102,7 +108,7 @@ func TestCreateOperationDropsIncompleteRepos(t *testing.T) {
 
 	operation, err := svc.CreateOperation(api.CreateOperationRequest{
 		Name: "Operation",
-		Repos: []domain.Repo{
+		Repos: []mission.Repo{
 			{Name: "weave", Path: "/dev/weave"},
 			{Name: "", Path: ""},
 			{Name: "nameless", Path: ""},
@@ -150,12 +156,12 @@ func TestDeleteOperationAllowsFinishedMissions(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "do it"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "do it"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	if _, err := svc.SetStatus(mission.ID, domain.StatusClosed); err != nil {
+	if _, err := svc.SetStatus(ms.ID, mission.StatusClosed); err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
@@ -176,7 +182,7 @@ func TestCreateMissionStartsInDraft(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{
+	ms, err := svc.CreateMission(api.CreateMissionRequest{
 		OperationID: operation.ID,
 		Name:        "Add Endpoint",
 		Prompt:      "do the thing",
@@ -185,24 +191,24 @@ func TestCreateMissionStartsInDraft(t *testing.T) {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	if mission.Status != domain.StatusBriefing {
-		t.Errorf("Status = %q, want draft", mission.Status)
+	if ms.Status != mission.StatusBriefing {
+		t.Errorf("Status = %q, want draft", ms.Status)
 	}
 
-	if mission.AgentState != domain.AgentUnknown {
-		t.Errorf("AgentState = %q, want unknown", mission.AgentState)
+	if ms.AgentState != mission.AgentUnknown {
+		t.Errorf("AgentState = %q, want unknown", ms.AgentState)
 	}
 
 	// Defaulting to claude means --tool is optional at every call site.
-	if mission.Tool != domain.ToolClaude {
-		t.Errorf("Tool = %q, want claude by default", mission.Tool)
+	if ms.Tool != mission.ToolClaude {
+		t.Errorf("Tool = %q, want claude by default", ms.Tool)
 	}
 
-	if mission.Slug != "add-endpoint" {
-		t.Errorf("Slug = %q", mission.Slug)
+	if ms.Slug != "add-endpoint" {
+		t.Errorf("Slug = %q", ms.Slug)
 	}
 
-	if mission.Launched() {
+	if ms.Launched() {
 		t.Error("a new mission must not be marked launched")
 	}
 }
@@ -211,18 +217,18 @@ func TestCreateMissionStoresAdditionalRepos(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{
+	ms, err := svc.CreateMission(api.CreateMissionRequest{
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "do it",
-		ExtraRepos:  []domain.Repo{{Name: "mac", Path: " /dev/mac "}},
+		ExtraRepos:  []mission.Repo{{Name: "mac", Path: " /dev/mac "}},
 	})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	if len(mission.ExtraRepos) != 1 || mission.ExtraRepos[0].Path != "/dev/mac" {
-		t.Fatalf("ExtraRepos = %+v, want normalized mac repo", mission.ExtraRepos)
+	if len(ms.ExtraRepos) != 1 || ms.ExtraRepos[0].Path != "/dev/mac" {
+		t.Fatalf("ExtraRepos = %+v, want normalized mac repo", ms.ExtraRepos)
 	}
 }
 
@@ -230,7 +236,7 @@ func TestCreateMissionRejectsRepoConflicts(t *testing.T) {
 	svc := newTestService(t)
 	operation, err := svc.CreateOperation(api.CreateOperationRequest{
 		Name:  "operation",
-		Repos: []domain.Repo{{Name: "q", Path: "/dev/q"}},
+		Repos: []mission.Repo{{Name: "q", Path: "/dev/q"}},
 	})
 	if err != nil {
 		t.Fatalf("CreateOperation: %v", err)
@@ -240,7 +246,7 @@ func TestCreateMissionRejectsRepoConflicts(t *testing.T) {
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "do it",
-		ExtraRepos:  []domain.Repo{{Name: "q", Path: "/other/q"}},
+		ExtraRepos:  []mission.Repo{{Name: "q", Path: "/other/q"}},
 	})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("CreateMission() error = %v, want ErrInvalid", err)
@@ -250,13 +256,13 @@ func TestCreateMissionRejectsRepoConflicts(t *testing.T) {
 func TestUpdateMissionRepositoriesOnlyWhileDraft(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "do it"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "do it"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	repos := []domain.Repo{{Name: "mac", Path: "/dev/mac"}}
-	updated, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{ExtraRepos: &repos})
+	repos := []mission.Repo{{Name: "mac", Path: "/dev/mac"}}
+	updated, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{ExtraRepos: &repos})
 	if err != nil {
 		t.Fatalf("UpdateMission: %v", err)
 	}
@@ -265,8 +271,8 @@ func TestUpdateMissionRepositoriesOnlyWhileDraft(t *testing.T) {
 		t.Fatalf("ExtraRepos = %+v, want mac", updated.ExtraRepos)
 	}
 
-	updated.Status = domain.StatusActive
-	err = svcStore(svc).Mutate("test.launching", func(snap *state.Snapshot) error {
+	updated.Status = mission.StatusActive
+	err = svcStore(svc).Mutate("test.launching", func(snap *mission.Snapshot) error {
 		snap.PutMission(updated)
 
 		return nil
@@ -275,7 +281,7 @@ func TestUpdateMissionRepositoriesOnlyWhileDraft(t *testing.T) {
 		t.Fatalf("Mutate: %v", err)
 	}
 
-	_, err = svc.UpdateMission(mission.ID, api.UpdateMissionRequest{ExtraRepos: &repos})
+	_, err = svc.UpdateMission(ms.ID, api.UpdateMissionRequest{ExtraRepos: &repos})
 	if !errors.Is(err, ErrConflict) {
 		t.Fatalf("UpdateMission() error = %v, want ErrConflict", err)
 	}
@@ -329,7 +335,7 @@ func TestCreateMissionRejectsPlanModeForCodex(t *testing.T) {
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "x",
-		Tool:        domain.ToolCodex,
+		Tool:        mission.ToolCodex,
 		PlanMode:    true,
 	})
 	if !errors.Is(err, ErrInvalid) {
@@ -341,7 +347,7 @@ func TestCreateMissionRejectsPlanModeForCodex(t *testing.T) {
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "x",
-		Tool:        domain.ToolClaude,
+		Tool:        mission.ToolClaude,
 		PlanMode:    true,
 	}); err != nil {
 		t.Errorf("claude plan mode should be accepted: %v", err)
@@ -354,20 +360,20 @@ func TestUpdateMissionRejectsPlanModeWhenSwitchingToCodex(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{
+	ms, err := svc.CreateMission(api.CreateMissionRequest{
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "x",
-		Tool:        domain.ToolClaude,
+		Tool:        mission.ToolClaude,
 		PlanMode:    true,
 	})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	codex := domain.ToolCodex
+	codex := mission.ToolCodex
 
-	if _, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{Tool: &codex}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Tool: &codex}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
@@ -378,38 +384,38 @@ func TestUpdateMissionRefusesToolChangeAfterLaunch(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
 	// Simulate a launch by stamping StartedAt directly.
 	started := time.Now()
-	mission.StartedAt = &started
+	ms.StartedAt = &started
 
-	if err := svcStore(svc).Mutate("test.launch", func(snap *state.Snapshot) error {
-		snap.PutMission(mission)
+	if err := svcStore(svc).Mutate("test.launch", func(snap *mission.Snapshot) error {
+		snap.PutMission(ms)
 
 		return nil
 	}); err != nil {
 		t.Fatalf("Mutate: %v", err)
 	}
 
-	codex := domain.ToolCodex
+	codex := mission.ToolCodex
 
-	if _, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{Tool: &codex}); !errors.Is(err, ErrConflict) {
+	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Tool: &codex}); !errors.Is(err, ErrConflict) {
 		t.Errorf("tool change err = %v, want ErrConflict", err)
 	}
 
 	plan := true
 
-	if _, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{PlanMode: &plan}); !errors.Is(err, ErrConflict) {
+	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{PlanMode: &plan}); !errors.Is(err, ErrConflict) {
 		t.Errorf("plan change err = %v, want ErrConflict", err)
 	}
 
 	// Renaming a launched mission is still fine.
 	name := "renamed"
-	if _, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{Name: &name}); err != nil {
+	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Name: &name}); err != nil {
 		t.Errorf("rename after launch should be allowed: %v", err)
 	}
 }
@@ -418,14 +424,14 @@ func TestUpdateMissionRejectsEmptyName(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
 	blank := "  "
 
-	if _, err := svc.UpdateMission(mission.ID, api.UpdateMissionRequest{Name: &blank}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Name: &blank}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
@@ -434,12 +440,12 @@ func TestSetStatusManagesFinishedAt(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	done, err := svc.SetStatus(mission.ID, domain.StatusClosed)
+	done, err := svc.SetStatus(ms.ID, mission.StatusClosed)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -450,7 +456,7 @@ func TestSetStatusManagesFinishedAt(t *testing.T) {
 
 	// Pulling a card back out of done must clear the finish time, or the card
 	// would claim to be both unfinished and finished.
-	reopened, err := svc.SetStatus(mission.ID, domain.StatusDebrief)
+	reopened, err := svc.SetStatus(ms.ID, mission.StatusDebrief)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
@@ -463,18 +469,18 @@ func TestSetStatusManagesFinishedAt(t *testing.T) {
 func TestSetStatusValidation(t *testing.T) {
 	svc := newTestService(t)
 
-	if _, err := svc.SetStatus("ms_000000000000", domain.StatusDebrief); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.SetStatus("ms_000000000000", mission.StatusDebrief); !errors.Is(err, ErrNotFound) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	if _, err := svc.SetStatus(mission.ID, domain.Status("nonsense")); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.SetStatus(ms.ID, mission.Status("nonsense")); !errors.Is(err, ErrInvalid) {
 		t.Errorf("err = %v, want ErrInvalid", err)
 	}
 }
@@ -485,18 +491,18 @@ func TestSetStatusToSameLaneIsANoop(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)
 
-	mission, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
+	ms, err := svc.CreateMission(api.CreateMissionRequest{OperationID: operation.ID, Name: "mission", Prompt: "x"})
 	if err != nil {
 		t.Fatalf("CreateMission: %v", err)
 	}
 
-	same, err := svc.SetStatus(mission.ID, domain.StatusBriefing)
+	same, err := svc.SetStatus(ms.ID, mission.StatusBriefing)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
-	if same.Order != mission.Order {
-		t.Errorf("Order changed from %d to %d", mission.Order, same.Order)
+	if same.Order != ms.Order {
+		t.Errorf("Order changed from %d to %d", ms.Order, same.Order)
 	}
 }
 
@@ -510,4 +516,4 @@ func TestDeleteMissionUnknown(t *testing.T) {
 
 // svcStore exposes the service's store for tests that need to fabricate state a
 // public method cannot produce, such as a launched mission.
-func svcStore(s *Service) *state.Store { return s.store }
+func svcStore(s *Service) *mission.Store { return s.store }

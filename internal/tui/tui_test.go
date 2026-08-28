@@ -9,10 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
-	"github.com/justinrush/q/internal/repofind"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/muesli/termenv"
 )
@@ -24,20 +22,20 @@ import (
 func init() { lipgloss.SetColorProfile(termenv.Ascii) }
 
 // testOperation returns an operation with a known palette slot.
-func testOperation(id, name string, colorIdx int) domain.Operation {
-	return domain.Operation{ID: domain.OperationID(id), Name: name, Slug: domain.Slug(name), ColorIdx: colorIdx}
+func testOperation(id, name string, colorIdx int) mission.Operation {
+	return mission.Operation{ID: mission.OperationID(id), Name: name, Slug: mission.Slug(name), ColorIdx: colorIdx}
 }
 
 // testMission returns a mission in a lane.
-func testMission(id, name string, operationID domain.OperationID, status domain.Status) domain.Mission {
-	return domain.Mission{
-		ID:          domain.MissionID(id),
+func testMission(id, name string, operationID mission.OperationID, status mission.Status) mission.Mission {
+	return mission.Mission{
+		ID:          mission.MissionID(id),
 		OperationID: operationID,
 		Name:        name,
-		Slug:        domain.Slug(name),
-		Tool:        domain.ToolClaude,
+		Slug:        mission.Slug(name),
+		Tool:        mission.ToolClaude,
 		Status:      status,
-		AgentState:  domain.AgentUnknown,
+		AgentState:  mission.AgentUnknown,
 		Prompt:      "do the thing",
 	}
 }
@@ -45,12 +43,12 @@ func testMission(id, name string, operationID domain.OperationID, status domain.
 // The stripe is how a glance at the board tells you which investigation a card belongs
 // to, so it has to carry the operation's name and span the card's full width.
 func TestRenderCardShowsTheOperationStripe(t *testing.T) {
-	mission := testMission("ms_1", "add endpoint", "op_1", domain.StatusDebrief)
+	ms := testMission("ms_1", "add endpoint", "op_1", mission.StatusDebrief)
 	operation := testOperation("op_1", "Discussions API", 0)
 
 	const width = 40
 
-	out := renderCard(mission, operation, width, false)
+	out := renderCard(ms, operation, width, false)
 	lines := strings.Split(out, "\n")
 
 	stripe := lines[len(lines)-1]
@@ -66,10 +64,10 @@ func TestRenderCardShowsTheOperationStripe(t *testing.T) {
 }
 
 func TestRenderCardIncludesToolAndPlanMode(t *testing.T) {
-	mission := testMission("ms_1", "add endpoint", "op_1", domain.StatusBriefing)
-	mission.PlanMode = true
+	ms := testMission("ms_1", "add endpoint", "op_1", mission.StatusBriefing)
+	ms.PlanMode = true
 
-	out := renderCard(mission, testOperation("op_1", "T", 0), 44, false)
+	out := renderCard(ms, testOperation("op_1", "T", 0), 44, false)
 
 	for _, want := range []string{"add endpoint", "claude", "plan"} {
 		if !strings.Contains(out, want) {
@@ -81,7 +79,7 @@ func TestRenderCardIncludesToolAndPlanMode(t *testing.T) {
 // A blocked agent and a failed launch are the two things needing a human, so they take
 // the detail line ahead of the agent's closing message.
 func TestRenderCardPrioritisesWhatNeedsAttention(t *testing.T) {
-	base := testMission("ms_1", "mission", "op_1", domain.StatusAwaiting)
+	base := testMission("ms_1", "mission", "op_1", mission.StatusAwaiting)
 	base.LastMessage = "finished the refactor"
 
 	waiting := base
@@ -106,10 +104,10 @@ func TestRenderCardPrioritisesWhatNeedsAttention(t *testing.T) {
 }
 
 func TestRenderCardShowsBadges(t *testing.T) {
-	mission := testMission("ms_1", "mission", "op_1", domain.StatusActive)
-	mission.Badges = []domain.Badge{{Kind: domain.BadgeAPIError, Detail: "rate_limit"}}
+	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+	ms.Badges = []mission.Badge{{Kind: mission.BadgeAPIError, Detail: "rate_limit"}}
 
-	out := renderCard(mission, testOperation("op_1", "T", 0), 50, false)
+	out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
 	if !strings.Contains(out, "api:rate_limit") {
 		t.Errorf("badge missing:\n%s", out)
 	}
@@ -118,11 +116,11 @@ func TestRenderCardShowsBadges(t *testing.T) {
 // A card must stay inside its column however long the content is, or it would bleed
 // into the neighbouring lane.
 func TestRenderCardNeverExceedsItsWidth(t *testing.T) {
-	mission := testMission("ms_1", strings.Repeat("very-long-name ", 12), "op_1", domain.StatusDebrief)
-	mission.WaitingFor = strings.Repeat("blocked ", 20)
+	ms := testMission("ms_1", strings.Repeat("very-long-name ", 12), "op_1", mission.StatusDebrief)
+	ms.WaitingFor = strings.Repeat("blocked ", 20)
 
 	for _, width := range []int{20, 24, 32, 48, 80} {
-		out := renderCard(mission, testOperation("op_1", strings.Repeat("Operation ", 10), 3), width, false)
+		out := renderCard(ms, testOperation("op_1", strings.Repeat("Operation ", 10), 3), width, false)
 
 		for i, line := range strings.Split(out, "\n") {
 			if got := lipgloss.Width(line); got > width {
@@ -133,7 +131,7 @@ func TestRenderCardNeverExceedsItsWidth(t *testing.T) {
 }
 
 func TestRenderCardHonoursMinimumWidth(t *testing.T) {
-	out := renderCard(testMission("ms_1", "t", "op_1", domain.StatusBriefing), testOperation("op_1", "T", 0), 4, false)
+	out := renderCard(testMission("ms_1", "t", "op_1", mission.StatusBriefing), testOperation("op_1", "T", 0), 4, false)
 
 	for _, line := range strings.Split(out, "\n") {
 		if got := lipgloss.Width(line); got != MinCardWidth {
@@ -164,7 +162,7 @@ func TestLayoutSwitchesToFocusModeWhenNarrow(t *testing.T) {
 func TestLayoutCollapsesDoneByDefault(t *testing.T) {
 	collapsed := computeLayout(200, 40, false, 0)
 
-	doneIdx := len(domain.Lanes) - 1
+	doneIdx := len(mission.Lanes) - 1
 	if collapsed.Widths[doneIdx] != collapsedDoneWidth {
 		t.Errorf("done width = %d, want %d", collapsed.Widths[doneIdx], collapsedDoneWidth)
 	}
@@ -189,7 +187,7 @@ func TestLayoutFitsTheTerminal(t *testing.T) {
 		for _, expanded := range []bool{false, true} {
 			layout := computeLayout(width, 40, expanded, 0)
 
-			total := (len(domain.Lanes) - 1) * laneGap
+			total := (len(mission.Lanes) - 1) * laneGap
 			for _, w := range layout.Widths {
 				total += w
 			}
@@ -210,10 +208,10 @@ func TestLayoutAlwaysShowsAtLeastOneCard(t *testing.T) {
 }
 
 // boardWith returns a board holding the given missions.
-func boardWith(operations []domain.Operation, missions []domain.Mission) *Board {
+func boardWith(operations []mission.Operation, missions []mission.Mission) *Board {
 	board := NewBoard()
 	board.SetSize(200, 40)
-	board.SetSnapshot(state.Snapshot{Operations: operations, Missions: missions})
+	board.SetSnapshot(mission.Snapshot{Operations: operations, Missions: missions})
 
 	return board
 }
@@ -241,8 +239,8 @@ func TestBoardActionsAreNoopsOnAnEmptyLane(t *testing.T) {
 
 // A mission in briefing has no session to debrief, so enter opens its editor instead of failing.
 func TestOpenDebriefOnADraftOpensTheEditor(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
-	board := boardWith(operations, []domain.Mission{testMission("ms_1", "draft mission", "op_1", domain.StatusBriefing)})
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+	board := boardWith(operations, []mission.Mission{testMission("ms_1", "draft mission", "op_1", mission.StatusBriefing)})
 
 	cmd := board.openDebrief()
 	if cmd == nil {
@@ -257,10 +255,10 @@ func TestOpenDebriefOnADraftOpensTheEditor(t *testing.T) {
 func TestOpenDebriefOnALaunchedMissionOpensTheDebrief(t *testing.T) {
 	started := time.Now()
 
-	mission := testMission("ms_1", "running", "op_1", domain.StatusDebrief)
-	mission.StartedAt = &started
+	ms := testMission("ms_1", "running", "op_1", mission.StatusDebrief)
+	ms.StartedAt = &started
 
-	board := boardWith([]domain.Operation{testOperation("op_1", "T", 0)}, []domain.Mission{mission})
+	board := boardWith([]mission.Operation{testOperation("op_1", "T", 0)}, []mission.Mission{ms})
 	board.lane = 3
 
 	cmd := board.openDebrief()
@@ -280,10 +278,10 @@ func TestMovingALaunchedCardIntoProgressAsksFirst(t *testing.T) {
 
 	// Lanes run briefing, active, awaiting, debrief, closed, so the card has to start
 	// in awaiting for one step left to land on active.
-	mission := testMission("ms_1", "running", "op_1", domain.StatusAwaiting)
-	mission.StartedAt = &started
+	ms := testMission("ms_1", "running", "op_1", mission.StatusAwaiting)
+	ms.StartedAt = &started
 
-	board := boardWith([]domain.Operation{testOperation("op_1", "T", 0)}, []domain.Mission{mission})
+	board := boardWith([]mission.Operation{testOperation("op_1", "T", 0)}, []mission.Mission{ms})
 	board.lane = 2
 
 	cmd := board.moveCardLeft()
@@ -298,8 +296,8 @@ func TestMovingALaunchedCardIntoProgressAsksFirst(t *testing.T) {
 
 // A draft moving into progress launches, which needs no dialog.
 func TestMovingADraftIntoProgressMovesDirectly(t *testing.T) {
-	board := boardWith([]domain.Operation{testOperation("op_1", "T", 0)},
-		[]domain.Mission{testMission("ms_1", "draft", "op_1", domain.StatusBriefing)})
+	board := boardWith([]mission.Operation{testOperation("op_1", "T", 0)},
+		[]mission.Mission{testMission("ms_1", "draft", "op_1", mission.StatusBriefing)})
 
 	cmd := board.moveCardRight()
 	if cmd == nil {
@@ -311,15 +309,15 @@ func TestMovingADraftIntoProgressMovesDirectly(t *testing.T) {
 		t.Fatalf("got %T, want moveMissionMsg", cmd())
 	}
 
-	if move.To != domain.StatusActive {
+	if move.To != mission.StatusActive {
 		t.Errorf("To = %q, want active", move.To)
 	}
 }
 
 // Moving a card should not silently no-op at the ends of the board.
 func TestMovingAtTheEdgeDoesNothing(t *testing.T) {
-	board := boardWith([]domain.Operation{testOperation("op_1", "T", 0)},
-		[]domain.Mission{testMission("ms_1", "draft", "op_1", domain.StatusBriefing)})
+	board := boardWith([]mission.Operation{testOperation("op_1", "T", 0)},
+		[]mission.Mission{testMission("ms_1", "draft", "op_1", mission.StatusBriefing)})
 
 	if cmd := board.moveCardLeft(); cmd != nil {
 		if msg := cmd(); msg != nil {
@@ -329,10 +327,10 @@ func TestMovingAtTheEdgeDoesNothing(t *testing.T) {
 }
 
 func TestBoardFilterLimitsVisibleMissions(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "One", 0), testOperation("op_2", "Two", 1)}
-	missions := []domain.Mission{
-		testMission("ms_1", "a", "op_1", domain.StatusBriefing),
-		testMission("ms_2", "b", "op_2", domain.StatusBriefing),
+	operations := []mission.Operation{testOperation("op_1", "One", 0), testOperation("op_2", "Two", 1)}
+	missions := []mission.Mission{
+		testMission("ms_1", "a", "op_1", mission.StatusBriefing),
+		testMission("ms_2", "b", "op_2", mission.StatusBriefing),
 	}
 
 	board := boardWith(operations, missions)
@@ -362,11 +360,11 @@ func TestBoardFilterLimitsVisibleMissions(t *testing.T) {
 // The selection must survive the data changing underneath it, which happens on every
 // event from the daemon.
 func TestSelectionSurvivesMissionsDisappearing(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
-	missions := []domain.Mission{
-		testMission("ms_1", "a", "op_1", domain.StatusBriefing),
-		testMission("ms_2", "b", "op_1", domain.StatusBriefing),
-		testMission("ms_3", "c", "op_1", domain.StatusBriefing),
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+	missions := []mission.Mission{
+		testMission("ms_1", "a", "op_1", mission.StatusBriefing),
+		testMission("ms_2", "b", "op_1", mission.StatusBriefing),
+		testMission("ms_3", "c", "op_1", mission.StatusBriefing),
 	}
 
 	board := boardWith(operations, missions)
@@ -377,13 +375,13 @@ func TestSelectionSurvivesMissionsDisappearing(t *testing.T) {
 	}
 
 	// The daemon reports that everything is gone.
-	board.SetSnapshot(state.Snapshot{Operations: operations})
+	board.SetSnapshot(mission.Snapshot{Operations: operations})
 
 	if _, ok := board.Selected(); ok {
 		t.Error("nothing should be selected in an empty board")
 	}
 
-	board.SetSnapshot(state.Snapshot{Operations: operations, Missions: missions[:1]})
+	board.SetSnapshot(mission.Snapshot{Operations: operations, Missions: missions[:1]})
 
 	selected, ok := board.Selected()
 	if !ok || selected.ID != "ms_1" {
@@ -462,13 +460,13 @@ func TestEveryBoardHandlerIsBound(t *testing.T) {
 // moved mission lands, so the cursor can only catch up on the next snapshot; without
 // following it, a second press acts on whatever else is under the cursor.
 func TestMovingACardTwiceFollowsTheSameCard(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
 
 	// The target lane already holds cards, so an unfollowed cursor would land wrong.
-	missions := []domain.Mission{
-		testMission("ms_move", "moving", "op_1", domain.StatusAwaiting),
-		testMission("ms_other1", "other one", "op_1", domain.StatusDebrief),
-		testMission("ms_other2", "other two", "op_1", domain.StatusDebrief),
+	missions := []mission.Mission{
+		testMission("ms_move", "moving", "op_1", mission.StatusAwaiting),
+		testMission("ms_other1", "other one", "op_1", mission.StatusDebrief),
+		testMission("ms_other2", "other two", "op_1", mission.StatusDebrief),
 	}
 
 	board := boardWith(operations, missions)
@@ -486,12 +484,12 @@ func TestMovingACardTwiceFollowsTheSameCard(t *testing.T) {
 
 	// The daemon appends the moved card to the end of its new lane.
 	moved := missions[0]
-	moved.Status = domain.StatusDebrief
+	moved.Status = mission.StatusDebrief
 	moved.Order = 99
 
-	board.SetSnapshot(state.Snapshot{
+	board.SetSnapshot(mission.Snapshot{
 		Operations: operations,
-		Missions:   []domain.Mission{moved, missions[1], missions[2]},
+		Missions:   []mission.Mission{moved, missions[1], missions[2]},
 	})
 
 	selected, ok := board.Selected()
@@ -513,18 +511,18 @@ func TestMovingACardTwiceFollowsTheSameCard(t *testing.T) {
 		t.Errorf("second move acted on %q, want the same card", second.Mission.ID)
 	}
 
-	if second.To != domain.StatusClosed {
+	if second.To != mission.StatusClosed {
 		t.Errorf("second move went to %q, want done", second.To)
 	}
 }
 
 // A card that disappears must not leave the selection hunting for it forever.
 func TestFollowGivesUpOnAMissingMission(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
-	board := boardWith(operations, []domain.Mission{testMission("ms_1", "a", "op_1", domain.StatusBriefing)})
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+	board := boardWith(operations, []mission.Mission{testMission("ms_1", "a", "op_1", mission.StatusBriefing)})
 
 	board.Follow("ms_gone")
-	board.SetSnapshot(state.Snapshot{Operations: operations})
+	board.SetSnapshot(mission.Snapshot{Operations: operations})
 
 	if board.follow != "" {
 		t.Errorf("follow = %q, want it cleared", board.follow)
@@ -549,9 +547,9 @@ func TestEveryOperationBindingHasAHandler(t *testing.T) {
 // zero size rather than panicking.
 func TestBoardRendersAtZeroSize(t *testing.T) {
 	board := NewBoard()
-	board.SetSnapshot(state.Snapshot{
-		Operations: []domain.Operation{testOperation("op_1", "T", 0)},
-		Missions:   []domain.Mission{testMission("ms_1", "a", "op_1", domain.StatusBriefing)},
+	board.SetSnapshot(mission.Snapshot{
+		Operations: []mission.Operation{testOperation("op_1", "T", 0)},
+		Missions:   []mission.Mission{testMission("ms_1", "a", "op_1", mission.StatusBriefing)},
 	})
 
 	if out := board.View(); out == "" {
@@ -562,7 +560,7 @@ func TestBoardRendersAtZeroSize(t *testing.T) {
 func TestOperationsViewRendersEmptyState(t *testing.T) {
 	view := NewOperations()
 	view.SetSize(120, 30)
-	view.SetSnapshot(state.Snapshot{})
+	view.SetSnapshot(mission.Snapshot{})
 
 	out := view.View()
 	if !strings.Contains(out, "No operations yet") {
@@ -573,15 +571,15 @@ func TestOperationsViewRendersEmptyState(t *testing.T) {
 func TestOperationsViewShowsRepoAndMissionCounts(t *testing.T) {
 	operation := testOperation("op_1", "Discussions API", 0)
 	operation.Summary = "wire discussions through"
-	operation.Repos = []domain.Repo{{Name: "weave", Path: "/dev/weave", DefaultBranch: "main"}}
+	operation.Repos = []mission.Repo{{Name: "weave", Path: "/dev/weave", DefaultBranch: "main"}}
 
 	view := NewOperations()
 	view.SetSize(140, 30)
-	view.SetSnapshot(state.Snapshot{
-		Operations: []domain.Operation{operation},
-		Missions: []domain.Mission{
-			testMission("ms_1", "a", "op_1", domain.StatusBriefing),
-			testMission("ms_2", "b", "op_1", domain.StatusClosed),
+	view.SetSnapshot(mission.Snapshot{
+		Operations: []mission.Operation{operation},
+		Missions: []mission.Mission{
+			testMission("ms_1", "a", "op_1", mission.StatusBriefing),
+			testMission("ms_2", "b", "op_1", mission.StatusClosed),
 		},
 	})
 
@@ -617,11 +615,11 @@ func enterKey() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyEnter} }
 
 // operationFormWith returns an operation form focused on its repo field, completing
 // against a fixed set of checkouts so the test never walks a filesystem.
-func operationFormWith(candidates []repofind.Candidate) *operationForm {
-	form := newOperationForm(domain.Operation{}, Options{})
+func operationFormWith(candidates []git.Candidate) *operationForm {
+	form := newOperationForm(mission.Operation{}, Options{})
 	form.repos.repoRoots = []string{"/dev"}
-	form.repos.findRepos = func(fragment string) []repofind.Candidate {
-		return repofind.Match(candidates, fragment)
+	form.repos.findRepos = func(fragment string) []git.Candidate {
+		return git.Match(candidates, fragment)
 	}
 
 	// Two tabs is how the user reaches the repo field.
@@ -635,7 +633,7 @@ func operationFormWith(candidates []repofind.Candidate) *operationForm {
 // become a full path with no further ceremony, and leave a line to type the next
 // repo on.
 func TestOperationFormCompletesAUniqueRepoFragment(t *testing.T) {
-	form := operationFormWith([]repofind.Candidate{
+	form := operationFormWith([]git.Candidate{
 		{Path: "/dev/mono/apps/azure-tf", Name: "azure-tf", Rel: "mono/apps/azure-tf"},
 	})
 	form.repos.SetValue("azure")
@@ -663,7 +661,7 @@ func TestOperationFormCompletesAUniqueRepoFragment(t *testing.T) {
 // An exact name wins outright, or every "bob" would open a picker because
 // "bob.next" also matches.
 func TestOperationFormTakesAnExactNameOverALongerMatch(t *testing.T) {
-	form := operationFormWith([]repofind.Candidate{
+	form := operationFormWith([]git.Candidate{
 		{Path: "/dev/bob.next", Name: "bob.next", Rel: "bob.next"},
 		{Path: "/dev/bob", Name: "bob", Rel: "bob"},
 	})
@@ -681,7 +679,7 @@ func TestOperationFormTakesAnExactNameOverALongerMatch(t *testing.T) {
 }
 
 func TestOperationFormPicksBetweenAmbiguousRepos(t *testing.T) {
-	form := operationFormWith([]repofind.Candidate{
+	form := operationFormWith([]git.Candidate{
 		{Path: "/dev/mono/labs/pipeline", Name: "pipeline", Rel: "mono/labs/pipeline"},
 		{Path: "/dev/mono/apps/pipeline", Name: "pipeline", Rel: "mono/apps/pipeline"},
 	})
@@ -724,10 +722,10 @@ func TestOperationFormPicksBetweenAmbiguousRepos(t *testing.T) {
 // A short fragment can match more checkouts than the picker can show, and a list cut
 // off silently would read as the complete answer.
 func TestRepoPickerReportsWhatItLeavesOut(t *testing.T) {
-	candidates := make([]repofind.Candidate, 0, maxRepoChoices*2)
+	candidates := make([]git.Candidate, 0, maxRepoChoices*2)
 	for i := range maxRepoChoices * 2 {
 		name := fmt.Sprintf("svc-%02d", i)
-		candidates = append(candidates, repofind.Candidate{Path: "/dev/" + name, Name: name, Rel: name})
+		candidates = append(candidates, git.Candidate{Path: "/dev/" + name, Name: name, Rel: name})
 	}
 
 	form := operationFormWith(candidates)
@@ -750,7 +748,7 @@ func TestRepoPickerReportsWhatItLeavesOut(t *testing.T) {
 }
 
 func TestOperationFormReportsAFragmentThatMatchesNothing(t *testing.T) {
-	form := operationFormWith([]repofind.Candidate{{Path: "/dev/weave", Name: "weave", Rel: "weave"}})
+	form := operationFormWith([]git.Candidate{{Path: "/dev/weave", Name: "weave", Rel: "weave"}})
 	form.repos.SetValue("nope")
 
 	next, _ := form.Update(enterKey())
@@ -774,7 +772,7 @@ func TestOperationFormAcceptsAPathThatAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 
 	form := operationFormWith(nil)
-	form.repos.findRepos = func(string) []repofind.Candidate {
+	form.repos.findRepos = func(string) []git.Candidate {
 		t.Error("an existing path should not need a search")
 
 		return nil
@@ -843,7 +841,7 @@ func TestOperationFormRefusesAnUncompletedRepoLine(t *testing.T) {
 // Completing the line the cursor is on, rather than the last one, is what makes the
 // field editable after the fact.
 func TestOperationFormCompletesTheLineUnderTheCursor(t *testing.T) {
-	form := operationFormWith([]repofind.Candidate{{Path: "/dev/weave", Name: "weave", Rel: "weave"}})
+	form := operationFormWith([]git.Candidate{{Path: "/dev/weave", Name: "weave", Rel: "weave"}})
 	form.repos.SetLines([]string{"weave", "/dev/already-full"}, 0)
 
 	form.Update(enterKey())
@@ -857,13 +855,13 @@ func TestOperationFormCompletesTheLineUnderTheCursor(t *testing.T) {
 // The form must not offer plan mode for an agent that has none, and must not carry a
 // stale flag across a change of agent.
 func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
 
-	form := newMissionForm(domain.Mission{Tool: domain.ToolClaude, PlanMode: true}, operations, "op_1", Options{})
+	form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true}, operations, "op_1", Options{})
 	form.name.SetValue("mission")
 	form.prompt.SetValue("do it")
 
-	form.tool = domain.ToolCodex
+	form.tool = mission.ToolCodex
 
 	_, cmd := form.submit(false)
 	if cmd == nil {
@@ -881,8 +879,8 @@ func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
 }
 
 func TestMissionFormRequiresNameAndPrompt(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "T", 0)}
-	form := newMissionForm(domain.Mission{}, operations, "op_1", Options{})
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{})
 
 	if _, cmd := form.submit(false); cmd != nil {
 		t.Error("a nameless mission should not submit")
@@ -902,13 +900,13 @@ func TestMissionFormRequiresNameAndPrompt(t *testing.T) {
 }
 
 func TestMissionFormCompletesAndSubmitsAdditionalRepos(t *testing.T) {
-	operations := []domain.Operation{testOperation("op_1", "Misc", 0)}
-	form := newMissionForm(domain.Mission{}, operations, "op_1", Options{})
+	operations := []mission.Operation{testOperation("op_1", "Misc", 0)}
+	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{})
 	form.name.SetValue("small mission")
 	form.prompt.SetValue("do it")
 	form.repos.repoRoots = []string{"/dev"}
-	form.repos.findRepos = func(fragment string) []repofind.Candidate {
-		return repofind.Match([]repofind.Candidate{{Path: "/dev/mac", Name: "mac", Rel: "mac"}}, fragment)
+	form.repos.findRepos = func(fragment string) []git.Candidate {
+		return git.Match([]git.Candidate{{Path: "/dev/mac", Name: "mac", Rel: "mac"}}, fragment)
 	}
 	form.repos.SetValue("mac")
 	form.focusField(fieldMissionRepos)
@@ -934,9 +932,9 @@ func TestMissionFormCompletesAndSubmitsAdditionalRepos(t *testing.T) {
 }
 
 func TestMissionFormLocksAdditionalReposWhileLaunching(t *testing.T) {
-	mission := testMission("ms_1", "running", "op_1", domain.StatusActive)
-	mission.ExtraRepos = []domain.Repo{{Name: "mac", Path: "/dev/mac"}}
-	form := newMissionForm(mission, []domain.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
+	ms := testMission("ms_1", "running", "op_1", mission.StatusActive)
+	ms.ExtraRepos = []mission.Repo{{Name: "mac", Path: "/dev/mac"}}
+	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
 	form.focusField(fieldMissionRepos)
 
 	form.Update(keyMsg("x"))
@@ -955,10 +953,10 @@ func TestMissionFormLocksAdditionalReposWhileLaunching(t *testing.T) {
 func TestMissionFormFixesToolAfterLaunch(t *testing.T) {
 	started := time.Now()
 
-	mission := testMission("ms_1", "running", "op_1", domain.StatusActive)
-	mission.StartedAt = &started
+	ms := testMission("ms_1", "running", "op_1", mission.StatusActive)
+	ms.StartedAt = &started
 
-	form := newMissionForm(mission, []domain.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
+	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
 	before := form.tool
 
 	form.cycleTool(keySpace)
@@ -970,11 +968,11 @@ func TestMissionFormFixesToolAfterLaunch(t *testing.T) {
 
 func TestStatusMenuExplainsFinishingCleanup(t *testing.T) {
 	started := time.Now()
-	mission := testMission("ms_1", "running", "op_1", domain.StatusDebrief)
-	mission.StartedAt = &started
+	ms := testMission("ms_1", "running", "op_1", mission.StatusDebrief)
+	ms.StartedAt = &started
 
 	app := &App{board: NewBoard()}
-	app.showStatusMenu(mission)
+	app.showStatusMenu(ms)
 
 	menu, ok := app.modal.(*listModal)
 	if !ok {
@@ -982,7 +980,7 @@ func TestStatusMenuExplainsFinishingCleanup(t *testing.T) {
 	}
 
 	for _, item := range menu.items {
-		if item.Key == string(domain.StatusClosed) {
+		if item.Key == string(mission.StatusClosed) {
 			if !strings.Contains(item.Detail, "reclaims worktrees") {
 				t.Errorf("done detail = %q", item.Detail)
 			}
@@ -996,11 +994,11 @@ func TestStatusMenuExplainsFinishingCleanup(t *testing.T) {
 
 func TestDirtyFinishRequiresExplicitConfirmation(t *testing.T) {
 	app := &App{board: NewBoard()}
-	mission := testMission("ms_1", "running", "op_1", domain.StatusDebrief)
+	ms := testMission("ms_1", "running", "op_1", mission.StatusDebrief)
 
 	cmd := app.handleFinishPlan(finishPlanMsg{
-		Mission: mission,
-		Plan: launch.Plan{
+		Mission: ms,
+		Plan: mission.Plan{
 			NeedsForce:   true,
 			KeptBranches: []string{"jarush/running"},
 		},
@@ -1027,9 +1025,9 @@ func TestDirtyFinishRequiresExplicitConfirmation(t *testing.T) {
 
 func TestCleanFinishNeedsNoConfirmation(t *testing.T) {
 	app := &App{board: NewBoard()}
-	mission := testMission("ms_1", "running", "op_1", domain.StatusDebrief)
+	ms := testMission("ms_1", "running", "op_1", mission.StatusDebrief)
 
-	cmd := app.handleFinishPlan(finishPlanMsg{Mission: mission, Plan: launch.Plan{}})
+	cmd := app.handleFinishPlan(finishPlanMsg{Mission: ms, Plan: mission.Plan{}})
 	if cmd == nil {
 		t.Fatal("a clean finish should proceed immediately")
 	}

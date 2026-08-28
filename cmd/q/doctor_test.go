@@ -7,10 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/runner"
-	"github.com/justinrush/q/internal/state"
 )
 
 func TestReportCodexAppServer(t *testing.T) {
@@ -66,12 +65,12 @@ func TestOwnedMissionDirs(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			dirs := paths.Dirs{Data: "/data"}
-			snap := state.Snapshot{
-				Operations: []domain.Operation{{
+			snap := mission.Snapshot{
+				Operations: []mission.Operation{{
 					ID:   "op_aabbccddeeff",
 					Slug: "operation",
 				}},
-				Missions: []domain.Mission{{
+				Missions: []mission.Mission{{
 					ID:          "ms_aabbccddeeff",
 					OperationID: "op_aabbccddeeff",
 					Slug:        "mission",

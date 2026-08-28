@@ -7,14 +7,15 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/repofind"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
 )
 
 // repoField is a one-checkout-per-line input with repository discovery.
 type repoField struct {
 	*textArea
-	findRepos func(fragment string) []repofind.Candidate
+	findRepos func(fragment string) []git.Candidate
 	repoRoots []string
 }
 
@@ -25,7 +26,7 @@ type repoField struct {
 // list cannot be mistaken for the whole answer.
 const maxRepoChoices = 12
 
-func newRepoField(repos []domain.Repo, opts repofind.Options) *repoField {
+func newRepoField(repos []mission.Repo, opts git.ScanOptions) *repoField {
 	var paths []string
 	for _, repo := range repos {
 		paths = append(paths, repo.Path)
@@ -34,7 +35,7 @@ func newRepoField(repos []domain.Repo, opts repofind.Options) *repoField {
 	return &repoField{
 		textArea:  newTextArea(strings.Join(paths, "\n"), true),
 		findRepos: newRepoFinder(opts),
-		repoRoots: repofind.Roots(opts.Roots),
+		repoRoots: git.ScanRoots(opts.Roots),
 	}
 }
 
@@ -44,18 +45,18 @@ func newRepoField(repos []domain.Repo, opts repofind.Options) *repoField {
 // command: it takes a few tens of milliseconds over a few hundred checkouts, and a
 // completion that arrives after the next keystroke would be worse than one that
 // makes the terminal pause imperceptibly. Caching keeps every later completion free.
-func newRepoFinder(opts repofind.Options) func(string) []repofind.Candidate {
+func newRepoFinder(opts git.ScanOptions) func(string) []git.Candidate {
 	var (
-		candidates []repofind.Candidate
+		candidates []git.Candidate
 		scanned    bool
 	)
 
-	return func(fragment string) []repofind.Candidate {
+	return func(fragment string) []git.Candidate {
 		if !scanned {
-			candidates, scanned = repofind.Scan(opts), true
+			candidates, scanned = git.Scan(opts), true
 		}
 
-		return repofind.Match(candidates, fragment)
+		return git.Match(candidates, fragment)
 	}
 }
 
@@ -81,7 +82,7 @@ func (f *repoField) complete(owner modal, msg tea.KeyMsg) (modal, string) {
 
 	// A path that already names a directory is taken as typed, so pasting a full
 	// path keeps working.
-	if dir, ok := repofind.Dir(fragment); ok {
+	if dir, ok := paths.Dir(fragment); ok {
 		f.accept(row, dir)
 
 		return owner, ""
@@ -123,7 +124,7 @@ func (f *repoField) accept(row int, path string) {
 }
 
 // picker offers the matching checkouts, returning to the owning form either way.
-func (f *repoField) picker(owner modal, row int, fragment string, matches []repofind.Candidate) modal {
+func (f *repoField) picker(owner modal, row int, fragment string, matches []git.Candidate) modal {
 	hint := "one of these"
 
 	shown := matches
@@ -136,7 +137,7 @@ func (f *repoField) picker(owner modal, row int, fragment string, matches []repo
 	// are what differs between two checkouts called the same thing.
 	var items []listItem
 	for _, candidate := range shown {
-		items = append(items, listItem{Key: candidate.Path, Label: repofind.Display(candidate.Path)})
+		items = append(items, listItem{Key: candidate.Path, Label: paths.Display(candidate.Path)})
 	}
 
 	return newList("Repos matching "+strconv.Quote(fragment), hint, items, func(picked string) tea.Cmd {
@@ -150,7 +151,7 @@ func (f *repoField) picker(owner modal, row int, fragment string, matches []repo
 func (f *repoField) displayRoots() []string {
 	var out []string
 	for _, root := range f.repoRoots {
-		out = append(out, repofind.Display(root))
+		out = append(out, paths.Display(root))
 	}
 
 	return out
@@ -172,8 +173,8 @@ func firstUncompletedRepo(text string) string {
 //
 // Only the name and path are set. The default branch and git directory need a
 // subprocess, which the daemon runs when it provisions worktrees.
-func parseRepoLines(text string) []domain.Repo {
-	var repos []domain.Repo
+func parseRepoLines(text string) []mission.Repo {
+	var repos []mission.Repo
 
 	for line := range strings.SplitSeq(text, "\n") {
 		path := strings.TrimSpace(line)
@@ -181,7 +182,7 @@ func parseRepoLines(text string) []domain.Repo {
 			continue
 		}
 
-		repos = append(repos, domain.Repo{Name: repoLeaf(path), Path: path})
+		repos = append(repos, mission.Repo{Name: repoLeaf(path), Path: path})
 	}
 
 	return repos

@@ -3,19 +3,15 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/spool"
+	"github.com/spf13/cobra"
 	"io"
 	"os"
 	"strconv"
 	"time"
-
-	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/client"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/hookspec"
-	"github.com/justinrush/q/internal/loadout"
-	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/spool"
-	"github.com/spf13/cobra"
 )
 
 // hookBudget bounds the total time a hook may take.
@@ -63,12 +59,12 @@ func runHook(ctx context.Context, toolArg, eventArg string) {
 	ctx, cancel := context.WithTimeout(ctx, hookBudget)
 	defer cancel()
 
-	tool, err := domain.ParseTool(toolArg)
+	tool, err := mission.ParseTool(toolArg)
 	if err != nil {
 		return
 	}
 
-	event, err := hookspec.CanonicalEvent(eventArg)
+	event, err := mission.CanonicalHookEvent(eventArg)
 	if err != nil {
 		return
 	}
@@ -81,7 +77,7 @@ func runHook(ctx context.Context, toolArg, eventArg string) {
 	req := api.HookRequest{
 		Tool:      tool,
 		Event:     event,
-		MissionID: domain.MissionID(os.Getenv(loadout.EnvMissionID)),
+		MissionID: mission.MissionID(os.Getenv(mission.EnvMissionID)),
 		HookEpoch: hookEpoch(),
 		Payload:   json.RawMessage(payload),
 	}
@@ -100,7 +96,7 @@ func runHook(ctx context.Context, toolArg, eventArg string) {
 // that spawned one could start a stampede, and starting a daemon takes far longer
 // than a hook's budget allows.
 func deliver(ctx context.Context, dirs paths.Dirs, req api.HookRequest) {
-	c, err := client.Connect(ctx, dirs)
+	c, err := api.Connect(ctx, dirs)
 	if err == nil {
 		if err := c.PostHook(ctx, req); err == nil {
 			return
@@ -112,7 +108,7 @@ func deliver(ctx context.Context, dirs paths.Dirs, req api.HookRequest) {
 
 // hookEpoch reads the launch generation from the environment.
 func hookEpoch() int {
-	epoch, err := strconv.Atoi(os.Getenv(loadout.EnvHookEpoch))
+	epoch, err := strconv.Atoi(os.Getenv(mission.EnvHookEpoch))
 	if err != nil {
 		return 0
 	}

@@ -3,13 +3,11 @@ package launch
 import (
 	"context"
 	"fmt"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/terminal"
 	"os"
 	"path/filepath"
-
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/loadout"
-	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/tmuxc"
 )
 
 // Relaunch restarts a mission's agent against its existing worktrees, resuming the
@@ -24,84 +22,64 @@ import (
 // recognized as stale and discarded rather than moving the revived card.
 func (l *Launcher) Relaunch(
 	ctx context.Context,
-	operation domain.Operation,
-	mission domain.Mission,
+	operation mission.Operation,
+	ms mission.Mission,
 	message string,
-) (domain.Mission, error) {
-	if mission.MissionDir == "" {
-		return mission, fmt.Errorf("mission %s has never been launched", mission.ID)
+) (mission.Mission, error) {
+	if ms.MissionDir == "" {
+		return ms, fmt.Errorf("mission %s has never been launched", ms.ID)
 	}
 
-	if _, err := os.Stat(mission.MissionDir); err != nil {
-		return mission, fmt.Errorf("mission directory %s is gone: %w", mission.MissionDir, err)
+	if _, err := os.Stat(ms.MissionDir); err != nil {
+		return ms, fmt.Errorf("mission directory %s is gone: %w", ms.MissionDir, err)
 	}
 
-	mission.HookEpoch++
+	ms.HookEpoch++
 
-	if err := l.writeRelaunchArtifacts(mission, message); err != nil {
-		return mission, err
+	if err := l.writeRelaunchArtifacts(ms, message); err != nil {
+		return ms, err
 	}
 
 	// A session left behind with a dead pane would block creating the new one.
-	if l.tmux.HasSession(ctx, mission.TmuxSession) {
-		if err := l.tmux.KillSession(ctx, mission.TmuxSession); err != nil {
-			return mission, err
+	if l.tmux.HasSession(ctx, ms.TmuxSession) {
+		if err := l.tmux.KillSession(ctx, ms.TmuxSession); err != nil {
+			return ms, err
 		}
 	}
 
-	if err := l.startSession(ctx, operation, &mission); err != nil {
-		return mission, err
+	if err := l.startSession(ctx, operation, &ms); err != nil {
+		return ms, err
 	}
 
-	mission.AgentState = domain.AgentUnknown
-	mission.LaunchError = ""
-	mission.Badges = mission.WithoutBadge(domain.BadgeTmuxGone)
-	mission.Badges = mission.WithoutBadge(domain.BadgeEnded)
+	ms.AgentState = mission.AgentUnknown
+	ms.LaunchError = ""
+	ms.Badges = ms.WithoutBadge(mission.BadgeTmuxGone)
+	ms.Badges = ms.WithoutBadge(mission.BadgeEnded)
 
-	return mission, nil
+	return ms, nil
 }
 
 // writeRelaunchArtifacts regenerates the prompt and script for a resumed session.
 //
 // The prompt is rewritten because a resumed agent is given the follow-up message
-// rather than the original mission, which it has already seen.
-func (l *Launcher) writeRelaunchArtifacts(mission domain.Mission, message string) error {
-	dir := filepath.Join(mission.MissionDir, loadout.ArtifactDir)
-	if err := os.MkdirAll(dir, paths.DirMode); err != nil {
-		return fmt.Errorf("creating the artifact directory: %w", err)
-	}
-
+// rather than the original mission, which it has already seen. The agent's own
+// configuration is rewritten too, so a moved q binary is corrected on relaunch
+// rather than leaving the revived session unable to report status.
+func (l *Launcher) writeRelaunchArtifacts(ms mission.Mission, message string) error {
 	prompt := message
 	if prompt == "" {
 		prompt = defaultResumePrompt
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, loadout.PromptFile), []byte(prompt), paths.FileMode); err != nil {
-		return fmt.Errorf("writing the resume prompt: %w", err)
-	}
-
-	qBin, err := l.selfPath()
-	if err != nil {
+	if err := l.writePrompt(ms, prompt); err != nil {
 		return err
 	}
 
-	// The settings file is rewritten so a moved q binary is corrected on
-	// relaunch rather than leaving the revived session unable to report status.
-	if mission.Tool == domain.ToolClaude {
-		settings, err := loadout.ClaudeSettings(qBin, worktreePaths(mission))
-		if err != nil {
-			return err
-		}
-
-		path := filepath.Join(dir, loadout.ClaudeSettingsFile)
-		if err := os.WriteFile(path, settings, paths.FileMode); err != nil {
-			return fmt.Errorf("writing claude settings: %w", err)
-		}
-	} else if err := l.writeCodexProfile(qBin, mission.MissionDir); err != nil {
-		return err
-	}
-
-	return l.writeResumeScript(mission)
+	// An agent with no way to be told a session id up front has nothing to resume
+	// by id when its SessionStart hook never arrived. The session then starts
+	// fresh rather than silently resuming whatever was most recent in this
+	// directory.
+	return l.writeScript(ms, ms.AgentSessionID != "")
 }
 
 // defaultResumePrompt is sent when a session is revived with nothing specific to say.
@@ -112,36 +90,6 @@ func (l *Launcher) writeRelaunchArtifacts(mission domain.Mission, message string
 const defaultResumePrompt = "Continue where you left off. " +
 	"Your session was restarted by q, so re-check the state of the working tree before acting."
 
-// writeResumeScript renders the launch script in resume mode.
-func (l *Launcher) writeResumeScript(mission domain.Mission) error {
-	spec, err := l.launchSpec(mission)
-	if err != nil {
-		return err
-	}
-
-	// codex has no way to be told a session id up front, so if its SessionStart hook
-	// never arrived there is nothing to resume by id. The session then starts fresh
-	// rather than silently resuming whatever was most recent in this directory.
-	spec.Resume = mission.AgentSessionID != ""
-
-	script, err := loadout.RenderLaunchScript(spec)
-	if err != nil {
-		return err
-	}
-
-	path := filepath.Join(mission.MissionDir, loadout.ArtifactDir, loadout.LaunchScript)
-	if err := os.WriteFile(path, []byte(script), paths.ExecMode); err != nil {
-		return fmt.Errorf("writing the relaunch script: %w", err)
-	}
-
-	args, err := loadout.AgentArgs(spec)
-	if err != nil {
-		return err
-	}
-
-	return l.writeMeta(mission, spec, args)
-}
-
 // SendMessage delivers text to a mission's live agent session.
 //
 // The pane guard is a safety requirement rather than a nicety. If the agent has
@@ -149,53 +97,53 @@ func (l *Launcher) writeResumeScript(mission domain.Mission) error {
 // that shell and run it. q sets remain-on-exit so a finished agent leaves a
 // dead pane instead, and this refuses to send unless the pane is both alive and
 // running an agent.
-func (l *Launcher) SendMessage(ctx context.Context, mission domain.Mission, text string) error {
+func (l *Launcher) SendMessage(ctx context.Context, ms mission.Mission, text string) error {
 	if text == "" {
 		return nil
 	}
 
-	if mission.TmuxSession == "" || mission.AgentPaneID == "" {
-		return fmt.Errorf("mission %s has no live session", mission.ID)
+	if ms.TmuxSession == "" || ms.AgentPaneID == "" {
+		return fmt.Errorf("mission %s has no live session", ms.ID)
 	}
 
-	if err := l.verifyAgentPane(ctx, mission); err != nil {
+	if err := l.verifyAgentPane(ctx, ms); err != nil {
 		return err
 	}
 
 	// Delivered via a file and a tmux buffer rather than as keystrokes, so a
 	// multi-line message with quotes survives intact.
-	path := filepath.Join(l.dirs.State, "msg-"+string(mission.ID)+".txt")
+	path := filepath.Join(l.dirs.State, "msg-"+string(ms.ID)+".txt")
 	if err := os.WriteFile(path, []byte(text), paths.FileMode); err != nil {
 		return fmt.Errorf("staging the message: %w", err)
 	}
 
-	bufferName := "q-msg-" + string(mission.ID)
+	bufferName := "q-msg-" + string(ms.ID)
 
 	if err := l.tmux.LoadBuffer(ctx, bufferName, path); err != nil {
 		return err
 	}
 
-	if err := l.tmux.PasteBuffer(ctx, tmuxc.Pane(mission.AgentPaneID), bufferName); err != nil {
+	if err := l.tmux.PasteBuffer(ctx, terminal.Pane(ms.AgentPaneID), bufferName); err != nil {
 		return err
 	}
 
-	return l.tmux.SendKeys(ctx, tmuxc.Pane(mission.AgentPaneID), "Enter")
+	return l.tmux.SendKeys(ctx, terminal.Pane(ms.AgentPaneID), "Enter")
 }
 
 // verifyAgentPane confirms the target pane is still running an agent.
-func (l *Launcher) verifyAgentPane(ctx context.Context, mission domain.Mission) error {
-	panes, err := l.tmux.ListPanes(ctx, tmuxc.Session(mission.TmuxSession))
+func (l *Launcher) verifyAgentPane(ctx context.Context, ms mission.Mission) error {
+	panes, err := l.tmux.ListPanes(ctx, terminal.Session(ms.TmuxSession))
 	if err != nil {
 		return err
 	}
 
 	for _, pane := range panes {
-		if pane.ID != mission.AgentPaneID {
+		if pane.ID != ms.AgentPaneID {
 			continue
 		}
 
 		if pane.Dead {
-			return fmt.Errorf("the agent pane for %s has exited; relaunch instead of messaging it", mission.ID)
+			return fmt.Errorf("the agent pane for %s has exited; relaunch instead of messaging it", ms.ID)
 		}
 
 		if !AgentCommands[pane.Command] {
@@ -208,7 +156,7 @@ func (l *Launcher) verifyAgentPane(ctx context.Context, mission domain.Mission) 
 		return nil
 	}
 
-	return fmt.Errorf("the agent pane for %s is gone; relaunch instead of messaging it", mission.ID)
+	return fmt.Errorf("the agent pane for %s is gone; relaunch instead of messaging it", ms.ID)
 }
 
 // AgentCommands are the process names a live agent pane runs.

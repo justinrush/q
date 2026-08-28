@@ -13,10 +13,8 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/state"
 )
 
 const testToken = "test-token"
@@ -30,7 +28,7 @@ func newTestServer(t *testing.T) (*Server, *http.Client, string) {
 	root := t.TempDir()
 	dirs := paths.Dirs{Data: filepath.Join(root, "data"), State: filepath.Join(root, "state")}
 
-	store, err := state.Open(dirs)
+	store, err := mission.Open(dirs)
 	if err != nil {
 		t.Fatalf("state.Open: %v", err)
 	}
@@ -38,7 +36,7 @@ func newTestServer(t *testing.T) (*Server, *http.Client, string) {
 	hub := NewHub()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	svc := NewService(ServiceConfig{Store: store, Hub: hub, Dirs: dirs, Logger: logger, Now: time.Now})
+	svc := NewService(store, hub, dirs, WithLogger(logger), WithClock(time.Now))
 
 	queue := newHookQueue()
 	go queue.run(svc)
@@ -209,7 +207,7 @@ func TestHealthReportsCounts(t *testing.T) {
 func TestOperationAndMissionLifecycleOverHTTP(t *testing.T) {
 	_, c, base := newTestServer(t)
 
-	var operation domain.Operation
+	var operation mission.Operation
 	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/operations", api.CreateOperationRequest{
 		Name:    "Discussions API",
 		Summary: "wire discussions through",
@@ -219,30 +217,30 @@ func TestOperationAndMissionLifecycleOverHTTP(t *testing.T) {
 		t.Errorf("Slug = %q, want %q", operation.Slug, "discussions-api")
 	}
 
-	var mission domain.Mission
+	var ms mission.Mission
 	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions", api.CreateMissionRequest{
 		OperationID: operation.ID,
 		Name:        "add endpoint",
 		Prompt:      "do the thing",
-		Tool:        domain.ToolClaude,
-	}), &mission)
+		Tool:        mission.ToolClaude,
+	}), &ms)
 
 	// New missions always land in draft; launching is a separate explicit action.
-	if mission.Status != domain.StatusBriefing {
-		t.Errorf("Status = %q, want %q", mission.Status, domain.StatusBriefing)
+	if ms.Status != mission.StatusBriefing {
+		t.Errorf("Status = %q, want %q", ms.Status, mission.StatusBriefing)
 	}
 
-	var moved domain.Mission
-	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions/"+string(mission.ID)+"/status",
-		api.SetStatusRequest{To: domain.StatusDebrief}), &moved)
+	var moved mission.Mission
+	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions/"+string(ms.ID)+"/status",
+		api.SetStatusRequest{To: mission.StatusDebrief}), &moved)
 
-	if moved.Status != domain.StatusDebrief {
-		t.Errorf("Status = %q, want %q", moved.Status, domain.StatusDebrief)
+	if moved.Status != mission.StatusDebrief {
+		t.Errorf("Status = %q, want %q", moved.Status, mission.StatusDebrief)
 	}
 
 	// Deleting returns a report of what it reclaimed rather than an empty response,
 	// because a branch kept behind is something the caller has to be told about.
-	resp := do(t, c, http.MethodDelete, base+"/v1/missions/"+string(mission.ID), nil)
+	resp := do(t, c, http.MethodDelete, base+"/v1/missions/"+string(ms.ID), nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("delete status = %d, want 200", resp.StatusCode)
 	}
@@ -252,13 +250,13 @@ func TestOperationAndMissionLifecycleOverHTTP(t *testing.T) {
 
 func TestDoneStatusReclaimsResourcesAndRetainsCard(t *testing.T) {
 	srv, c, base := newTestServer(t)
-	mission := launchedServiceMission(t, srv.svc)
-	reclaimer := &fakeReclaimer{report: launch.Report{Removed: []string{"/missions/mission/repo"}}}
-	srv.svc.SetReclaimer(reclaimer)
+	ms := launchedServiceMission(t, srv.svc)
+	reclaimer := &fakeReclaimer{report: mission.Report{Removed: []string{"/missions/mission/repo"}}}
+	srv.svc.apply(WithReclaimer(reclaimer))
 
-	var finished domain.Mission
-	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(mission.ID)+"/status",
-		api.SetStatusRequest{To: domain.StatusClosed})
+	var finished mission.Mission
+	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(ms.ID)+"/status",
+		api.SetStatusRequest{To: mission.StatusClosed})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("finish status = %d, want 200", resp.StatusCode)
 	}
@@ -269,42 +267,42 @@ func TestDoneStatusReclaimsResourcesAndRetainsCard(t *testing.T) {
 		t.Fatalf("reclaim calls = %d, want 1", reclaimer.calls)
 	}
 
-	if finished.Status != domain.StatusClosed || finished.MissionDir != "" {
+	if finished.Status != mission.StatusClosed || finished.MissionDir != "" {
 		t.Errorf("finished mission = %+v", finished)
 	}
 
-	if _, ok := srv.svc.Snapshot().Mission(mission.ID); !ok {
+	if _, ok := srv.svc.Snapshot().Mission(ms.ID); !ok {
 		t.Error("the done card should remain in state")
 	}
 }
 
 func TestDoneStatusRequiresForceForDirtyWork(t *testing.T) {
 	srv, c, base := newTestServer(t)
-	mission := launchedServiceMission(t, srv.svc)
-	reclaimer := &fakeReclaimer{err: launch.ErrNeedsForce}
-	srv.svc.SetReclaimer(reclaimer)
+	ms := launchedServiceMission(t, srv.svc)
+	reclaimer := &fakeReclaimer{err: mission.ErrNeedsForce}
+	srv.svc.apply(WithReclaimer(reclaimer))
 
-	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(mission.ID)+"/status",
-		api.SetStatusRequest{To: domain.StatusClosed})
+	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(ms.ID)+"/status",
+		api.SetStatusRequest{To: mission.StatusClosed})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("finish status = %d, want 409", resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 
-	stored, ok := srv.svc.Snapshot().Mission(mission.ID)
-	if !ok || stored.Status == domain.StatusClosed {
+	stored, ok := srv.svc.Snapshot().Mission(ms.ID)
+	if !ok || stored.Status == mission.StatusClosed {
 		t.Errorf("a refused finish changed the mission: %+v", stored)
 	}
 }
 
 func TestDoneStatusPassesConfirmedForce(t *testing.T) {
 	srv, c, base := newTestServer(t)
-	mission := launchedServiceMission(t, srv.svc)
+	ms := launchedServiceMission(t, srv.svc)
 	reclaimer := &fakeReclaimer{}
-	srv.svc.SetReclaimer(reclaimer)
+	srv.svc.apply(WithReclaimer(reclaimer))
 
-	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(mission.ID)+"/status",
-		api.SetStatusRequest{To: domain.StatusClosed, Force: true})
+	resp := do(t, c, http.MethodPost, base+"/v1/missions/"+string(ms.ID)+"/status",
+		api.SetStatusRequest{To: mission.StatusClosed, Force: true})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("finish status = %d, want 200", resp.StatusCode)
 	}
@@ -394,11 +392,11 @@ func TestEventStreamSendsSnapshotThenChanges(t *testing.T) {
 	reader := bufio.NewReader(resp.Body)
 
 	name, payload := readFrame(t, reader)
-	if name != EventSnapshot {
-		t.Fatalf("first event = %q, want %q", name, EventSnapshot)
+	if name != api.EventSnapshot {
+		t.Fatalf("first event = %q, want %q", name, api.EventSnapshot)
 	}
 
-	var snap state.Snapshot
+	var snap mission.Snapshot
 	if err := json.Unmarshal(payload, &snap); err != nil {
 		t.Fatalf("decoding snapshot: %v", err)
 	}
@@ -408,11 +406,11 @@ func TestEventStreamSendsSnapshotThenChanges(t *testing.T) {
 	_ = created.Body.Close()
 
 	name, payload = readFrame(t, reader)
-	if name != EventOperation {
-		t.Fatalf("second event = %q, want %q", name, EventOperation)
+	if name != api.EventOperation {
+		t.Fatalf("second event = %q, want %q", name, api.EventOperation)
 	}
 
-	var operation domain.Operation
+	var operation mission.Operation
 	if err := json.Unmarshal(payload, &operation); err != nil {
 		t.Fatalf("decoding operation: %v", err)
 	}
@@ -458,7 +456,7 @@ func TestHubDropsSlowSubscriber(t *testing.T) {
 	_, frames := hub.Subscribe()
 
 	for range subBuffer + 10 {
-		hub.Broadcast(EventMission, domain.Mission{Name: "flood"})
+		hub.Broadcast(api.EventMission, mission.Mission{Name: "flood"})
 	}
 
 	if got := hub.Subscribers(); got != 0 {
@@ -507,7 +505,7 @@ func TestHubBroadcastIsConcurrencySafe(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 50 {
-				hub.Broadcast(EventMission, domain.Mission{Name: "x"})
+				hub.Broadcast(api.EventMission, mission.Mission{Name: "x"})
 			}
 		})
 	}
@@ -519,7 +517,7 @@ func TestHubBroadcastIsConcurrencySafe(t *testing.T) {
 // SSE is line-oriented, so an embedded newline in the payload would split one
 // event into two malformed ones.
 func TestEncodeFrameKeepsPayloadOnOneLine(t *testing.T) {
-	frame, err := encodeFrame(EventMission, domain.Mission{
+	frame, err := encodeFrame(api.EventMission, mission.Mission{
 		Name:   "multi\nline",
 		Prompt: "first\nsecond\r\nthird",
 	})
@@ -545,19 +543,19 @@ func TestEncodeFrameKeepsPayloadOnOneLine(t *testing.T) {
 func TestHookEndpointCanonicalizesEventSlug(t *testing.T) {
 	_, c, base := newTestServer(t)
 
-	var operation domain.Operation
+	var operation mission.Operation
 	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/operations", api.CreateOperationRequest{Name: "T"}), &operation)
 
-	var mission domain.Mission
+	var ms mission.Mission
 	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions", api.CreateMissionRequest{
 		OperationID: operation.ID, Name: "mission", Prompt: "x",
-	}), &mission)
+	}), &ms)
 
 	payload := `{"session_id":"sess-1","cwd":"/tmp","transcript_path":"/tmp/t.jsonl",` +
 		`"hook_event_name":"SessionStart","source":"startup"}`
 
 	resp := do(t, c, http.MethodPost, base+"/v1/hooks/claude/session-start", api.HookRequest{
-		MissionID: mission.ID,
+		MissionID: ms.ID,
 		HookEpoch: 1,
 		Payload:   json.RawMessage(payload),
 	})
@@ -570,9 +568,9 @@ func TestHookEndpointCanonicalizesEventSlug(t *testing.T) {
 	_ = resp.Body.Close()
 
 	waitFor(t, func() bool {
-		stored, ok := s(t, base, c).Mission(mission.ID)
+		stored, ok := s(t, base, c).Mission(ms.ID)
 
-		return ok && stored.AgentState == domain.AgentBusy
+		return ok && stored.AgentState == mission.AgentBusy
 	}, "SessionStart to be applied")
 }
 
@@ -611,10 +609,10 @@ func TestHookEndpointAlwaysReportsSuccess(t *testing.T) {
 }
 
 // s fetches the current snapshot.
-func s(t *testing.T, base string, c *http.Client) state.Snapshot {
+func s(t *testing.T, base string, c *http.Client) mission.Snapshot {
 	t.Helper()
 
-	var snap state.Snapshot
+	var snap mission.Snapshot
 	decodeBody(t, do(t, c, http.MethodGet, base+"/v1/state", nil), &snap)
 
 	return snap

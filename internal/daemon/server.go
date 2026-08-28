@@ -14,9 +14,7 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/debrief"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/hookspec"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/spool"
 )
@@ -182,12 +180,12 @@ func (s *Server) handleOpenDebrief(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := debrief.Mode(req.Mode)
+	mode := api.Mode(req.Mode)
 	if mode == "" {
-		mode = debrief.ModeAttach
+		mode = api.ModeAttach
 	}
 
-	result, err := s.svc.OpenDebrief(r.Context(), domain.MissionID(r.PathValue("id")), mode)
+	result, err := s.svc.OpenDebrief(r.Context(), mission.MissionID(r.PathValue("id")), mode)
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -204,18 +202,18 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mission, err := s.svc.Resume(r.Context(), domain.MissionID(r.PathValue("id")), req.Text)
+	ms, err := s.svc.Resume(r.Context(), mission.MissionID(r.PathValue("id")), req.Text)
 	if err != nil {
 		writeServiceError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, mission)
+	writeJSON(w, http.StatusOK, ms)
 }
 
 func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
-	touched, err := s.svc.Diff(r.Context(), domain.MissionID(r.PathValue("id")))
+	touched, err := s.svc.Diff(r.Context(), mission.MissionID(r.PathValue("id")))
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -233,7 +231,7 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 // reducer is saturated the event goes to the spool instead, which the daemon drains
 // on its next start.
 func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
-	tool, err := domain.ParseTool(r.PathValue("tool"))
+	tool, err := mission.ParseTool(r.PathValue("tool"))
 	if err != nil {
 		// Still 204: an agent can do nothing useful with a rejection.
 		s.logger.Warn("hook from an unknown tool", "tool", r.PathValue("tool"))
@@ -256,7 +254,7 @@ func (s *Server) handleHook(w http.ResponseWriter, r *http.Request) {
 	// machine dispatches on canonical names ("SessionStart"). Converting here is
 	// required, not cosmetic: an unconverted slug matches no case and the event is
 	// silently discarded.
-	event, err := hookspec.CanonicalEvent(r.PathValue("event"))
+	event, err := mission.CanonicalHookEvent(r.PathValue("event"))
 	if err != nil {
 		s.logger.Warn("hook for an unknown event", "event", r.PathValue("event"))
 		w.WriteHeader(http.StatusNoContent)
@@ -403,7 +401,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	// Send the full state first so a reconnecting client resynchronizes without
 	// needing to ask, which is what makes dropping slow subscribers safe.
-	if frame, err := encodeFrame(EventSnapshot, s.svc.Snapshot()); err == nil {
+	if frame, err := encodeFrame(api.EventSnapshot, s.svc.Snapshot()); err == nil {
 		if _, err := w.Write(frame); err != nil {
 			return
 		}
@@ -429,7 +427,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 			flusher.Flush()
 		case <-ticker.C:
-			if frame, err := encodeFrame(EventPing, struct{}{}); err == nil {
+			if frame, err := encodeFrame(api.EventPing, struct{}{}); err == nil {
 				if _, err := w.Write(frame); err != nil {
 					return
 				}
@@ -466,7 +464,7 @@ func (s *Server) handleUpdateOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	operation, err := s.svc.UpdateOperation(domain.OperationID(r.PathValue("id")), req)
+	operation, err := s.svc.UpdateOperation(mission.OperationID(r.PathValue("id")), req)
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -479,7 +477,7 @@ func (s *Server) handleUpdateOperation(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteOperation(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 
-	if err := s.svc.DeleteOperation(domain.OperationID(r.PathValue("id")), force); err != nil {
+	if err := s.svc.DeleteOperation(mission.OperationID(r.PathValue("id")), force); err != nil {
 		writeServiceError(w, err)
 
 		return
@@ -498,14 +496,14 @@ func (s *Server) handleCreateMission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mission, err := s.svc.CreateMission(req)
+	ms, err := s.svc.CreateMission(req)
 	if err != nil {
 		writeServiceError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, mission)
+	writeJSON(w, http.StatusCreated, ms)
 }
 
 func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
@@ -514,14 +512,14 @@ func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mission, err := s.svc.UpdateMission(domain.MissionID(r.PathValue("id")), req)
+	ms, err := s.svc.UpdateMission(mission.MissionID(r.PathValue("id")), req)
 	if err != nil {
 		writeServiceError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, mission)
+	writeJSON(w, http.StatusOK, ms)
 }
 
 // handleDeleteMission removes a mission and reclaims what it provisioned.
@@ -531,7 +529,7 @@ func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteMission(w http.ResponseWriter, r *http.Request) {
 	force := r.URL.Query().Get("force") == "true"
 
-	report, err := s.svc.DeleteMissionAndReclaim(r.Context(), domain.MissionID(r.PathValue("id")), force)
+	report, err := s.svc.DeleteMissionAndReclaim(r.Context(), mission.MissionID(r.PathValue("id")), force)
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -543,7 +541,7 @@ func (s *Server) handleDeleteMission(w http.ResponseWriter, r *http.Request) {
 
 // handleDeletePlan reports what deleting a mission would discard.
 func (s *Server) handleDeletePlan(w http.ResponseWriter, r *http.Request) {
-	plan, err := s.svc.PlanDelete(r.Context(), domain.MissionID(r.PathValue("id")))
+	plan, err := s.svc.PlanDelete(r.Context(), mission.MissionID(r.PathValue("id")))
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -564,17 +562,17 @@ func (s *Server) handleDeletePlan(w http.ResponseWriter, r *http.Request) {
 // subprocess work and remain testable on their own.
 func (s *Server) dispatchStatus(
 	ctx context.Context,
-	id domain.MissionID,
-	current domain.Mission,
+	id mission.MissionID,
+	current mission.Mission,
 	req api.SetStatusRequest,
-) (domain.Mission, error) {
-	if req.To == domain.StatusClosed {
-		mission, _, err := s.svc.FinishMission(ctx, id, req.Force)
+) (mission.Mission, error) {
+	if req.To == mission.StatusClosed {
+		ms, _, err := s.svc.FinishMission(ctx, id, req.Force)
 
-		return mission, err
+		return ms, err
 	}
 
-	if req.To != domain.StatusActive {
+	if req.To != mission.StatusActive {
 		return s.svc.SetStatus(id, req.To)
 	}
 
@@ -583,9 +581,9 @@ func (s *Server) dispatchStatus(
 	}
 
 	switch current.Status {
-	case domain.StatusBriefing:
+	case mission.StatusBriefing:
 		return s.svc.Start(ctx, id)
-	case domain.StatusAwaiting, domain.StatusDebrief:
+	case mission.StatusAwaiting, mission.StatusDebrief:
 		return s.svc.Resume(ctx, id, req.Message)
 	default:
 		return s.svc.SetStatus(id, req.To)
@@ -599,7 +597,7 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := domain.MissionID(r.PathValue("id"))
+	id := mission.MissionID(r.PathValue("id"))
 
 	current, ok := s.svc.Snapshot().Mission(id)
 	if !ok {
@@ -608,14 +606,14 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mission, err := s.dispatchStatus(r.Context(), id, current, req)
+	ms, err := s.dispatchStatus(r.Context(), id, current, req)
 	if err != nil {
 		writeServiceError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, mission)
+	writeJSON(w, http.StatusOK, ms)
 }
 
 // decode reads a JSON body, writing a 400 and returning false on failure.

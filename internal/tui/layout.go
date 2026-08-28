@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/justinrush/q/internal/domain"
+import "github.com/justinrush/q/internal/mission"
 
 // Layout thresholds.
 const (
@@ -39,7 +39,7 @@ type Layout struct {
 // collapsing the done column and, when that is not enough, showing a single lane.
 func computeLayout(width, height int, doneExpanded bool, focusedLane int) Layout {
 	layout := Layout{
-		Widths:     make([]int, len(domain.Lanes)),
+		Widths:     make([]int, len(mission.Lanes)),
 		CardHeight: cardHeight(),
 	}
 
@@ -57,7 +57,7 @@ func computeLayout(width, height int, doneExpanded bool, focusedLane int) Layout
 	if width < focusModeBelow {
 		layout.Focus = true
 
-		lane := clamp(focusedLane, len(domain.Lanes)-1)
+		lane := clamp(focusedLane, len(mission.Lanes)-1)
 		layout.Widths[lane] = max(width, MinCardWidth)
 
 		return layout
@@ -70,10 +70,10 @@ func computeLayout(width, height int, doneExpanded bool, focusedLane int) Layout
 
 // shareWidth divides the terminal between the lanes.
 func shareWidth(width int, doneExpanded bool) []int {
-	widths := make([]int, len(domain.Lanes))
-	doneIdx := len(domain.Lanes) - 1
+	widths := make([]int, len(mission.Lanes))
+	doneIdx := len(mission.Lanes) - 1
 
-	gaps := (len(domain.Lanes) - 1) * laneGap
+	gaps := (len(mission.Lanes) - 1) * laneGap
 	available := width - gaps
 
 	if !doneExpanded {
@@ -83,7 +83,7 @@ func shareWidth(width int, doneExpanded bool) []int {
 		available -= collapsedDoneWidth
 	}
 
-	share := len(domain.Lanes)
+	share := len(mission.Lanes)
 	if !doneExpanded {
 		share--
 	}

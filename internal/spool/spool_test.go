@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 )
 
@@ -19,7 +19,7 @@ func entry(offsetSeconds int, event string) Entry {
 	return Entry{
 		ObservedAt: base.Add(time.Duration(offsetSeconds) * time.Second),
 		Hook: api.HookRequest{
-			Tool:      domain.ToolClaude,
+			Tool:      mission.ToolClaude,
 			Event:     event,
 			MissionID: "ms_aabbccddeeff",
 			HookEpoch: 1,

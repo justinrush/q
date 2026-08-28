@@ -1,20 +1,19 @@
 package launch
 
 import (
+	"github.com/justinrush/q/internal/claude"
+	"github.com/justinrush/q/internal/codex"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/runner"
+	"github.com/justinrush/q/internal/terminal"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/gadgets"
-	"github.com/justinrush/q/internal/gitx"
-	"github.com/justinrush/q/internal/loadout"
-	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/runner"
-	"github.com/justinrush/q/internal/tmuxc"
-	"io"
 )
 
 const (
@@ -39,10 +38,6 @@ func stubBin(t *testing.T, name string) string {
 func newTestLauncher(t *testing.T) (*Launcher, *runner.Fake, paths.Dirs) {
 	t.Helper()
 
-	// Point tool resolution at stubs so no real binary is required.
-	t.Setenv(gadgets.Claude.EnvVar(), stubBin(t, "claude"))
-	t.Setenv(gadgets.Codex.EnvVar(), stubBin(t, "codex"))
-
 	root := t.TempDir()
 	dirs := paths.Dirs{Data: filepath.Join(root, "data"), State: filepath.Join(root, "state")}
 
@@ -53,21 +48,25 @@ func newTestLauncher(t *testing.T) (*Launcher, *runner.Fake, paths.Dirs) {
 	fake := runner.NewFake()
 	fake.Default = runner.Result{Stdout: []byte("%13")}
 
-	launcher := New(Config{
-		Dirs:         dirs,
-		Git:          gitx.New(gitBin, fake),
-		Tmux:         tmuxc.New(tmuxBin, fake),
-		Bins:         gadgets.New(gadgets.Options{}),
-		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-		BranchPrefix: "jarush",
-	})
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	tmux := terminal.NewTmux(tmuxBin, fake)
+	workspace := git.NewProvisioner(dirs, git.New(gitBin, fake), tmux,
+		git.WithLogger(logger),
+		git.WithBranchPrefix("jarush"),
+	)
+
+	launcher := New(dirs, workspace, tmux,
+		WithLogger(logger),
+		WithAgent(claude.New(stubBin(t, "claude"), claude.Options{})),
+		WithAgent(codex.New(stubBin(t, "codex"), codex.Options{ConfigDir: filepath.Join(root, "codex")})),
+	)
 
 	return launcher, fake, dirs
 }
 
 // testSession is the tmux session name a launch of testMission under testOperation
 // produces.
-var testSession = domain.TmuxSessionName("discussions-api", "add-endpoint", "ms_aabbccddeeff")
+var testSession = mission.TmuxSessionName("discussions-api", "add-endpoint", "ms_aabbccddeeff")
 
 // seedGitResponses registers the answers a successful launch needs.
 func seedGitResponses(fake *runner.Fake, repoPath, commonDir string) {
@@ -85,24 +84,24 @@ func seedRepoGitResponses(fake *runner.Fake, repoPath, commonDir string) {
 	fake.ExpectExit(gitBin+" -C "+commonDir+" show-ref --verify --quiet refs/heads/jarush/add-endpoint", 1, "")
 }
 
-func testOperation(repoPath string) domain.Operation {
-	return domain.Operation{
+func testOperation(repoPath string) mission.Operation {
+	return mission.Operation{
 		ID:      "op_aabbccddeeff",
 		Name:    "Discussions API",
 		Slug:    "discussions-api",
 		Summary: "wire it up",
-		Repos:   []domain.Repo{{Name: "weave", Path: repoPath}},
+		Repos:   []mission.Repo{{Name: "weave", Path: repoPath}},
 	}
 }
 
-func testMission() domain.Mission {
-	return domain.Mission{
+func testMission() mission.Mission {
+	return mission.Mission{
 		ID:     "ms_aabbccddeeff",
 		Name:   "add endpoint",
 		Slug:   "add-endpoint",
-		Tool:   domain.ToolClaude,
+		Tool:   mission.ToolClaude,
 		Prompt: "do the thing",
-		Status: domain.StatusBriefing,
+		Status: mission.StatusBriefing,
 	}
 }
 
@@ -115,7 +114,7 @@ func TestLaunchProvisionsAndStarts(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	if got.Status != domain.StatusActive {
+	if got.Status != mission.StatusActive {
 		t.Errorf("Status = %q, want active", got.Status)
 	}
 
@@ -158,10 +157,10 @@ func TestLaunchCombinesAndFreezesMissionRepos(t *testing.T) {
 	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
 	seedRepoGitResponses(fake, "/dev/mac", "/dev/mac/.git")
 
-	mission := testMission()
-	mission.ExtraRepos = []domain.Repo{{Name: "mac", Path: "/dev/mac"}}
+	ms := testMission()
+	ms.ExtraRepos = []mission.Repo{{Name: "mac", Path: "/dev/mac"}}
 
-	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), mission)
+	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), ms)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -185,10 +184,10 @@ func TestLaunchSupportsAdditionalRepoOnRepoLessOperation(t *testing.T) {
 
 	operation := testOperation("")
 	operation.Repos = nil
-	mission := testMission()
-	mission.ExtraRepos = []domain.Repo{{Name: "mac", Path: "/dev/mac"}}
+	ms := testMission()
+	ms.ExtraRepos = []mission.Repo{{Name: "mac", Path: "/dev/mac"}}
 
-	got, err := launcher.Launch(t.Context(), operation, mission)
+	got, err := launcher.Launch(t.Context(), operation, ms)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -226,88 +225,6 @@ func TestLaunchDoesNotAdoptUnownedMissionDirectory(t *testing.T) {
 	}
 }
 
-// If the daemon exits after git creates a worktree but before it journals that
-// repo, the ownership marker makes the existing checkout safe to recover.
-func TestLaunchRecoversUnjournaledOwnedWorktree(t *testing.T) {
-	launcher, fake, dirs := newTestLauncher(t)
-	mission := testMission()
-	operation := testOperation("/dev/weave")
-
-	state, err := launcher.prepareMissionDir(operation, &mission)
-	if err != nil {
-		t.Fatalf("prepareMissionDir: %v", err)
-	}
-
-	worktreePath := filepath.Join(mission.MissionDir, "weave")
-	err = os.MkdirAll(worktreePath, 0o700)
-	if err != nil {
-		t.Fatalf("creating interrupted worktree: %v", err)
-	}
-
-	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
-	fake.Expect(gitBin+" -C /dev/weave/.git worktree list --porcelain", strings.Join([]string{
-		"worktree " + worktreePath,
-		"HEAD originalbase",
-		"branch refs/heads/jarush/add-endpoint",
-		"",
-	}, "\n"))
-
-	if state.MissionID != mission.ID {
-		t.Fatalf("provision owner = %q, want %q", state.MissionID, mission.ID)
-	}
-
-	got, err := launcher.Launch(t.Context(), operation, mission)
-	if err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	work := got.Work["weave"]
-	if work.BaseSHA != "originalbase" || work.Branch != "jarush/add-endpoint" || !work.Created {
-		t.Errorf("recovered work = %+v", work)
-	}
-
-	for _, line := range fake.Argv() {
-		if strings.Contains(line, "worktree add") {
-			t.Errorf("recovery tried to recreate the worktree: %q", line)
-		}
-	}
-
-	data, err := os.ReadFile(filepath.Join(dirs.MissionDir("discussions-api--add-endpoint"),
-		loadout.ArtifactDir, provisionStateFile))
-	if err != nil {
-		t.Fatalf("reading provision journal: %v", err)
-	}
-
-	if !strings.Contains(string(data), "originalbase") {
-		t.Errorf("provision journal did not record recovered base:\n%s", data)
-	}
-}
-
-// Two missions may have the same name in one operation. The ownership marker keeps
-// the second launch out of the first mission's directory.
-func TestLaunchUsesUniqueDirectoryForOwnershipConflict(t *testing.T) {
-	launcher, fake, dirs := newTestLauncher(t)
-	owner := testMission()
-	owner.ID = "ms_111111111111"
-	operation := testOperation("/dev/weave")
-
-	_, err := launcher.prepareMissionDir(operation, &owner)
-	if err != nil {
-		t.Fatalf("claiming first mission directory: %v", err)
-	}
-
-	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
-	got, err := launcher.Launch(t.Context(), operation, testMission())
-	if err != nil {
-		t.Fatalf("Launch: %v", err)
-	}
-
-	wantDir := dirs.MissionDir("discussions-api--add-endpoint--aabbccddeeff")
-	if got.MissionDir != wantDir {
-		t.Errorf("MissionDir = %q, want %q", got.MissionDir, wantDir)
-	}
-}
-
 // claude accepts a session id chosen in advance, which is what makes a session
 // resumable from the instant it starts rather than only after a hook reports back.
 func TestLaunchPresetsClaudeSessionID(t *testing.T) {
@@ -325,7 +242,7 @@ func TestLaunchPresetsClaudeSessionID(t *testing.T) {
 
 	// Arguments are emitted one per line for readability, so check the flag and its
 	// value separately rather than as one contiguous string.
-	script := readArtifact(t, got, loadout.LaunchScript)
+	script := readArtifact(t, got, mission.LaunchScript)
 
 	if !strings.Contains(script, "--session-id") {
 		t.Errorf("script does not pass --session-id:\n%s", script)
@@ -342,10 +259,10 @@ func TestLaunchDoesNotPresetCodexSessionID(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
 
-	mission := testMission()
-	mission.Tool = domain.ToolCodex
+	ms := testMission()
+	ms.Tool = mission.ToolCodex
 
-	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), mission)
+	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), ms)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
@@ -364,18 +281,18 @@ func TestLaunchWritesArtifacts(t *testing.T) {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	prompt := readArtifact(t, got, loadout.PromptFile)
+	prompt := readArtifact(t, got, mission.PromptFile)
 	if !strings.Contains(prompt, "do the thing") || !strings.Contains(prompt, "weave") {
 		t.Errorf("prompt looks wrong:\n%s", prompt)
 	}
 
-	settings := readArtifact(t, got, loadout.ClaudeSettingsFile)
+	settings := readArtifact(t, got, claude.SettingsFile)
 	if !strings.Contains(settings, "additionalDirectories") {
 		t.Errorf("settings should grant worktree access:\n%s", settings)
 	}
 
 	// The script must be executable, since tmux runs it directly.
-	scriptPath := filepath.Join(got.MissionDir, loadout.ArtifactDir, loadout.LaunchScript)
+	scriptPath := filepath.Join(got.MissionDir, mission.ArtifactDir, mission.LaunchScript)
 
 	info, err := os.Stat(scriptPath)
 	if err != nil {
@@ -387,16 +304,16 @@ func TestLaunchWritesArtifacts(t *testing.T) {
 	}
 
 	// The metadata file records what produced this session, for debugging.
-	if meta := readArtifact(t, got, loadout.MetaFile); !strings.Contains(meta, "ms_aabbccddeeff") {
+	if meta := readArtifact(t, got, mission.MetaFile); !strings.Contains(meta, "ms_aabbccddeeff") {
 		t.Errorf("metadata looks wrong:\n%s", meta)
 	}
 }
 
 // readArtifact reads a generated file from a mission's .q directory.
-func readArtifact(t *testing.T, mission domain.Mission, name string) string {
+func readArtifact(t *testing.T, ms mission.Mission, name string) string {
 	t.Helper()
 
-	data, err := os.ReadFile(filepath.Join(mission.MissionDir, loadout.ArtifactDir, name))
+	data, err := os.ReadFile(filepath.Join(ms.MissionDir, mission.ArtifactDir, name))
 	if err != nil {
 		t.Fatalf("reading %s: %v", name, err)
 	}
@@ -415,7 +332,7 @@ func TestLaunchRollsBackPartialProvisioning(t *testing.T) {
 	fake.ExpectExit(gitBin+" -C /dev/broken rev-parse --git-common-dir", 128, "not a git repository")
 
 	operation := testOperation("/dev/weave")
-	operation.Repos = append(operation.Repos, domain.Repo{Name: "broken", Path: "/dev/broken"})
+	operation.Repos = append(operation.Repos, mission.Repo{Name: "broken", Path: "/dev/broken"})
 
 	_, err := launcher.Launch(t.Context(), operation, testMission())
 	if err == nil {
@@ -509,25 +426,10 @@ func TestLaunchFailsForUnknownTool(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
 
-	mission := testMission()
-	mission.Tool = "cursor"
+	ms := testMission()
+	ms.Tool = "cursor"
 
-	if _, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), mission); err == nil {
+	if _, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), ms); err == nil {
 		t.Error("expected an error for an unknown tool")
-	}
-}
-
-func TestDefaultBranchPrefixFallsBackToUser(t *testing.T) {
-	t.Setenv("USER", "someone")
-	t.Setenv("LOGNAME", "")
-
-	if got := defaultBranchPrefix(); got != "someone" {
-		t.Errorf("defaultBranchPrefix() = %q, want %q", got, "someone")
-	}
-
-	t.Setenv("USER", "")
-
-	if got := defaultBranchPrefix(); got != "q" {
-		t.Errorf("defaultBranchPrefix() = %q, want the q fallback", got)
 	}
 }

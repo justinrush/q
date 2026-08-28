@@ -5,11 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/justinrush/q/internal/claudereg"
-	"github.com/justinrush/q/internal/domain"
 	"github.com/justinrush/q/internal/launch"
-	"github.com/justinrush/q/internal/state"
-	"github.com/justinrush/q/internal/tmuxc"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // Reconciliation tuning.
@@ -45,8 +43,8 @@ const (
 // It is an interface so reconciliation can be tested without a tmux server.
 type SessionProbe interface {
 	HasSession(ctx context.Context, session string) bool
-	ListPanes(ctx context.Context, target tmuxc.Target) ([]tmuxc.PaneInfo, error)
-	CapturePane(ctx context.Context, target tmuxc.Target, lines int) (string, error)
+	ListPanes(ctx context.Context, target terminal.Target) ([]terminal.PaneInfo, error)
+	CapturePane(ctx context.Context, target terminal.Target, lines int) (string, error)
 }
 
 // promptMarkers are phrases an agent uses when it has stopped to ask something at
@@ -70,9 +68,6 @@ var promptMarkers = []string{
 // capturedPromptLines is how much of the pane to read when looking for a question.
 const capturedPromptLines = 40
 
-// SetProbe attaches the tmux probe reconciliation uses.
-func (s *Service) SetProbe(p SessionProbe) { s.probe = p }
-
 // agentCommands are the process names a live agent pane runs.
 //
 // Anything else in an agent pane means the agent has exited, which matters for more
@@ -88,56 +83,60 @@ var agentCommands = launch.AgentCommands
 // completion, and where it cannot tell it adds a badge instead of guessing.
 func (s *Service) Reconcile(ctx context.Context) {
 	snap := s.store.Snapshot()
-	registry := s.scanRegistry()
+	readings := s.heal(ctx, snap.Missions)
 	now := s.now()
 
-	for _, mission := range snap.Missions {
-		if mission.Status == domain.StatusBriefing || mission.Status.Terminal() || !mission.Launched() {
+	for _, ms := range snap.Missions {
+		if ms.Status == mission.StatusBriefing || ms.Status.Terminal() || !ms.Launched() {
 			continue
 		}
 
-		if updated, changed := s.reconcileMission(ctx, mission, registry, now); changed {
+		if updated, changed := s.reconcileMission(ctx, ms, readings, now); changed {
 			s.persistReconciled(updated)
 		}
 	}
 }
 
-// scanRegistry reads claude's live session registry, tolerating its absence.
-func (s *Service) scanRegistry() map[string]claudereg.Session {
-	dir, err := claudereg.DefaultDir()
-	if err != nil {
-		return nil
+// heal asks each configured healer what the agents' own registries say,
+// tolerating an absent or unreadable one.
+func (s *Service) heal(ctx context.Context, missions []mission.Mission) map[mission.MissionID]mission.Reading {
+	out := map[mission.MissionID]mission.Reading{}
+
+	for _, healer := range s.healers {
+		readings, err := healer.Heal(ctx, missions)
+		if err != nil {
+			s.warn("reading an agent session registry", "error", err)
+
+			continue
+		}
+
+		for id, reading := range readings {
+			out[id] = reading
+		}
 	}
 
-	sessions, err := claudereg.Scan(dir)
-	if err != nil {
-		s.warn("reading the claude session registry", "error", err)
-
-		return nil
-	}
-
-	return claudereg.BySessionID(sessions)
+	return out
 }
 
 // reconcileMission returns the mission with any corrections applied.
 func (s *Service) reconcileMission(
 	ctx context.Context,
-	mission domain.Mission,
-	registry map[string]claudereg.Session,
+	ms mission.Mission,
+	readings map[mission.MissionID]mission.Reading,
 	now time.Time,
-) (domain.Mission, bool) {
-	before := mission
+) (mission.Mission, bool) {
+	before := ms
 
-	alive := s.checkSession(ctx, &mission, now)
+	alive := s.checkSession(ctx, &ms, now)
 	if !alive {
-		return mission, !sameReconciled(before, mission)
+		return ms, !sameReconciled(before, ms)
 	}
 
-	s.applyRegistry(&mission, registry, now)
-	s.applyTimers(&mission, now)
-	s.detectStartupPrompt(ctx, &mission, now)
+	s.applyReading(&ms, readings, now)
+	s.applyTimers(&ms, now)
+	s.detectStartupPrompt(ctx, &ms, now)
 
-	return mission, !sameReconciled(before, mission)
+	return ms, !sameReconciled(before, ms)
 }
 
 // detectStartupPrompt looks for an agent stopped at a question before it ever reported.
@@ -149,16 +148,16 @@ func (s *Service) reconcileMission(
 //
 // It runs only for a mission that has never reported, so a working agent's pane is never
 // scraped and its screen contents never influence its lane.
-func (s *Service) detectStartupPrompt(ctx context.Context, mission *domain.Mission, now time.Time) {
-	if s.probe == nil || mission.AgentPaneID == "" {
+func (s *Service) detectStartupPrompt(ctx context.Context, ms *mission.Mission, now time.Time) {
+	if s.probe == nil || ms.AgentPaneID == "" {
 		return
 	}
 
-	if mission.AgentState != domain.AgentUnknown || !mission.HasBadge(domain.BadgeHooksSilent) {
+	if ms.AgentState != mission.AgentUnknown || !ms.HasBadge(mission.BadgeHooksSilent) {
 		return
 	}
 
-	pane, err := s.probe.CapturePane(ctx, tmuxc.Pane(mission.AgentPaneID), capturedPromptLines)
+	pane, err := s.probe.CapturePane(ctx, terminal.Pane(ms.AgentPaneID), capturedPromptLines)
 	if err != nil {
 		return
 	}
@@ -168,12 +167,12 @@ func (s *Service) detectStartupPrompt(ctx context.Context, mission *domain.Missi
 		return
 	}
 
-	mission.AgentState = domain.AgentWaiting
-	mission.WaitingFor = question
+	ms.AgentState = mission.AgentWaiting
+	ms.WaitingFor = question
 
-	if mission.Status == domain.StatusActive {
-		mission.Status = domain.StatusAwaiting
-		mission.StatusChangedAt = now
+	if ms.Status == mission.StatusActive {
+		ms.Status = mission.StatusAwaiting
+		ms.StatusChangedAt = now
 	}
 }
 
@@ -220,27 +219,27 @@ const maxPromptLength = 70
 
 // checkSession verifies the mission's tmux session and agent pane, reporting whether the
 // agent still appears to be running.
-func (s *Service) checkSession(ctx context.Context, mission *domain.Mission, now time.Time) bool {
-	if s.probe == nil || mission.TmuxSession == "" {
+func (s *Service) checkSession(ctx context.Context, ms *mission.Mission, now time.Time) bool {
+	if s.probe == nil || ms.TmuxSession == "" {
 		return true
 	}
 
 	// A missing session is definitive regardless of how recently the mission started.
-	if !s.probe.HasSession(ctx, mission.TmuxSession) {
-		s.markSessionGone(mission)
+	if !s.probe.HasSession(ctx, ms.TmuxSession) {
+		s.markSessionGone(ms)
 
 		return false
 	}
 
-	panes, err := s.probe.ListPanes(ctx, tmuxc.Session(mission.TmuxSession))
+	panes, err := s.probe.ListPanes(ctx, terminal.Session(ms.TmuxSession))
 	if err != nil {
 		return true
 	}
 
-	starting := mission.StartedAt != nil && now.Sub(*mission.StartedAt) < launchGrace
+	starting := ms.StartedAt != nil && now.Sub(*ms.StartedAt) < launchGrace
 
 	for _, pane := range panes {
-		if pane.ID != mission.AgentPaneID {
+		if pane.ID != ms.AgentPaneID {
 			continue
 		}
 
@@ -249,7 +248,7 @@ func (s *Service) checkSession(ctx context.Context, mission *domain.Mission, now
 		// generated script has not yet exec'd. tmux-resurrect can also restore a
 		// session whose panes are dead, which looks alive by name alone.
 		if pane.Dead || (!agentCommands[pane.Command] && !starting) {
-			s.markSessionGone(mission)
+			s.markSessionGone(ms)
 
 			return false
 		}
@@ -259,7 +258,7 @@ func (s *Service) checkSession(ctx context.Context, mission *domain.Mission, now
 
 	// The recorded pane is gone, which the grace period does not excuse: tmux
 	// reported its id at creation, so its absence means it really has been closed.
-	s.markSessionGone(mission)
+	s.markSessionGone(ms)
 
 	return false
 }
@@ -269,101 +268,99 @@ func (s *Service) checkSession(ctx context.Context, mission *domain.Mission, now
 // The lane moves to debrief rather than to anything more specific, and the nuance
 // lives in a badge: q knows the agent is gone but not whether its work was
 // finished, so it asks for a human rather than inventing an answer.
-func (s *Service) markSessionGone(mission *domain.Mission) {
-	mission.AgentState = domain.AgentDead
-	mission.Badges = mission.WithBadge(domain.BadgeTmuxGone, "")
+func (s *Service) markSessionGone(ms *mission.Mission) {
+	ms.AgentState = mission.AgentDead
+	ms.Badges = ms.WithBadge(mission.BadgeTmuxGone, "")
 
-	if mission.Status == domain.StatusActive || mission.Status == domain.StatusAwaiting {
-		mission.Status = domain.StatusDebrief
-		mission.StatusChangedAt = s.now()
+	if ms.Status == mission.StatusActive || ms.Status == mission.StatusAwaiting {
+		ms.Status = mission.StatusDebrief
+		ms.StatusChangedAt = s.now()
 	}
 }
 
-// applyRegistry corrects a claude mission from claude's own live status.
+// applyReading corrects a mission from what its agent's own registry says.
 //
-// This is what recovers from a dropped hook. Each rule is deliberately conservative
-// about the direction it moves a card.
-func (s *Service) applyRegistry(mission *domain.Mission, registry map[string]claudereg.Session, now time.Time) {
-	if mission.Tool != domain.ToolClaude || mission.AgentSessionID == "" {
-		return
-	}
-
-	session, ok := registry[mission.AgentSessionID]
+// This is what recovers from a dropped hook. A healer is advisory rather than
+// authoritative, so each rule is deliberately conservative about the direction it
+// moves a card.
+func (s *Service) applyReading(ms *mission.Mission, readings map[mission.MissionID]mission.Reading, now time.Time) {
+	reading, ok := readings[ms.ID]
 	if !ok {
 		return
 	}
 
-	// The registry knows the real pane id, which beats anything q inferred.
-	if pane := session.PaneID(); pane != "" && pane != mission.AgentPaneID {
-		mission.AgentPaneID = pane
+	// The agent knows the real pane id, which beats anything q inferred.
+	if reading.PaneID != "" && reading.PaneID != ms.AgentPaneID {
+		ms.AgentPaneID = reading.PaneID
 	}
 
-	switch session.Status {
-	case claudereg.StatusAwaiting:
+	switch reading.Activity {
+	case mission.ActivityWaitingApproval, mission.ActivityWaitingInput:
 		// Recovers a dropped PermissionRequest.
-		if mission.Status == domain.StatusActive {
-			mission.Status = domain.StatusAwaiting
-			mission.StatusChangedAt = now
-			mission.AgentState = domain.AgentWaiting
+		if ms.Status == mission.StatusActive {
+			ms.Status = mission.StatusAwaiting
+			ms.StatusChangedAt = now
+			ms.AgentState = mission.AgentWaiting
 
-			if session.WaitingFor != "" {
-				mission.WaitingFor = session.WaitingFor
+			if reading.WaitingFor != "" {
+				ms.WaitingFor = reading.WaitingFor
 			}
 		}
-	case claudereg.StatusIdle:
+	case mission.ActivityIdle:
 		// Recovers a dropped Stop, but only once the session has been idle long
 		// enough that a turn cannot still be in flight.
-		if mission.Status == domain.StatusActive && !mission.PlanPending &&
-			now.Sub(mission.LastEventAt) > idleBeforeDebrief {
-			mission.Status = domain.StatusDebrief
-			mission.StatusChangedAt = now
-			mission.AgentState = domain.AgentIdle
+		if ms.Status == mission.StatusActive && !ms.PlanPending &&
+			now.Sub(ms.LastEventAt) > idleBeforeDebrief {
+			ms.Status = mission.StatusDebrief
+			ms.StatusChangedAt = now
+			ms.AgentState = mission.AgentIdle
 		}
-	case claudereg.StatusBusy:
+	case mission.ActivityBusy:
 		// Recovers a dropped PostToolUse. A pending plan debrief is never overridden:
 		// the agent may look busy while the approval dialog waits.
-		mission.AgentState = domain.AgentBusy
+		ms.AgentState = mission.AgentBusy
 
-		if !mission.PlanPending && (mission.Status == domain.StatusAwaiting || mission.Status == domain.StatusDebrief) {
-			mission.Status = domain.StatusActive
-			mission.StatusChangedAt = now
-			mission.WaitingFor = ""
+		if !ms.PlanPending && (ms.Status == mission.StatusAwaiting || ms.Status == mission.StatusDebrief) {
+			ms.Status = mission.StatusActive
+			ms.StatusChangedAt = now
+			ms.WaitingFor = ""
 		}
+	case mission.ActivityUnknown, mission.ActivityFailed:
 	}
 }
 
 // applyTimers adds the badges that report q's own uncertainty.
-func (s *Service) applyTimers(mission *domain.Mission, now time.Time) {
+func (s *Service) applyTimers(ms *mission.Mission, now time.Time) {
 	// A launched mission that has never reported means the hook bridge is not working.
-	if mission.AgentState == domain.AgentUnknown && mission.StartedAt != nil &&
-		now.Sub(*mission.StartedAt) > hooksSilentAfter {
-		mission.Badges = mission.WithBadge(domain.BadgeHooksSilent, "")
+	if ms.AgentState == mission.AgentUnknown && ms.StartedAt != nil &&
+		now.Sub(*ms.StartedAt) > hooksSilentAfter {
+		ms.Badges = ms.WithBadge(mission.BadgeHooksSilent, "")
 	}
 
-	if mission.AgentState == domain.AgentBusy && !mission.LastEventAt.IsZero() &&
-		now.Sub(mission.LastEventAt) > staleAfter {
-		mission.Badges = mission.WithBadge(domain.BadgeStale, "quiet")
+	if ms.AgentState == mission.AgentBusy && !ms.LastEventAt.IsZero() &&
+		now.Sub(ms.LastEventAt) > staleAfter {
+		ms.Badges = ms.WithBadge(mission.BadgeStale, "quiet")
 	}
 }
 
 // persistReconciled writes a corrected mission.
-func (s *Service) persistReconciled(mission domain.Mission) {
-	var updated domain.Mission
+func (s *Service) persistReconciled(ms mission.Mission) {
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.reconcile", func(snap *state.Snapshot) error {
-		stored, ok := snap.Mission(mission.ID)
+	err := s.store.Mutate("mission.reconcile", func(snap *mission.Snapshot) error {
+		stored, ok := snap.Mission(ms.ID)
 		if !ok {
 			return nil
 		}
 
 		// A hook may have landed since the snapshot was taken, so only the fields
 		// reconciliation owns are carried over.
-		stored.Status = mission.Status
-		stored.StatusChangedAt = mission.StatusChangedAt
-		stored.AgentState = mission.AgentState
-		stored.WaitingFor = mission.WaitingFor
-		stored.AgentPaneID = mission.AgentPaneID
-		stored.Badges = mission.Badges
+		stored.Status = ms.Status
+		stored.StatusChangedAt = ms.StatusChangedAt
+		stored.AgentState = ms.AgentState
+		stored.WaitingFor = ms.WaitingFor
+		stored.AgentPaneID = ms.AgentPaneID
+		stored.Badges = ms.Badges
 		stored.UpdatedAt = s.now()
 
 		updated = stored
@@ -384,7 +381,7 @@ func (s *Service) persistReconciled(mission domain.Mission) {
 
 // sameReconciled reports whether two missions agree on every field reconciliation may
 // change.
-func sameReconciled(a, b domain.Mission) bool {
+func sameReconciled(a, b mission.Mission) bool {
 	if a.Status != b.Status || a.AgentState != b.AgentState ||
 		a.WaitingFor != b.WaitingFor || a.AgentPaneID != b.AgentPaneID ||
 		len(a.Badges) != len(b.Badges) {

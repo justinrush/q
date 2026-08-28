@@ -7,8 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/justinrush/q/internal/tui/styles"
 )
@@ -22,7 +21,7 @@ const listPaneRatio = 40
 type Operations struct {
 	keys keys.Operations
 
-	snapshot state.Snapshot
+	snapshot mission.Snapshot
 	width    int
 	height   int
 	cursor   int
@@ -33,11 +32,11 @@ type (
 	// newOperationMsg asks for the new-operation form.
 	newOperationMsg struct{}
 	// editOperationMsg asks for an operation's editor.
-	editOperationMsg struct{ Operation domain.Operation }
+	editOperationMsg struct{ Operation mission.Operation }
 	// deleteOperationMsg asks to confirm deleting an operation.
-	deleteOperationMsg struct{ Operation domain.Operation }
+	deleteOperationMsg struct{ Operation mission.Operation }
 	// focusOperationMsg asks the board to filter to an operation and show it.
-	focusOperationMsg struct{ Operation domain.Operation }
+	focusOperationMsg struct{ Operation mission.Operation }
 )
 
 // NewOperations returns an empty operation view.
@@ -62,7 +61,7 @@ var operationActions = map[string]operationAction{
 }
 
 // SetSnapshot replaces the view's data.
-func (t *Operations) SetSnapshot(snap state.Snapshot) {
+func (t *Operations) SetSnapshot(snap mission.Snapshot) {
 	t.snapshot = snap
 	t.cursor = clamp(t.cursor, max(0, len(snap.Operations)-1))
 }
@@ -91,9 +90,9 @@ func (t *Operations) FullHelp() [][]key.Binding { return t.keys.FullHelp() }
 func (t *Operations) Title() string { return "Operations" }
 
 // Selected returns the focused operation.
-func (t *Operations) Selected() (domain.Operation, bool) {
+func (t *Operations) Selected() (mission.Operation, bool) {
 	if len(t.snapshot.Operations) == 0 {
-		return domain.Operation{}, false
+		return mission.Operation{}, false
 	}
 
 	return t.snapshot.Operations[clamp(t.cursor, len(t.snapshot.Operations)-1)], true
@@ -180,7 +179,7 @@ func (t *Operations) renderList(width int) string {
 }
 
 // renderRow draws one operation row, tinted with its stripe color.
-func (t *Operations) renderRow(i int, operation domain.Operation, width int) string {
+func (t *Operations) renderRow(i int, operation mission.Operation, width int) string {
 	swatch := lipgloss.NewStyle().Foreground(styles.OperationColor(operation.ColorIdx)).Render("█")
 
 	active := len(t.snapshot.ActiveMissionsForOperation(operation.ID))
@@ -217,7 +216,7 @@ func (t *Operations) renderDetail(width int) string {
 }
 
 // renderSummary draws the operation's summary block.
-func (t *Operations) renderSummary(operation domain.Operation, width int) []string {
+func (t *Operations) renderSummary(operation mission.Operation, width int) []string {
 	if strings.TrimSpace(operation.Summary) == "" {
 		return []string{styles.CardDetail.Render("(no summary yet; press e to add one)"), ""}
 	}
@@ -228,7 +227,7 @@ func (t *Operations) renderSummary(operation domain.Operation, width int) []stri
 }
 
 // renderRepos lists the operation's repos.
-func (t *Operations) renderRepos(operation domain.Operation, width int) []string {
+func (t *Operations) renderRepos(operation mission.Operation, width int) []string {
 	if len(operation.Repos) == 0 {
 		return []string{styles.CardDetail.Render("no repos yet; press e to add some"), ""}
 	}
@@ -249,20 +248,20 @@ func (t *Operations) renderRepos(operation domain.Operation, width int) []string
 }
 
 // renderMissionCounts summarizes the operation's missions by lane.
-func (t *Operations) renderMissionCounts(operation domain.Operation, width int) []string {
+func (t *Operations) renderMissionCounts(operation mission.Operation, width int) []string {
 	missions := t.snapshot.MissionsForOperation(operation.ID)
 	if len(missions) == 0 {
 		return []string{styles.CardDetail.Render("no missions yet")}
 	}
 
-	counts := map[domain.Status]int{}
-	for _, mission := range missions {
-		counts[mission.Status]++
+	counts := map[mission.Status]int{}
+	for _, ms := range missions {
+		counts[ms.Status]++
 	}
 
-	parts := make([]string, 0, len(domain.Lanes))
+	parts := make([]string, 0, len(mission.Lanes))
 
-	for _, lane := range domain.Lanes {
+	for _, lane := range mission.Lanes {
 		if counts[lane] > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", counts[lane], lane.Label()))
 		}

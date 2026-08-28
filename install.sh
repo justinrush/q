@@ -15,7 +15,9 @@ set -eu
 BINARY=q
 MODULE=github.com/justinrush/q
 PACKAGE=./cmd/q
-VERSION_VAR="$MODULE/internal/buildinfo"
+# The version vars live in package main, and the linker addresses a main
+# package's symbols as "main.x" rather than by its import path.
+VERSION_VAR="main"
 
 PREFIX="${PREFIX:-$HOME/.local}"
 UNINSTALL=0
@@ -88,7 +90,7 @@ echo "building $BINARY $VERSION"
 mkdir -p bin
 go build \
 	-trimpath \
-	-ldflags "-s -w -X $VERSION_VAR.Version=$VERSION -X $VERSION_VAR.Commit=$COMMIT" \
+	-ldflags "-s -w -X $VERSION_VAR.buildVersion=$VERSION -X $VERSION_VAR.buildCommit=$COMMIT" \
 	-o "bin/$BINARY" \
 	"$PACKAGE"
 

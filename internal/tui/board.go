@@ -7,8 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/justinrush/q/internal/tui/styles"
 )
@@ -17,7 +16,7 @@ import (
 type Board struct {
 	keys keys.Board
 
-	snapshot state.Snapshot
+	snapshot mission.Snapshot
 	width    int
 	height   int
 
@@ -31,21 +30,21 @@ type Board struct {
 	// doneExpanded shows the done column at full width.
 	doneExpanded bool
 	// filter limits the board to one operation, empty for all.
-	filter domain.OperationID
+	filter mission.OperationID
 	// follow is a mission the selection should jump to once the next snapshot arrives.
 	//
 	// A moved card lands at the end of its new lane, which is rarely the index the
 	// cursor already held. Without this, stepping a card across two lanes would move
 	// it once and then move whatever else happened to be under the cursor.
-	follow domain.MissionID
+	follow mission.MissionID
 }
 
 // NewBoard returns an empty board.
 func NewBoard() *Board {
 	return &Board{
 		keys:   keys.NewBoard(),
-		cursor: make([]int, len(domain.Lanes)),
-		scroll: make([]int, len(domain.Lanes)),
+		cursor: make([]int, len(mission.Lanes)),
+		scroll: make([]int, len(mission.Lanes)),
 	}
 }
 
@@ -88,7 +87,7 @@ var boardActions = map[string]boardAction{
 }
 
 // SetSnapshot replaces the board's data and re-bounds the selection.
-func (b *Board) SetSnapshot(snap state.Snapshot) {
+func (b *Board) SetSnapshot(snap mission.Snapshot) {
 	b.snapshot = snap
 	b.clampSelection()
 	b.applyFollow()
@@ -103,9 +102,9 @@ func (b *Board) applyFollow() {
 		return
 	}
 
-	for lane := range domain.Lanes {
-		for i, mission := range b.missionsIn(lane) {
-			if mission.ID != b.follow {
+	for lane := range mission.Lanes {
+		for i, ms := range b.missionsIn(lane) {
+			if ms.ID != b.follow {
 				continue
 			}
 
@@ -123,7 +122,7 @@ func (b *Board) applyFollow() {
 }
 
 // Follow asks the selection to jump to a mission when its next state arrives.
-func (b *Board) Follow(id domain.MissionID) { b.follow = id }
+func (b *Board) Follow(id mission.MissionID) { b.follow = id }
 
 // SetSize records the terminal size.
 func (b *Board) SetSize(width, height int) {
@@ -138,7 +137,7 @@ func (b *Board) Update(msg tea.KeyMsg) tea.Cmd {
 
 	// The digit keys jump directly to a lane.
 	if key.Matches(msg, b.keys.Lane) {
-		if n := int(msg.String()[0] - '1'); n >= 0 && n < len(domain.Lanes) {
+		if n := int(msg.String()[0] - '1'); n >= 0 && n < len(mission.Lanes) {
 			b.lane = n
 			b.clampSelection()
 		}
@@ -157,22 +156,22 @@ func (b *Board) FullHelp() [][]key.Binding { return b.keys.FullHelp() }
 func (b *Board) Title() string { return "Board" }
 
 // missionsIn returns the visible missions of a lane, honoring the operation filter.
-func (b *Board) missionsIn(lane int) []domain.Mission {
-	if lane < 0 || lane >= len(domain.Lanes) {
+func (b *Board) missionsIn(lane int) []mission.Mission {
+	if lane < 0 || lane >= len(mission.Lanes) {
 		return nil
 	}
 
-	missions := b.snapshot.MissionsInLane(domain.Lanes[lane])
+	missions := b.snapshot.MissionsInLane(mission.Lanes[lane])
 
 	if b.filter == "" {
 		return missions
 	}
 
-	filtered := make([]domain.Mission, 0, len(missions))
+	filtered := make([]mission.Mission, 0, len(missions))
 
-	for _, mission := range missions {
-		if mission.OperationID == b.filter {
-			filtered = append(filtered, mission)
+	for _, ms := range missions {
+		if ms.OperationID == b.filter {
+			filtered = append(filtered, ms)
 		}
 	}
 
@@ -180,10 +179,10 @@ func (b *Board) missionsIn(lane int) []domain.Mission {
 }
 
 // Selected returns the focused mission.
-func (b *Board) Selected() (domain.Mission, bool) {
+func (b *Board) Selected() (mission.Mission, bool) {
 	missions := b.missionsIn(b.lane)
 	if len(missions) == 0 {
-		return domain.Mission{}, false
+		return mission.Mission{}, false
 	}
 
 	idx := clamp(b.cursor[b.lane], len(missions)-1)
@@ -192,8 +191,8 @@ func (b *Board) Selected() (domain.Mission, bool) {
 }
 
 // operation returns a mission's operation.
-func (b *Board) operation(mission domain.Mission) domain.Operation {
-	operation, _ := b.snapshot.Operation(mission.OperationID)
+func (b *Board) operation(ms mission.Mission) mission.Operation {
+	operation, _ := b.snapshot.Operation(ms.OperationID)
 
 	return operation
 }
@@ -201,9 +200,9 @@ func (b *Board) operation(mission domain.Mission) domain.Operation {
 // clampSelection keeps cursors and scroll offsets inside their lanes after the data
 // changes underneath them.
 func (b *Board) clampSelection() {
-	b.lane = clamp(b.lane, len(domain.Lanes)-1)
+	b.lane = clamp(b.lane, len(mission.Lanes)-1)
 
-	for lane := range domain.Lanes {
+	for lane := range mission.Lanes {
 		count := len(b.missionsIn(lane))
 		if count == 0 {
 			b.cursor[lane], b.scroll[lane] = 0, 0
@@ -217,14 +216,14 @@ func (b *Board) clampSelection() {
 }
 
 func (b *Board) focusPrevLane() tea.Cmd {
-	b.lane = clamp(b.lane-1, len(domain.Lanes)-1)
+	b.lane = clamp(b.lane-1, len(mission.Lanes)-1)
 	b.clampSelection()
 
 	return nil
 }
 
 func (b *Board) focusNextLane() tea.Cmd {
-	b.lane = clamp(b.lane+1, len(domain.Lanes)-1)
+	b.lane = clamp(b.lane+1, len(mission.Lanes)-1)
 	b.clampSelection()
 
 	return nil
@@ -300,9 +299,9 @@ func (b *Board) View() string {
 		return b.renderFocusMode(layout)
 	}
 
-	columns := make([]string, 0, len(domain.Lanes))
+	columns := make([]string, 0, len(mission.Lanes))
 
-	for lane := range domain.Lanes {
+	for lane := range mission.Lanes {
 		columns = append(columns, b.renderLane(lane, layout.Widths[lane], layout))
 	}
 
@@ -326,7 +325,7 @@ func spaceColumns(columns []string) []string {
 
 // renderFocusMode renders a single lane, for terminals too narrow for five columns.
 func (b *Board) renderFocusMode(layout Layout) string {
-	header := fmt.Sprintf("‹ %d/%d %s ›", b.lane+1, len(domain.Lanes), domain.Lanes[b.lane].Label())
+	header := fmt.Sprintf("‹ %d/%d %s ›", b.lane+1, len(mission.Lanes), mission.Lanes[b.lane].Label())
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		styles.LaneHeaderFocused.Render(header),
@@ -344,12 +343,12 @@ func (b *Board) renderLane(lane, width int, layout Layout) string {
 		style = styles.LaneHeaderFocused
 	}
 
-	label := fmt.Sprintf("%s %d", strings.ToUpper(domain.Lanes[lane].Label()), len(missions))
+	label := fmt.Sprintf("%s %d", strings.ToUpper(mission.Lanes[lane].Label()), len(missions))
 	header := style.Render(styles.Truncate(label, width))
 
 	var body string
 
-	if collapsed := !b.doneExpanded && lane == len(domain.Lanes)-1; collapsed {
+	if collapsed := !b.doneExpanded && lane == len(mission.Lanes)-1; collapsed {
 		body = b.renderCollapsedDone(missions, width)
 	} else {
 		body = b.renderCards(lane, width, layout)
@@ -362,14 +361,14 @@ func (b *Board) renderLane(lane, width int, layout Layout) string {
 }
 
 // renderCollapsedDone summarizes the done lane in a narrow column.
-func (b *Board) renderCollapsedDone(missions []domain.Mission, width int) string {
+func (b *Board) renderCollapsedDone(missions []mission.Mission, width int) string {
 	if len(missions) == 0 {
 		return styles.CardDetail.Render(styles.Truncate("  nothing", width))
 	}
 
 	lines := make([]string, 0, 4)
 
-	for i, mission := range missions {
+	for i, ms := range missions {
 		if i == 3 {
 			lines = append(lines, styles.CardDetail.Render(
 				styles.Truncate(fmt.Sprintf("  +%d more", len(missions)-3), width)))
@@ -377,7 +376,7 @@ func (b *Board) renderCollapsedDone(missions []domain.Mission, width int) string
 			break
 		}
 
-		lines = append(lines, styles.CardDetail.Render(styles.Truncate("  "+mission.Name, width)))
+		lines = append(lines, styles.CardDetail.Render(styles.Truncate("  "+ms.Name, width)))
 	}
 
 	lines = append(lines, styles.Footer.Render(styles.Truncate("  z to expand", width)))

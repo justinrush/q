@@ -9,10 +9,9 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/justinrush/q/internal/client"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/repofind"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/justinrush/q/internal/tui/styles"
 )
@@ -51,15 +50,15 @@ const (
 // testable without a home directory.
 type Options struct {
 	// Repos bounds the checkout search behind the repo picker.
-	Repos repofind.Options
+	Repos git.ScanOptions
 	// DefaultTool is the agent a new mission starts with.
-	DefaultTool domain.Tool
+	DefaultTool mission.Tool
 }
 
 // withDefaults fills in anything cmd/q left unset.
 func (o Options) withDefaults() Options {
 	if o.DefaultTool == "" {
-		o.DefaultTool = domain.ToolClaude
+		o.DefaultTool = mission.DefaultTool
 	}
 
 	return o
@@ -67,7 +66,7 @@ func (o Options) withDefaults() Options {
 
 // App is the root model.
 type App struct {
-	client *client.Client
+	client *api.Client
 	keys   keys.Global
 	opts   Options
 
@@ -78,7 +77,7 @@ type App struct {
 	modal modal
 	toast toast
 
-	snapshot state.Snapshot
+	snapshot mission.Snapshot
 	width    int
 	height   int
 
@@ -103,7 +102,7 @@ type toast struct {
 }
 
 // New returns the root model.
-func New(c *client.Client, opts Options) *App {
+func New(c *api.Client, opts Options) *App {
 	return &App{
 		client:      c,
 		keys:        keys.NewGlobal(),
@@ -131,9 +130,9 @@ type (
 	// tickMsg drives liveness checks and relative-time redraws.
 	tickMsg struct{}
 	// snapshotMsg carries a full state fetch.
-	snapshotMsg struct{ Snapshot state.Snapshot }
+	snapshotMsg struct{ Snapshot mission.Snapshot }
 	// streamEventMsg carries one decoded event from the daemon.
-	streamEventMsg struct{ Event client.Event }
+	streamEventMsg struct{ Event api.Event }
 	// streamDownMsg reports that the event stream ended.
 	streamDownMsg struct{ Err error }
 	// toastMsg shows a transient message.
@@ -244,7 +243,7 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 }
 
 // applySnapshot stores a fresh snapshot and hands it to the views.
-func (a *App) applySnapshot(snap state.Snapshot) tea.Cmd {
+func (a *App) applySnapshot(snap mission.Snapshot) tea.Cmd {
 	a.snapshot = snap
 	a.board.SetSnapshot(snap)
 	a.operations.SetSnapshot(snap)
@@ -455,15 +454,15 @@ func (a *App) helpBody() string {
 }
 
 // currentOperationID returns the operation to preselect in a new-mission form.
-func (a *App) currentOperationID() domain.OperationID {
+func (a *App) currentOperationID() mission.OperationID {
 	if a.active == tabOperations {
 		if operation, ok := a.operations.Selected(); ok {
 			return operation.ID
 		}
 	}
 
-	if mission, ok := a.board.Selected(); ok {
-		return mission.OperationID
+	if ms, ok := a.board.Selected(); ok {
+		return ms.OperationID
 	}
 
 	if len(a.snapshot.Operations) > 0 {

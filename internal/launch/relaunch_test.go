@@ -5,30 +5,30 @@ import (
 	"testing"
 	"time"
 
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/runner"
 )
 
 // launchedMission returns a mission that has already been started.
-func launchedMission(t *testing.T, missionDir string) domain.Mission {
+func launchedMission(t *testing.T, missionDir string) mission.Mission {
 	t.Helper()
 
 	started := time.Now()
 
-	return domain.Mission{
+	return mission.Mission{
 		ID:             "ms_aabbccddeeff",
 		Name:           "add endpoint",
 		Slug:           "add-endpoint",
-		Tool:           domain.ToolClaude,
+		Tool:           mission.ToolClaude,
 		Prompt:         "do the thing",
-		Status:         domain.StatusDebrief,
+		Status:         mission.StatusDebrief,
 		MissionDir:     missionDir,
 		TmuxSession:    testSession,
 		AgentPaneID:    "%13",
 		AgentSessionID: "sess-1",
 		HookEpoch:      1,
 		StartedAt:      &started,
-		Work: map[string]domain.RepoWork{
+		Work: map[string]mission.RepoWork{
 			"weave": {
 				RepoName:     "weave",
 				WorktreePath: missionDir + "/weave",
@@ -151,10 +151,10 @@ func TestSendMessageIgnoresEmptyText(t *testing.T) {
 func TestSendMessageRequiresALiveSession(t *testing.T) {
 	launcher, _, _ := newTestLauncher(t)
 
-	mission := launchedMission(t, t.TempDir())
-	mission.TmuxSession = ""
+	ms := launchedMission(t, t.TempDir())
+	ms.TmuxSession = ""
 
-	if err := launcher.SendMessage(t.Context(), mission, "hello"); err == nil {
+	if err := launcher.SendMessage(t.Context(), ms, "hello"); err == nil {
 		t.Error("expected an error for a mission with no session")
 	}
 }
@@ -165,13 +165,13 @@ func TestRelaunchResumesTheSession(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 
 	dir := t.TempDir()
-	mission := launchedMission(t, dir)
+	ms := launchedMission(t, dir)
 
 	// The old session is gone, so nothing needs killing before the new one starts.
 	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
 	fake.Default = runner.Result{Stdout: []byte("%77")}
 
-	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), mission, "keep going")
+	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "keep going")
 	if err != nil {
 		t.Fatalf("Relaunch: %v", err)
 	}
@@ -244,11 +244,11 @@ func TestRelaunchWithoutASessionIDStartsFresh(t *testing.T) {
 	fake.Default = runner.Result{Stdout: []byte("%77")}
 	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
 
-	mission := launchedMission(t, t.TempDir())
-	mission.Tool = domain.ToolCodex
-	mission.AgentSessionID = ""
+	ms := launchedMission(t, t.TempDir())
+	ms.Tool = mission.ToolCodex
+	ms.AgentSessionID = ""
 
-	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), mission, "")
+	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "")
 	if err != nil {
 		t.Fatalf("Relaunch: %v", err)
 	}
@@ -261,9 +261,9 @@ func TestRelaunchWithoutASessionIDStartsFresh(t *testing.T) {
 func TestRelaunchRejectsAMissingMissionDir(t *testing.T) {
 	launcher, _, _ := newTestLauncher(t)
 
-	mission := launchedMission(t, "/nonexistent/q-mission-dir")
+	ms := launchedMission(t, "/nonexistent/q-mission-dir")
 
-	if _, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), mission, ""); err == nil {
+	if _, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, ""); err == nil {
 		t.Error("expected an error when the mission directory is gone")
 	}
 }
@@ -271,10 +271,10 @@ func TestRelaunchRejectsAMissingMissionDir(t *testing.T) {
 func TestRelaunchRejectsANeverLaunchedMission(t *testing.T) {
 	launcher, _, _ := newTestLauncher(t)
 
-	mission := launchedMission(t, t.TempDir())
-	mission.MissionDir = ""
+	ms := launchedMission(t, t.TempDir())
+	ms.MissionDir = ""
 
-	if _, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), mission, ""); err == nil {
+	if _, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, ""); err == nil {
 		t.Error("expected an error for a mission that was never launched")
 	}
 }

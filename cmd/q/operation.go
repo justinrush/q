@@ -8,8 +8,7 @@ import (
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/client"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/spf13/cobra"
 )
@@ -39,13 +38,13 @@ func buildOperationSubcommand() *cobra.Command {
 
 // connectDaemon resolves the directories and returns a client, starting a daemon
 // if none is running.
-func connectDaemon(ctx context.Context) (*client.Client, error) {
+func connectDaemon(ctx context.Context) (*api.Client, error) {
 	dirs, err := paths.Resolve(pathOverrides())
 	if err != nil {
 		return nil, err
 	}
 
-	return client.Ensure(ctx, dirs)
+	return api.Ensure(ctx, dirs)
 }
 
 func buildOperationListSubcommand() *cobra.Command {
@@ -95,14 +94,14 @@ func buildOperationShowSubcommand() *cobra.Command {
 				return err
 			}
 
-			operation, ok := snap.Operation(domain.OperationID(args[0]))
+			operation, ok := snap.Operation(mission.OperationID(args[0]))
 			if !ok {
 				return fmt.Errorf("no such operation: %s", args[0])
 			}
 
 			return writeJSONOut(cmd.OutOrStdout(), struct {
-				Operation domain.Operation `json:"operation"`
-				Missions  []domain.Mission `json:"missions"`
+				Operation mission.Operation `json:"operation"`
+				Missions  []mission.Mission `json:"missions"`
 			}{Operation: operation, Missions: snap.MissionsForOperation(operation.ID)})
 		},
 	}
@@ -189,7 +188,7 @@ func buildOperationEditSubcommand() *cobra.Command {
 				req.Repos = &parsed
 			}
 
-			operation, err := c.UpdateOperation(cmd.Context(), domain.OperationID(args[0]), req)
+			operation, err := c.UpdateOperation(cmd.Context(), mission.OperationID(args[0]), req)
 			if err != nil {
 				return err
 			}
@@ -219,7 +218,7 @@ func buildOperationRemoveSubcommand() *cobra.Command {
 				return err
 			}
 
-			return c.DeleteOperation(cmd.Context(), domain.OperationID(args[0]), force)
+			return c.DeleteOperation(cmd.Context(), mission.OperationID(args[0]), force)
 		},
 	}
 
@@ -232,8 +231,8 @@ func buildOperationRemoveSubcommand() *cobra.Command {
 //
 // Only the name and path are set here. The default branch and common directory
 // require running git, which the daemon does when it provisions worktrees.
-func parseRepoFlags(values []string) ([]domain.Repo, error) {
-	out := make([]domain.Repo, 0, len(values))
+func parseRepoFlags(values []string) ([]mission.Repo, error) {
+	out := make([]mission.Repo, 0, len(values))
 
 	for _, v := range values {
 		name, path, hasName := strings.Cut(v, "=")
@@ -256,14 +255,14 @@ func parseRepoFlags(values []string) ([]domain.Repo, error) {
 			name = baseName(abs)
 		}
 
-		out = append(out, domain.Repo{Name: name, Path: abs})
+		out = append(out, mission.Repo{Name: name, Path: abs})
 	}
 
 	return out, nil
 }
 
 // renderOperationTable prints operations as an aligned table.
-func renderOperationTable(out io.Writer, operations []domain.Operation) error {
+func renderOperationTable(out io.Writer, operations []mission.Operation) error {
 	if len(operations) == 0 {
 		_, err := fmt.Fprintln(out, "no operations yet")
 

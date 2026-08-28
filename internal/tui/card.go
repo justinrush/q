@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/tui/styles"
 )
 
@@ -23,12 +23,12 @@ const (
 
 // agentGlyphs mark a card with what its agent is doing, which is distinct from the
 // lane it sits in.
-var agentGlyphs = map[domain.AgentState]string{
-	domain.AgentUnknown: "·",
-	domain.AgentBusy:    "◐",
-	domain.AgentWaiting: "⏸",
-	domain.AgentIdle:    "○",
-	domain.AgentDead:    "✕",
+var agentGlyphs = map[mission.AgentState]string{
+	mission.AgentUnknown: "·",
+	mission.AgentBusy:    "◐",
+	mission.AgentWaiting: "⏸",
+	mission.AgentIdle:    "○",
+	mission.AgentDead:    "✕",
 }
 
 // renderCard draws one mission card.
@@ -39,7 +39,7 @@ var agentGlyphs = map[domain.AgentState]string{
 // The operation stripe is rendered as its own full-width line joined beneath the bordered
 // body rather than inside the border, because a bordered style clips its background at
 // the edges and would break the solid bar.
-func renderCard(mission domain.Mission, operation domain.Operation, width int, selected bool) string {
+func renderCard(ms mission.Mission, operation mission.Operation, width int, selected bool) string {
 	width = max(width, MinCardWidth)
 
 	// lipgloss sizes a block by its content plus padding, with the border outside
@@ -49,9 +49,9 @@ func renderCard(mission domain.Mission, operation domain.Operation, width int, s
 	content := frame - cardPaddingWidth
 
 	body := strings.Join([]string{
-		styles.CardTitle.Render(styles.Truncate(agentGlyph(mission)+" "+mission.Name, content)),
-		detailLine(mission, content),
-		metaLine(mission, content),
+		styles.CardTitle.Render(styles.Truncate(agentGlyph(ms)+" "+ms.Name, content)),
+		detailLine(ms, content),
+		metaLine(ms, content),
 	}, "\n")
 
 	style := styles.Card
@@ -65,8 +65,8 @@ func renderCard(mission domain.Mission, operation domain.Operation, width int, s
 }
 
 // agentGlyph returns the marker for a mission's observed agent state.
-func agentGlyph(mission domain.Mission) string {
-	if glyph, ok := agentGlyphs[mission.AgentState]; ok {
+func agentGlyph(ms mission.Mission) string {
+	if glyph, ok := agentGlyphs[ms.AgentState]; ok {
 		return glyph
 	}
 
@@ -74,7 +74,7 @@ func agentGlyph(mission domain.Mission) string {
 }
 
 // operationLabel is the text on the stripe.
-func operationLabel(operation domain.Operation) string {
+func operationLabel(operation mission.Operation) string {
 	if operation.Name == "" {
 		return "(no operation)"
 	}
@@ -87,39 +87,39 @@ func operationLabel(operation domain.Operation) string {
 //
 // The order is deliberate. A failed launch and a blocked agent are the two things that
 // need a human, so they outrank the agent's closing message, which is only context.
-func detailLine(mission domain.Mission, width int) string {
-	if mission.LaunchError != "" {
-		return styles.CardError.Render(styles.Truncate("launch failed: "+firstLine(mission.LaunchError), width))
+func detailLine(ms mission.Mission, width int) string {
+	if ms.LaunchError != "" {
+		return styles.CardError.Render(styles.Truncate("launch failed: "+firstLine(ms.LaunchError), width))
 	}
 
-	if mission.WaitingFor != "" {
-		return styles.CardWaiting.Render(styles.Truncate("⏸ "+mission.WaitingFor, width))
+	if ms.WaitingFor != "" {
+		return styles.CardWaiting.Render(styles.Truncate("⏸ "+ms.WaitingFor, width))
 	}
 
-	if mission.LastMessage != "" {
-		return styles.CardDetail.Render(styles.Truncate(mission.LastMessage, width))
+	if ms.LastMessage != "" {
+		return styles.CardDetail.Render(styles.Truncate(ms.LastMessage, width))
 	}
 
-	return styles.CardDetail.Render(styles.Truncate(firstLine(mission.Prompt), width))
+	return styles.CardDetail.Render(styles.Truncate(firstLine(ms.Prompt), width))
 }
 
 // metaLine is the card's third line: tool, mode, repo count, age, and badges.
-func metaLine(mission domain.Mission, width int) string {
-	parts := []string{mission.Tool.Glyph() + " " + mission.Tool.String()}
+func metaLine(ms mission.Mission, width int) string {
+	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
 
-	if mission.PlanMode {
+	if ms.PlanMode {
 		parts = append(parts, "plan")
 	}
 
-	if n := countCreated(mission); n > 0 {
+	if n := countCreated(ms); n > 0 {
 		parts = append(parts, fmt.Sprintf("%dr", n))
 	}
 
-	if age := missionAge(mission); age != "" {
+	if age := missionAge(ms); age != "" {
 		parts = append(parts, age)
 	}
 
-	for _, badge := range mission.Badges {
+	for _, badge := range ms.Badges {
 		parts = append(parts, renderBadge(badge))
 	}
 
@@ -127,7 +127,7 @@ func metaLine(mission domain.Mission, width int) string {
 }
 
 // renderBadge formats one badge compactly.
-func renderBadge(badge domain.Badge) string {
+func renderBadge(badge mission.Badge) string {
 	if badge.Detail == "" {
 		return badge.Kind
 	}
@@ -136,10 +136,10 @@ func renderBadge(badge domain.Badge) string {
 }
 
 // countCreated counts the mission's successfully provisioned worktrees.
-func countCreated(mission domain.Mission) int {
+func countCreated(ms mission.Mission) int {
 	var n int
 
-	for _, work := range mission.Work {
+	for _, work := range ms.Work {
 		if work.Created {
 			n++
 		}
@@ -149,12 +149,12 @@ func countCreated(mission domain.Mission) int {
 }
 
 // missionAge renders how long the mission has been in flight, or how long ago it finished.
-func missionAge(mission domain.Mission) string {
+func missionAge(ms mission.Mission) string {
 	switch {
-	case mission.FinishedAt != nil:
-		return shortDuration(time.Since(*mission.FinishedAt)) + " ago"
-	case mission.StartedAt != nil:
-		return shortDuration(time.Since(*mission.StartedAt))
+	case ms.FinishedAt != nil:
+		return shortDuration(time.Since(*ms.FinishedAt)) + " ago"
+	case ms.StartedAt != nil:
+		return shortDuration(time.Since(*ms.StartedAt))
 	default:
 		return ""
 	}

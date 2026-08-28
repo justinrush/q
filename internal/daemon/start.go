@@ -6,8 +6,7 @@ import (
 	"slices"
 	"sync"
 
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/mission"
 )
 
 // Launcher provisions a mission's worktrees and starts its agent.
@@ -15,23 +14,23 @@ import (
 // It is an interface so the service can be tested without git or tmux, and so the
 // orchestration package does not have to know about HTTP or the store.
 type Launcher interface {
-	Launch(ctx context.Context, operation domain.Operation, mission domain.Mission) (domain.Mission, error)
+	Launch(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Mission, error)
 }
 
 // inflight tracks missions currently being launched, so a double keypress cannot
 // start two agents against the same worktrees.
 type inflight struct {
 	mu  sync.Mutex
-	set map[domain.MissionID]struct{}
+	set map[mission.MissionID]struct{}
 }
 
 // claim reserves a mission, reporting false if it is already being launched.
-func (i *inflight) claim(id domain.MissionID) bool {
+func (i *inflight) claim(id mission.MissionID) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
 	if i.set == nil {
-		i.set = map[domain.MissionID]struct{}{}
+		i.set = map[mission.MissionID]struct{}{}
 	}
 
 	if _, busy := i.set[id]; busy {
@@ -44,7 +43,7 @@ func (i *inflight) claim(id domain.MissionID) bool {
 }
 
 // release frees a claimed mission.
-func (i *inflight) release(id domain.MissionID) {
+func (i *inflight) release(id mission.MissionID) {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
@@ -58,62 +57,62 @@ func (i *inflight) release(id domain.MissionID) {
 // back to briefing with an explanation if anything goes wrong. Leaving it active
 // with no session would make the reconciler badge it as a dead session instead,
 // which would be a misleading way to report "the fetch failed".
-func (s *Service) Start(ctx context.Context, id domain.MissionID) (domain.Mission, error) {
+func (s *Service) Start(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
 	if s.launcher == nil {
-		return domain.Mission{}, fmt.Errorf("%w: this daemon cannot launch agents", ErrConflict)
+		return mission.Mission{}, fmt.Errorf("%w: this daemon cannot launch agents", ErrConflict)
 	}
 
 	snap := s.store.Snapshot()
 
-	mission, ok := snap.Mission(id)
+	ms, ok := snap.Mission(id)
 	if !ok {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
-	if mission.Launched() {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s has already been launched", ErrConflict, id)
+	if ms.Launched() {
+		return mission.Mission{}, fmt.Errorf("%w: mission %s has already been launched", ErrConflict, id)
 	}
 
-	operation, ok := snap.Operation(mission.OperationID)
+	operation, ok := snap.Operation(ms.OperationID)
 	if !ok {
-		return domain.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, mission.OperationID)
+		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
 	}
 
 	if !s.inflight.claim(id) {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
+		return mission.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
 	}
 	defer s.inflight.release(id)
 
 	if err := s.markLaunching(id); err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
-	launched, err := s.launcher.Launch(ctx, operation, mission)
+	launched, err := s.launcher.Launch(ctx, operation, ms)
 	if err != nil {
-		return domain.Mission{}, s.markLaunchFailed(id, err)
+		return mission.Mission{}, s.markLaunchFailed(id, err)
 	}
 
 	return s.commitLaunch(launched)
 }
 
 // markLaunching records that provisioning has begun.
-func (s *Service) markLaunching(id domain.MissionID) error {
-	var updated domain.Mission
+func (s *Service) markLaunching(id mission.MissionID) error {
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.launching", func(snap *state.Snapshot) error {
-		mission, ok := snap.Mission(id)
+	err := s.store.Mutate("mission.launching", func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
 
-		mission.Status = domain.StatusActive
-		mission.Order = snap.NextOrder(domain.StatusActive)
-		mission.AgentState = domain.AgentUnknown
-		mission.Badges = mission.WithBadge(domain.BadgeLaunching, "")
-		mission.LaunchError = ""
-		mission.UpdatedAt = s.now()
-		updated = mission
-		snap.PutMission(mission)
+		ms.Status = mission.StatusActive
+		ms.Order = snap.NextOrder(mission.StatusActive)
+		ms.AgentState = mission.AgentUnknown
+		ms.Badges = ms.WithBadge(mission.BadgeLaunching, "")
+		ms.LaunchError = ""
+		ms.UpdatedAt = s.now()
+		updated = ms
+		snap.PutMission(ms)
 
 		return nil
 	})
@@ -128,27 +127,27 @@ func (s *Service) markLaunching(id domain.MissionID) error {
 
 // markLaunchFailed returns the card to draft with an explanation, and reports the
 // original failure.
-func (s *Service) markLaunchFailed(id domain.MissionID, cause error) error {
-	var updated domain.Mission
+func (s *Service) markLaunchFailed(id mission.MissionID, cause error) error {
+	var updated mission.Mission
 
-	if err := s.store.Mutate("mission.launch_failed", func(snap *state.Snapshot) error {
-		mission, ok := snap.Mission(id)
+	if err := s.store.Mutate("mission.launch_failed", func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
 
-		mission.Status = domain.StatusBriefing
-		mission.Order = snap.NextOrder(domain.StatusBriefing)
-		mission.AgentState = domain.AgentUnknown
-		mission.Badges = mission.WithoutBadge(domain.BadgeLaunching)
-		mission.LaunchError = cause.Error()
-		mission.StartedAt = nil
-		mission.TmuxSession = ""
-		mission.AgentPaneID = ""
-		mission.Work = nil
-		mission.UpdatedAt = s.now()
-		updated = mission
-		snap.PutMission(mission)
+		ms.Status = mission.StatusBriefing
+		ms.Order = snap.NextOrder(mission.StatusBriefing)
+		ms.AgentState = mission.AgentUnknown
+		ms.Badges = ms.WithoutBadge(mission.BadgeLaunching)
+		ms.LaunchError = cause.Error()
+		ms.StartedAt = nil
+		ms.TmuxSession = ""
+		ms.AgentPaneID = ""
+		ms.Work = nil
+		ms.UpdatedAt = s.now()
+		updated = ms
+		snap.PutMission(ms)
 
 		return nil
 	}); err != nil {
@@ -161,10 +160,10 @@ func (s *Service) markLaunchFailed(id domain.MissionID, cause error) error {
 }
 
 // commitLaunch persists a successful launch.
-func (s *Service) commitLaunch(launched domain.Mission) (domain.Mission, error) {
-	var updated domain.Mission
+func (s *Service) commitLaunch(launched mission.Mission) (mission.Mission, error) {
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.launched", func(snap *state.Snapshot) error {
+	err := s.store.Mutate("mission.launched", func(snap *mission.Snapshot) error {
 		stored, ok := snap.Mission(launched.ID)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, launched.ID)
@@ -172,7 +171,7 @@ func (s *Service) commitLaunch(launched domain.Mission) (domain.Mission, error) 
 
 		// Carry over only the launch results, so a rename made while worktrees
 		// were being provisioned is not clobbered.
-		stored.Status = domain.StatusActive
+		stored.Status = mission.StatusActive
 		stored.AgentState = launched.AgentState
 		stored.MissionDir = launched.MissionDir
 		stored.TmuxSession = launched.TmuxSession
@@ -184,7 +183,7 @@ func (s *Service) commitLaunch(launched domain.Mission) (domain.Mission, error) 
 		stored.LaunchReposFrozen = launched.LaunchReposFrozen
 		stored.StartedAt = launched.StartedAt
 		stored.LaunchError = ""
-		stored.Badges = stored.WithoutBadge(domain.BadgeLaunching)
+		stored.Badges = stored.WithoutBadge(mission.BadgeLaunching)
 		stored.UpdatedAt = s.now()
 
 		updated = stored
@@ -193,7 +192,7 @@ func (s *Service) commitLaunch(launched domain.Mission) (domain.Mission, error) 
 		return nil
 	})
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	s.publishMission(updated)

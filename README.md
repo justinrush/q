@@ -372,12 +372,12 @@ came from a flag that looked applied and was not. If a change relies on how `cla
 `codex`, `tmux`, `git`, or a terminal emulator behaves, say how that was checked, and add
 a test asserting the argv or the generated file.
 
-**Constraints are enforced by construction where possible.** `gitx` exposes no general
-`Fetch`, only an explicit single-refspec one, because a user's global git config may set
-`fetch.all` and `fetch.force`. `tmuxc` targets render their own `=` prefix, because tmux
-otherwise prefix-matches session names. The TUI keymap has a `Forbidden` set for keys tmux
-intercepts. A change that works around one of these instead of extending it deserves
-scrutiny.
+**Constraints are enforced by construction where possible.** `internal/git` exposes no
+general `Fetch`, only an explicit single-refspec one, because a user's global git config
+may set `fetch.all` and `fetch.force`. `internal/terminal` targets render their own `=`
+prefix, because tmux otherwise prefix-matches session names. The TUI keymap has a
+`Forbidden` set for keys tmux intercepts. A change that works around one of these instead
+of extending it deserves scrutiny.
 
 **Destructive paths need a refusal, not a warning.** Deleting a mission can discard an
 agent's uncommitted work. The rule is that git's own refusal is surfaced rather than
@@ -388,18 +388,33 @@ this codebase; a change that drops one of those explanations loses more than it 
 
 ### Layout
 
+Packages are cut by domain, and every arrow in the import graph points inward toward
+`internal/mission`.
+
 | package | what lives there |
 |---|---|
-| `cmd/q` | the command tree, and the only place that parses `~/.q-config.json` |
-| `internal/domain` | operations, missions, lanes, ids — pure, stdlib only |
-| `internal/settings` | the resolved configuration shape, a leaf every package may import |
-| `internal/daemon` | the state owner, HTTP API, hook intake, and reconciler |
-| `internal/statem` | the status state machine: hook event in, lane out |
-| `internal/launch` | worktree provisioning, launching, relaunching, reclaiming |
-| `internal/loadout` | what an agent is issued: the prompt, hook config, and `launch.sh` |
-| `internal/gadgets` | resolving the external tools q drives |
+| `cmd/q` | the command tree, `~/.q-config.json`, tool resolution, and all wiring |
+| `internal/mission` | operations, missions, lanes, the state machine, the store, and the interfaces the rest implement |
+| `internal/api` | the daemon protocol: wire types, the handle, and the client |
+| `internal/daemon` | the service rules, the HTTP server, hook intake, and the reconciler |
+| `internal/claude` | running missions with `claude`, and reading its session registry |
+| `internal/codex` | running missions with `codex`, and its app-server client |
+| `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |
+| `internal/terminal` | tmux, and the window openers one per terminal strategy |
+| `internal/launch` | the launch sequence: provision, write, start, relaunch |
 | `internal/debrief` | arranging and attaching a debrief session |
+| `internal/runner` | the single seam through which q executes external programs |
+| `internal/paths` | the on-disk layout |
+| `internal/spool` | hook events buffered while the daemon is down |
 | `internal/tui` | the board |
+
+**Adding an agent** is three edits: an entry in the `known` table in
+`internal/mission/tool.go`, a package implementing `mission.Agent` — what argv it takes,
+what files it needs written, which hook events it reports — and a line in
+`cmd/q/assemble.go` that builds it from config. If it can report on its own live sessions
+it also implements `mission.Runtime` (authoritative, polled) or `mission.Healer`
+(advisory, used only to correct a card a dropped hook left wrong). Nothing else branches
+on which agent a mission uses.
 
 ## License
 

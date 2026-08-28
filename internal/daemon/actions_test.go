@@ -8,14 +8,11 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/debrief"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
-	"github.com/justinrush/q/internal/state"
+	"github.com/justinrush/q/internal/mission"
 )
 
 type fakeReclaimer struct {
-	report launch.Report
+	report mission.Report
 	err    error
 	calls  int
 	force  bool
@@ -27,45 +24,45 @@ type partialDebriefer struct {
 
 func (r partialDebriefer) Open(
 	_ context.Context,
-	mission domain.Mission,
-	_ debrief.Mode,
-) (debrief.Result, domain.Mission, error) {
-	work := mission.Work["repo"]
+	ms mission.Mission,
+	_ api.Mode,
+) (api.Result, mission.Mission, error) {
+	work := ms.Work["repo"]
 	work.DebriefPaneID = "%21"
-	mission.Work["repo"] = work
+	ms.Work["repo"] = work
 
-	return debrief.Result{PanesAdded: 1}, mission, r.err
+	return api.Result{PanesAdded: 1}, ms, r.err
 }
 
-func (partialDebriefer) Touched(context.Context, domain.Mission) ([]debrief.Touched, error) {
+func (partialDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
 	return nil, nil
 }
 
 func (f *fakeReclaimer) PlanReclaim(
 	context.Context,
-	domain.Operation,
-	domain.Mission,
-) (launch.Plan, error) {
-	return launch.Plan{}, nil
+	mission.Operation,
+	mission.Mission,
+) (mission.Plan, error) {
+	return mission.Plan{}, nil
 }
 
 func (f *fakeReclaimer) Reclaim(
 	_ context.Context,
-	_ domain.Operation,
-	_ domain.Mission,
+	_ mission.Operation,
+	_ mission.Mission,
 	force bool,
-) (launch.Report, error) {
+) (mission.Report, error) {
 	f.calls++
 	f.force = force
 
 	return f.report, f.err
 }
 
-func launchedServiceMission(t *testing.T, svc *Service) domain.Mission {
+func launchedServiceMission(t *testing.T, svc *Service) mission.Mission {
 	t.Helper()
 
 	operation := seedOperation(t, svc)
-	mission, err := svc.CreateMission(api.CreateMissionRequest{
+	ms, err := svc.CreateMission(api.CreateMissionRequest{
 		OperationID: operation.ID,
 		Name:        "mission",
 		Prompt:      "do it",
@@ -75,13 +72,13 @@ func launchedServiceMission(t *testing.T, svc *Service) domain.Mission {
 	}
 
 	started := time.Now()
-	mission.StartedAt = &started
-	mission.MissionDir = "/missions/mission"
-	mission.Work = make(map[string]domain.RepoWork)
-	mission.Work["repo"] = domain.RepoWork{RepoName: "repo", Created: true}
+	ms.StartedAt = &started
+	ms.MissionDir = "/missions/mission"
+	ms.Work = make(map[string]mission.RepoWork)
+	ms.Work["repo"] = mission.RepoWork{RepoName: "repo", Created: true}
 
-	err = svcStore(svc).Mutate("test.launch", func(snap *state.Snapshot) error {
-		snap.PutMission(mission)
+	err = svcStore(svc).Mutate("test.launch", func(snap *mission.Snapshot) error {
+		snap.PutMission(ms)
 
 		return nil
 	})
@@ -89,21 +86,21 @@ func launchedServiceMission(t *testing.T, svc *Service) domain.Mission {
 		t.Fatalf("storing launched mission: %v", err)
 	}
 
-	return mission
+	return ms
 }
 
 func TestOpenDebriefPersistsPanesCreatedBeforeFailure(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
+	ms := launchedServiceMission(t, svc)
 	openErr := errors.New("no space for new pane")
-	svc.SetDebriefer(partialDebriefer{err: openErr})
+	svc.apply(WithDebriefer(partialDebriefer{err: openErr}))
 
-	_, err := svc.OpenDebrief(t.Context(), mission.ID, debrief.ModePrepare)
+	_, err := svc.OpenDebrief(t.Context(), ms.ID, api.ModePrepare)
 	if !errors.Is(err, openErr) {
 		t.Fatalf("err = %v, want %v", err, openErr)
 	}
 
-	stored, ok := svc.Snapshot().Mission(mission.ID)
+	stored, ok := svc.Snapshot().Mission(ms.ID)
 	if !ok {
 		t.Fatal("mission disappeared after the failed open")
 	}
@@ -115,12 +112,12 @@ func TestOpenDebriefPersistsPanesCreatedBeforeFailure(t *testing.T) {
 
 func TestDeleteMissionRetainsRecordAfterPartialReclaim(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
-	svc.SetReclaimer(&fakeReclaimer{report: launch.Report{
+	ms := launchedServiceMission(t, svc)
+	svc.apply(WithReclaimer(&fakeReclaimer{report: mission.Report{
 		Failures: []string{"repo: worktree is locked"},
-	}})
+	}}))
 
-	report, err := svc.DeleteMissionAndReclaim(t.Context(), mission.ID, false)
+	report, err := svc.DeleteMissionAndReclaim(t.Context(), ms.ID, false)
 	if err == nil || !strings.Contains(err.Error(), "worktree is locked") {
 		t.Fatalf("err = %v, want the reclaim failure", err)
 	}
@@ -129,55 +126,55 @@ func TestDeleteMissionRetainsRecordAfterPartialReclaim(t *testing.T) {
 		t.Fatalf("Failures = %v, want the partial result", report.Failures)
 	}
 
-	if _, ok := svc.Snapshot().Mission(mission.ID); !ok {
+	if _, ok := svc.Snapshot().Mission(ms.ID); !ok {
 		t.Error("a mission with resources left behind must remain retryable")
 	}
 }
 
 func TestDeleteMissionRetainsRecordAfterReclaimError(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
+	ms := launchedServiceMission(t, svc)
 	reclaimErr := errors.New("tmux unavailable")
-	svc.SetReclaimer(&fakeReclaimer{err: reclaimErr})
+	svc.apply(WithReclaimer(&fakeReclaimer{err: reclaimErr}))
 
-	_, err := svc.DeleteMissionAndReclaim(t.Context(), mission.ID, false)
+	_, err := svc.DeleteMissionAndReclaim(t.Context(), ms.ID, false)
 	if !errors.Is(err, reclaimErr) {
 		t.Fatalf("err = %v, want %v", err, reclaimErr)
 	}
 
-	if _, ok := svc.Snapshot().Mission(mission.ID); !ok {
+	if _, ok := svc.Snapshot().Mission(ms.ID); !ok {
 		t.Error("a mission must survive a failed reclaim")
 	}
 }
 
 func TestDeleteMissionForgetsRecordAfterSuccessfulReclaim(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
-	svc.SetReclaimer(&fakeReclaimer{})
+	ms := launchedServiceMission(t, svc)
+	svc.apply(WithReclaimer(&fakeReclaimer{}))
 
-	_, err := svc.DeleteMissionAndReclaim(t.Context(), mission.ID, false)
+	_, err := svc.DeleteMissionAndReclaim(t.Context(), ms.ID, false)
 	if err != nil {
 		t.Fatalf("DeleteMissionAndReclaim: %v", err)
 	}
 
-	if _, ok := svc.Snapshot().Mission(mission.ID); ok {
+	if _, ok := svc.Snapshot().Mission(ms.ID); ok {
 		t.Error("a successfully reclaimed mission should be deleted")
 	}
 }
 
 func TestFinishMissionReclaimsResourcesAndRetainsCard(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
+	ms := launchedServiceMission(t, svc)
 
-	_, err := svc.SetStatus(mission.ID, domain.StatusDebrief)
+	_, err := svc.SetStatus(ms.ID, mission.StatusDebrief)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
-	reclaimer := &fakeReclaimer{report: launch.Report{Removed: []string{"/missions/mission/repo"}}}
-	svc.SetReclaimer(reclaimer)
+	reclaimer := &fakeReclaimer{report: mission.Report{Removed: []string{"/missions/mission/repo"}}}
+	svc.apply(WithReclaimer(reclaimer))
 
-	finished, report, err := svc.FinishMission(t.Context(), mission.ID, false)
+	finished, report, err := svc.FinishMission(t.Context(), ms.ID, false)
 	if err != nil {
 		t.Fatalf("FinishMission: %v", err)
 	}
@@ -186,7 +183,7 @@ func TestFinishMissionReclaimsResourcesAndRetainsCard(t *testing.T) {
 		t.Fatalf("reclaim calls = %d, report = %+v", reclaimer.calls, report)
 	}
 
-	if finished.Status != domain.StatusClosed || finished.FinishedAt == nil {
+	if finished.Status != mission.StatusClosed || finished.FinishedAt == nil {
 		t.Errorf("finished mission = %+v, want a filed card", finished)
 	}
 
@@ -198,56 +195,56 @@ func TestFinishMissionReclaimsResourcesAndRetainsCard(t *testing.T) {
 		t.Errorf("finished mission still looks launched: %+v", finished)
 	}
 
-	if _, ok := svc.Snapshot().Mission(mission.ID); !ok {
+	if _, ok := svc.Snapshot().Mission(ms.ID); !ok {
 		t.Error("finishing should retain the mission card")
 	}
 }
 
 func TestFinishMissionDoesNotFileFailedReclaim(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
+	ms := launchedServiceMission(t, svc)
 
-	_, err := svc.SetStatus(mission.ID, domain.StatusDebrief)
+	_, err := svc.SetStatus(ms.ID, mission.StatusDebrief)
 	if err != nil {
 		t.Fatalf("SetStatus: %v", err)
 	}
 
-	svc.SetReclaimer(&fakeReclaimer{report: launch.Report{
+	svc.apply(WithReclaimer(&fakeReclaimer{report: mission.Report{
 		Failures: []string{"repo: worktree is locked"},
-	}})
+	}}))
 
-	_, _, err = svc.FinishMission(t.Context(), mission.ID, false)
+	_, _, err = svc.FinishMission(t.Context(), ms.ID, false)
 	if err == nil {
 		t.Fatal("FinishMission succeeded after a partial reclaim")
 	}
 
-	stored, ok := svc.Snapshot().Mission(mission.ID)
+	stored, ok := svc.Snapshot().Mission(ms.ID)
 	if !ok {
 		t.Fatal("the mission record was removed")
 	}
 
-	if stored.Status != domain.StatusDebrief || stored.MissionDir == "" {
+	if stored.Status != mission.StatusDebrief || stored.MissionDir == "" {
 		t.Errorf("failed finish changed mission state: %+v", stored)
 	}
 }
 
 func TestFinishMissionIsIdempotent(t *testing.T) {
 	svc := newTestService(t)
-	mission := launchedServiceMission(t, svc)
+	ms := launchedServiceMission(t, svc)
 	reclaimer := &fakeReclaimer{}
-	svc.SetReclaimer(reclaimer)
+	svc.apply(WithReclaimer(reclaimer))
 
-	_, _, err := svc.FinishMission(t.Context(), mission.ID, false)
+	_, _, err := svc.FinishMission(t.Context(), ms.ID, false)
 	if err != nil {
 		t.Fatalf("first FinishMission: %v", err)
 	}
 
-	finished, _, err := svc.FinishMission(t.Context(), mission.ID, false)
+	finished, _, err := svc.FinishMission(t.Context(), ms.ID, false)
 	if err != nil {
 		t.Fatalf("second FinishMission: %v", err)
 	}
 
-	if finished.Status != domain.StatusClosed || reclaimer.calls != 1 {
+	if finished.Status != mission.StatusClosed || reclaimer.calls != 1 {
 		t.Errorf("finished = %+v, reclaim calls = %d", finished, reclaimer.calls)
 	}
 }

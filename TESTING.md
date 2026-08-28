@@ -1,12 +1,13 @@
 # Testing q
 
 ```sh
-make tidy lint-blocking lint   # formatting and both lint sets
-make test                      # unit and integration tests
-make raceif                    # the same tests under the race detector
+gofmt -l . && go vet ./...   # formatting and vet
+golangci-lint run ./...      # the project's lint set, configured in .golangci.yml
+go test ./...                # unit and integration tests
+go test -race ./...          # the same tests under the race detector
 ```
 
-`make raceif` matters more here than in most services: hook events arrive from many
+`go test -race` matters more here than in most projects: hook events arrive from many
 concurrent processes while the TUI reads the same state, and the store is shared between
 them.
 
@@ -16,8 +17,8 @@ The valuable tests are not the ones with the highest coverage. They are the ones
 down behavior that was expensive to discover, mostly about the external tools q
 drives.
 
-**`internal/statem`** is the status state machine, and the most load-bearing test in the
-repo. It is a pure function, so every transition is asserted directly: the whole plan-mode
+**`internal/mission`'s state machine** (`statem.go`) carries the most load-bearing test in
+the repo. It is a pure function, so every transition is asserted directly: the whole plan-mode
 arc, a `Stop` racing a `PermissionRequest` in both arrival orders, `closed` being terminal,
 stale sessions and stale hook epochs being ignored, and `PostToolUse` clearing a waiting
 card, which is what stops the board lying when you answer a prompt in the pane without
@@ -36,8 +37,9 @@ where the subtle failures live. Specific things a test will fail on:
   the command goes
 - a TUI binding using `ctrl+h/j/k/l`, which tmux intercepts before q sees them
 
-**Generated files** are golden-tested: the composed prompt, claude's settings, and codex's
-profile. The codex profile test also asserts its `[hooks]` section stays byte-identical as
+**Generated files** are golden-tested, each in its own agent's package: the composed
+prompt in `internal/mission`, claude's settings in `internal/claude`, and codex's profile
+in `internal/codex`. The codex profile test also asserts its `[hooks]` section stays byte-identical as
 project entries change above it, because codex keys hook trust on the handler and a change
 would silently require re-approval.
 
@@ -47,7 +49,7 @@ the subtitle and no finish time, and a sign-off ("let me know if you want anythi
 a summary list, and a rhetorical question have to stay in *debrief*. The false positive is
 the expensive one — it parks finished work in a lane that asks for attention forever.
 
-**Repo completion** is tested both ways: `internal/repofind` over a temporary tree for what
+**Repo completion** is tested both ways: `internal/git` over a temporary tree for what
 the walk finds and how a fragment ranks, and the operation form for what a keypress does —
 a unique match completing in place, an ambiguous one opening a picker that `esc` returns
 from with the form intact, a truncated picker saying how many it left out, and a line that

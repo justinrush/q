@@ -6,8 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/justinrush/q/internal/buildinfo"
-	"github.com/justinrush/q/internal/client"
+	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/daemon"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/spf13/cobra"
@@ -51,7 +50,7 @@ func buildDaemonRestartSubcommand() *cobra.Command {
 				return err
 			}
 
-			if err := client.Stop(dirs); err != nil {
+			if err := api.Stop(dirs); err != nil {
 				return err
 			}
 
@@ -59,7 +58,7 @@ func buildDaemonRestartSubcommand() *cobra.Command {
 				return err
 			}
 
-			c, err := client.Ensure(cmd.Context(), dirs)
+			c, err := api.Ensure(cmd.Context(), dirs)
 			if err != nil {
 				return err
 			}
@@ -82,7 +81,7 @@ func waitForStop(ctx context.Context, dirs paths.Dirs) error {
 	deadline := time.Now().Add(5 * time.Second)
 
 	for time.Now().Before(deadline) {
-		if _, err := client.Connect(ctx, dirs); err != nil {
+		if _, err := api.Connect(ctx, dirs); err != nil {
 			return nil
 		}
 
@@ -108,12 +107,21 @@ func buildDaemonRunSubcommand() *cobra.Command {
 			}
 
 			logger := loggerFrom(cmd.Context())
+			version := semanticVersion()
+
+			svc, stop, err := assembleService(cmd.Context(), dirs, cfg, logger, version)
+			if err != nil {
+				return err
+			}
+
+			defer stop()
 
 			err = daemon.Run(cmd.Context(), daemon.RunConfig{
-				Dirs:     dirs,
-				Version:  buildinfo.Semantic(),
-				Logger:   logger,
-				Settings: cfg,
+				Dirs:    dirs,
+				Version: version,
+				Logger:  logger,
+				Service: svc,
+				Hub:     svc.Hub(),
 			})
 
 			// Losing the race to another daemon is success: the caller wanted a
@@ -140,8 +148,8 @@ func buildDaemonStatusSubcommand() *cobra.Command {
 				return err
 			}
 
-			c, err := client.Connect(cmd.Context(), dirs)
-			if errors.Is(err, daemon.ErrNoDaemon) {
+			c, err := api.Connect(cmd.Context(), dirs)
+			if errors.Is(err, api.ErrNoDaemon) {
 				_, err := fmt.Fprintln(cmd.OutOrStdout(), "not running")
 
 				return err
@@ -182,7 +190,7 @@ func buildDaemonStopSubcommand() *cobra.Command {
 				return err
 			}
 
-			if err := client.Stop(dirs); err != nil {
+			if err := api.Stop(dirs); err != nil {
 				return err
 			}
 

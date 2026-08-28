@@ -4,52 +4,57 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/justinrush/q/internal/api"
 	"strings"
 
-	"github.com/justinrush/q/internal/debrief"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/launch"
-	"github.com/justinrush/q/internal/state"
-	"github.com/justinrush/q/internal/tmuxc"
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // Debriefer arranges and attaches a mission's debrief session, and reports what changed.
 type Debriefer interface {
-	Open(ctx context.Context, mission domain.Mission, mode debrief.Mode) (debrief.Result, domain.Mission, error)
-	Touched(ctx context.Context, mission domain.Mission) ([]debrief.Touched, error)
+	Open(ctx context.Context, ms mission.Mission, mode api.Mode) (api.Result, mission.Mission, error)
+	Touched(ctx context.Context, ms mission.Mission) ([]api.Touched, error)
 }
 
 // Messenger delivers text to a live agent session and revives dead ones.
 type Messenger interface {
-	SendMessage(ctx context.Context, mission domain.Mission, text string) error
-	Relaunch(ctx context.Context, operation domain.Operation, mission domain.Mission, message string) (domain.Mission, error)
+	SendMessage(ctx context.Context, ms mission.Mission, text string) error
+	Relaunch(ctx context.Context, operation mission.Operation, ms mission.Mission, message string) (mission.Mission, error)
+}
+
+// WithMessenger attaches the component that talks to a live agent session.
+func WithMessenger(m Messenger) Option {
+	return func(s *Service) { s.messenger = m }
+}
+
+// WithReclaimer attaches the component that reclaims a deleted mission's resources.
+func WithReclaimer(r Reclaimer) Option {
+	return func(s *Service) { s.reclaimer = r }
 }
 
 // Reclaimer removes a mission's worktrees, branches, and tmux session.
 type Reclaimer interface {
-	PlanReclaim(ctx context.Context, operation domain.Operation, mission domain.Mission) (launch.Plan, error)
-	Reclaim(ctx context.Context, operation domain.Operation, mission domain.Mission, force bool) (launch.Report, error)
+	PlanReclaim(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Plan, error)
+	Reclaim(ctx context.Context, operation mission.Operation, ms mission.Mission, force bool) (mission.Report, error)
 }
-
-// SetReclaimer attaches the component that reclaims a deleted mission's resources.
-func (s *Service) SetReclaimer(r Reclaimer) { s.reclaimer = r }
 
 // PlanDelete reports what deleting a mission would discard.
 //
 // The board asks for this before confirming, so the dialog can name what is about to be
 // lost rather than asking the human to be sure about nothing.
-func (s *Service) PlanDelete(ctx context.Context, id domain.MissionID) (launch.Plan, error) {
-	mission, operation, err := s.missionWithOperation(id)
+func (s *Service) PlanDelete(ctx context.Context, id mission.MissionID) (mission.Plan, error) {
+	ms, operation, err := s.missionWithOperation(id)
 	if err != nil {
-		return launch.Plan{}, err
+		return mission.Plan{}, err
 	}
 
-	if s.reclaimer == nil || !mission.Launched() {
+	if s.reclaimer == nil || !ms.Launched() {
 		// Nothing was ever provisioned, so there is nothing to plan.
-		return launch.Plan{}, nil
+		return mission.Plan{}, nil
 	}
 
-	return s.reclaimer.PlanReclaim(ctx, operation, mission)
+	return s.reclaimer.PlanReclaim(ctx, operation, ms)
 }
 
 // DeleteMissionAndReclaim removes a mission along with its worktrees, branches, and session.
@@ -59,9 +64,9 @@ func (s *Service) PlanDelete(ctx context.Context, id domain.MissionID) (launch.P
 // orphaned with nothing to associate them back to.
 func (s *Service) DeleteMissionAndReclaim(
 	ctx context.Context,
-	id domain.MissionID,
+	id mission.MissionID,
 	force bool,
-) (launch.Report, error) {
+) (mission.Report, error) {
 	report, err := s.ReclaimMission(ctx, id, force)
 	if err != nil {
 		return report, err
@@ -82,20 +87,20 @@ func (s *Service) DeleteMissionAndReclaim(
 // the only durable record of resources that still need another cleanup attempt.
 func (s *Service) ReclaimMission(
 	ctx context.Context,
-	id domain.MissionID,
+	id mission.MissionID,
 	force bool,
-) (launch.Report, error) {
-	mission, operation, err := s.missionWithOperation(id)
+) (mission.Report, error) {
+	ms, operation, err := s.missionWithOperation(id)
 	if err != nil {
-		return launch.Report{}, err
+		return mission.Report{}, err
 	}
 
-	var report launch.Report
+	var report mission.Report
 
-	if s.reclaimer != nil && mission.Launched() {
-		report, err = s.reclaimer.Reclaim(ctx, operation, mission, force)
+	if s.reclaimer != nil && ms.Launched() {
+		report, err = s.reclaimer.Reclaim(ctx, operation, ms, force)
 		if err != nil {
-			if errors.Is(err, launch.ErrNeedsForce) {
+			if errors.Is(err, mission.ErrNeedsForce) {
 				return report, fmt.Errorf("%w: %w", ErrConflict, err)
 			}
 
@@ -117,84 +122,78 @@ func (s *Service) ReclaimMission(
 // resumable or point at worktrees that no longer exist.
 func (s *Service) FinishMission(
 	ctx context.Context,
-	id domain.MissionID,
+	id mission.MissionID,
 	force bool,
-) (domain.Mission, launch.Report, error) {
-	mission, _, err := s.missionWithOperation(id)
+) (mission.Mission, mission.Report, error) {
+	ms, _, err := s.missionWithOperation(id)
 	if err != nil {
-		return domain.Mission{}, launch.Report{}, err
+		return mission.Mission{}, mission.Report{}, err
 	}
 
-	if mission.Status == domain.StatusClosed {
-		return mission, launch.Report{}, nil
+	if ms.Status == mission.StatusClosed {
+		return ms, mission.Report{}, nil
 	}
 
 	report, err := s.ReclaimMission(ctx, id, force)
 	if err != nil {
-		return domain.Mission{}, report, err
+		return mission.Mission{}, report, err
 	}
 
-	mission, err = s.setStatus(id, domain.StatusClosed, clearFinishedResources)
+	ms, err = s.setStatus(id, mission.StatusClosed, clearFinishedResources)
 	if err != nil {
-		return domain.Mission{}, report, err
+		return mission.Mission{}, report, err
 	}
 
-	return mission, report, nil
+	return ms, report, nil
 }
 
 // clearFinishedResources removes state that described the session and worktrees which
 // FinishMission just reclaimed. StartedAt is cleared so a human reopening the card can
 // launch fresh resources rather than trying to resume paths that no longer exist.
-func clearFinishedResources(mission *domain.Mission) {
-	mission.MissionDir = ""
-	mission.TmuxSession = ""
-	mission.AgentPaneID = ""
-	mission.AgentSessionID = ""
-	mission.HookEpoch++
-	mission.Work = nil
-	mission.AgentState = domain.AgentUnknown
-	mission.WaitingFor = ""
-	mission.PlanPending = false
-	mission.Badges = nil
-	mission.LaunchError = ""
-	mission.StartedAt = nil
+func clearFinishedResources(ms *mission.Mission) {
+	ms.MissionDir = ""
+	ms.TmuxSession = ""
+	ms.AgentPaneID = ""
+	ms.AgentSessionID = ""
+	ms.HookEpoch++
+	ms.Work = nil
+	ms.AgentState = mission.AgentUnknown
+	ms.WaitingFor = ""
+	ms.PlanPending = false
+	ms.Badges = nil
+	ms.LaunchError = ""
+	ms.StartedAt = nil
 }
 
 // missionWithOperation fetches a mission and the operation it belongs to.
 //
 // A missing operation is not fatal here: a mission can outlive a force-deleted operation, and it
 // still needs to be deletable.
-func (s *Service) missionWithOperation(id domain.MissionID) (domain.Mission, domain.Operation, error) {
+func (s *Service) missionWithOperation(id mission.MissionID) (mission.Mission, mission.Operation, error) {
 	snap := s.store.Snapshot()
 
-	mission, ok := snap.Mission(id)
+	ms, ok := snap.Mission(id)
 	if !ok {
-		return domain.Mission{}, domain.Operation{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+		return mission.Mission{}, mission.Operation{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
-	operation, _ := snap.Operation(mission.OperationID)
+	operation, _ := snap.Operation(ms.OperationID)
 
-	return mission, operation, nil
+	return ms, operation, nil
 }
 
-// SetDebriefer attaches the component that opens debrief sessions.
-func (s *Service) SetDebriefer(r Debriefer) { s.debriefer = r }
-
-// SetMessenger attaches the component that talks to live sessions.
-func (s *Service) SetMessenger(m Messenger) { s.messenger = m }
-
 // OpenDebrief arranges the mission's debrief session and attaches to it.
-func (s *Service) OpenDebrief(ctx context.Context, id domain.MissionID, mode debrief.Mode) (debrief.Result, error) {
+func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode api.Mode) (api.Result, error) {
 	if s.debriefer == nil {
-		return debrief.Result{}, fmt.Errorf("%w: this daemon cannot open debrief sessions", ErrConflict)
+		return api.Result{}, fmt.Errorf("%w: this daemon cannot open debrief sessions", ErrConflict)
 	}
 
-	mission, err := s.requireLaunched(id)
+	ms, err := s.requireLaunched(id)
 	if err != nil {
-		return debrief.Result{}, err
+		return api.Result{}, err
 	}
 
-	result, updated, err := s.debriefer.Open(ctx, mission, mode)
+	result, updated, err := s.debriefer.Open(ctx, ms, mode)
 
 	if result.PanesAdded > 0 {
 		// Opening can create several panes before a later split fails. Record those
@@ -214,63 +213,63 @@ func (s *Service) OpenDebrief(ctx context.Context, id domain.MissionID, mode deb
 // This is what a move out of the waiting or debrief lane does. When the session is
 // alive the message is delivered to it; when it is not, the agent is relaunched
 // against the surviving worktrees and given the message as its prompt.
-func (s *Service) Resume(ctx context.Context, id domain.MissionID, message string) (domain.Mission, error) {
+func (s *Service) Resume(ctx context.Context, id mission.MissionID, message string) (mission.Mission, error) {
 	if s.messenger == nil {
-		return domain.Mission{}, fmt.Errorf("%w: this daemon cannot talk to agent sessions", ErrConflict)
+		return mission.Mission{}, fmt.Errorf("%w: this daemon cannot talk to agent sessions", ErrConflict)
 	}
 
-	mission, err := s.requireLaunched(id)
+	ms, err := s.requireLaunched(id)
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
-	if s.sessionAlive(ctx, mission) {
+	if s.sessionAlive(ctx, ms) {
 		if message != "" {
-			if err := s.messenger.SendMessage(ctx, mission, message); err != nil {
-				return domain.Mission{}, err
+			if err := s.messenger.SendMessage(ctx, ms, message); err != nil {
+				return mission.Mission{}, err
 			}
 		}
 
-		return s.SetStatus(id, domain.StatusActive)
+		return s.SetStatus(id, mission.StatusActive)
 	}
 
 	snap := s.store.Snapshot()
 
-	operation, ok := snap.Operation(mission.OperationID)
+	operation, ok := snap.Operation(ms.OperationID)
 	if !ok {
-		return domain.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, mission.OperationID)
+		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
 	}
 
 	if !s.inflight.claim(id) {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
+		return mission.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
 	}
 	defer s.inflight.release(id)
 
-	relaunched, err := s.messenger.Relaunch(ctx, operation, mission, message)
+	relaunched, err := s.messenger.Relaunch(ctx, operation, ms, message)
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	return s.commitRelaunch(relaunched)
 }
 
 // sessionAlive reports whether the mission's agent is still there to talk to.
-func (s *Service) sessionAlive(ctx context.Context, mission domain.Mission) bool {
-	if s.probe == nil || mission.TmuxSession == "" {
+func (s *Service) sessionAlive(ctx context.Context, ms mission.Mission) bool {
+	if s.probe == nil || ms.TmuxSession == "" {
 		return false
 	}
 
-	if !s.probe.HasSession(ctx, mission.TmuxSession) {
+	if !s.probe.HasSession(ctx, ms.TmuxSession) {
 		return false
 	}
 
-	panes, err := s.probe.ListPanes(ctx, tmuxc.Session(mission.TmuxSession))
+	panes, err := s.probe.ListPanes(ctx, terminal.Session(ms.TmuxSession))
 	if err != nil {
 		return false
 	}
 
 	for _, pane := range panes {
-		if pane.ID == mission.AgentPaneID {
+		if pane.ID == ms.AgentPaneID {
 			return !pane.Dead && agentCommands[pane.Command]
 		}
 	}
@@ -279,34 +278,34 @@ func (s *Service) sessionAlive(ctx context.Context, mission domain.Mission) bool
 }
 
 // requireLaunched fetches a mission that has been started.
-func (s *Service) requireLaunched(id domain.MissionID) (domain.Mission, error) {
-	mission, ok := s.store.Snapshot().Mission(id)
+func (s *Service) requireLaunched(id mission.MissionID) (mission.Mission, error) {
+	ms, ok := s.store.Snapshot().Mission(id)
 	if !ok {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
-	if !mission.Launched() {
-		return domain.Mission{}, fmt.Errorf("%w: mission %s has not been launched", ErrConflict, id)
+	if !ms.Launched() {
+		return mission.Mission{}, fmt.Errorf("%w: mission %s has not been launched", ErrConflict, id)
 	}
 
-	return mission, nil
+	return ms, nil
 }
 
 // persistPanes records debrief pane ids without disturbing anything else.
-func (s *Service) persistPanes(mission domain.Mission) {
-	if len(mission.Work) == 0 {
+func (s *Service) persistPanes(ms mission.Mission) {
+	if len(ms.Work) == 0 {
 		return
 	}
 
-	var updated domain.Mission
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.debrief_panes", func(snap *state.Snapshot) error {
-		stored, ok := snap.Mission(mission.ID)
+	err := s.store.Mutate("mission.debrief_panes", func(snap *mission.Snapshot) error {
+		stored, ok := snap.Mission(ms.ID)
 		if !ok {
 			return nil
 		}
 
-		for name, work := range mission.Work {
+		for name, work := range ms.Work {
 			existing, ok := stored.Work[name]
 			if !ok {
 				continue
@@ -334,10 +333,10 @@ func (s *Service) persistPanes(mission domain.Mission) {
 }
 
 // commitRelaunch persists a revived session.
-func (s *Service) commitRelaunch(relaunched domain.Mission) (domain.Mission, error) {
-	var updated domain.Mission
+func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, error) {
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.relaunched", func(snap *state.Snapshot) error {
+	err := s.store.Mutate("mission.relaunched", func(snap *mission.Snapshot) error {
 		stored, ok := snap.Mission(relaunched.ID)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, relaunched.ID)
@@ -345,9 +344,9 @@ func (s *Service) commitRelaunch(relaunched domain.Mission) (domain.Mission, err
 
 		now := s.now()
 
-		stored.Status = domain.StatusActive
+		stored.Status = mission.StatusActive
 		stored.StatusChangedAt = now
-		stored.Order = snap.NextOrder(domain.StatusActive)
+		stored.Order = snap.NextOrder(mission.StatusActive)
 		stored.AgentState = relaunched.AgentState
 		stored.TmuxSession = relaunched.TmuxSession
 		stored.AgentPaneID = relaunched.AgentPaneID
@@ -365,7 +364,7 @@ func (s *Service) commitRelaunch(relaunched domain.Mission) (domain.Mission, err
 		return nil
 	})
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	s.publishMission(updated)
@@ -374,15 +373,15 @@ func (s *Service) commitRelaunch(relaunched domain.Mission) (domain.Mission, err
 }
 
 // Diff reports what each of a mission's worktrees has changed.
-func (s *Service) Diff(ctx context.Context, id domain.MissionID) ([]debrief.Touched, error) {
+func (s *Service) Diff(ctx context.Context, id mission.MissionID) ([]api.Touched, error) {
 	if s.debriefer == nil {
 		return nil, fmt.Errorf("%w: this daemon cannot inspect worktrees", ErrConflict)
 	}
 
-	mission, err := s.requireLaunched(id)
+	ms, err := s.requireLaunched(id)
 	if err != nil {
 		return nil, err
 	}
 
-	return s.debriefer.Touched(ctx, mission)
+	return s.debriefer.Touched(ctx, ms)
 }

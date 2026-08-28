@@ -6,12 +6,9 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
-	"github.com/justinrush/q/internal/hookspec"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/spool"
-	"github.com/justinrush/q/internal/state"
-	"github.com/justinrush/q/internal/statem"
 )
 
 // coalesceWindow is how long a lane change is protected from being lowered.
@@ -29,14 +26,14 @@ const coalesceWindow = 750 * time.Millisecond
 // cannot be matched to a mission is written to the orphan log, and one for a mission that
 // no longer exists is dropped.
 func (s *Service) ApplyHook(req api.HookRequest) {
-	payload, err := hookspec.ParseBytes(req.Payload, req.Event)
+	payload, err := mission.ParseHookEventBytes(req.Payload, req.Event)
 	if err != nil {
 		s.recordOrphan(req, "unparseable payload: "+err.Error())
 
 		return
 	}
 
-	mission, ok := s.resolveMission(req, payload)
+	ms, ok := s.resolveMission(req, payload)
 	if !ok {
 		s.recordOrphan(req, "no matching mission")
 
@@ -45,11 +42,11 @@ func (s *Service) ApplyHook(req api.HookRequest) {
 
 	// An epoch older than the mission's means this hook belongs to a session q
 	// already gave up on and relaunched past.
-	if req.HookEpoch > 0 && req.HookEpoch < mission.HookEpoch {
+	if req.HookEpoch > 0 && req.HookEpoch < ms.HookEpoch {
 		return
 	}
 
-	s.applyReduction(mission.ID, payload)
+	s.applyReduction(ms.ID, payload)
 }
 
 // resolveMission identifies which mission an event belongs to.
@@ -58,38 +55,38 @@ func (s *Service) ApplyHook(req api.HookRequest) {
 // session id is next, and the working directory last: mission directories are unique
 // per mission by construction, which is one of the payoffs of keeping worktrees in a
 // central q-owned tree.
-func (s *Service) resolveMission(req api.HookRequest, payload hookspec.Payload) (domain.Mission, bool) {
+func (s *Service) resolveMission(req api.HookRequest, payload mission.HookEvent) (mission.Mission, bool) {
 	snap := s.store.Snapshot()
 
 	if req.MissionID != "" {
-		if mission, ok := snap.Mission(req.MissionID); ok {
-			return mission, true
+		if ms, ok := snap.Mission(req.MissionID); ok {
+			return ms, true
 		}
 	}
 
-	if mission, ok := snap.MissionBySession(req.Tool, payload.SessionID); ok {
-		return mission, true
+	if ms, ok := snap.MissionBySession(req.Tool, payload.SessionID); ok {
+		return ms, true
 	}
 
 	return snap.MissionByDir(payload.CWD)
 }
 
 // applyReduction runs the state machine and persists the outcome.
-func (s *Service) applyReduction(id domain.MissionID, payload hookspec.Payload) {
+func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent) {
 	var (
-		updated domain.Mission
+		updated mission.Mission
 		changed bool
 	)
 
-	err := s.store.Mutate("mission.hook."+hookspec.EventSlug(payload.Event), func(snap *state.Snapshot) error {
-		mission, ok := snap.Mission(id)
+	err := s.store.Mutate("mission.hook."+mission.HookEventSlug(payload.Event), func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
 		if !ok {
 			return nil
 		}
 
 		now := s.now()
-		res := statem.Reduce(mission, payload, now)
-		s.stabilizeCodexApproval(mission, payload, &res, now)
+		res := mission.Reduce(ms, payload, now)
+		s.stabilizeApproval(ms, payload, &res, now)
 
 		if !res.Changed {
 			return nil
@@ -97,7 +94,7 @@ func (s *Service) applyReduction(id domain.MissionID, payload hookspec.Payload) 
 
 		next := res.Mission
 
-		if status, move := s.resolveLane(mission, res, now); move {
+		if status, move := s.resolveLane(ms, res, now); move {
 			next.Status = status
 			next.Order = snap.NextOrder(status)
 			next.StatusChangedAt = now
@@ -120,34 +117,49 @@ func (s *Service) applyReduction(id domain.MissionID, payload hookspec.Payload) 
 	}
 }
 
-func (s *Service) stabilizeCodexApproval(
-	mission domain.Mission,
-	payload hookspec.Payload,
-	res *statem.Result,
+// stabilizeApproval damps a hook-reported approval for an agent whose own runtime
+// is the authority on them.
+//
+// Such an agent raises a permission hook the instant a request is made, often a few
+// hundred milliseconds before resolving it itself. Acting on the hook would flash a
+// request on the board that the human never needed to see, so the hook only records
+// a candidate and the runtime poll decides whether it survives the grace period.
+func (s *Service) stabilizeApproval(
+	ms mission.Mission,
+	payload mission.HookEvent,
+	res *mission.Reduction,
 	now time.Time,
 ) {
-	if mission.Tool != domain.ToolCodex || mission.Status.Terminal() ||
-		mission.Status == domain.StatusBriefing && payload.Event != hookspec.EventSessionStart ||
-		mission.AgentSessionID != "" && payload.SessionID != "" &&
-			mission.AgentSessionID != payload.SessionID {
+	if _, authoritative := s.runtimes[ms.Tool]; !authoritative {
+		return
+	}
+
+	if ms.Status.Terminal() ||
+		ms.Status == mission.StatusBriefing && payload.Event != mission.EventSessionStart ||
+		ms.AgentSessionID != "" && payload.SessionID != "" &&
+			ms.AgentSessionID != payload.SessionID {
 		return
 	}
 
 	switch payload.Event {
-	case hookspec.EventPermissionRequest:
-		s.noteCodexApproval(mission.ID, payload.SessionID, res.Mission.WaitingFor, now)
-		res.Mission.AgentState = domain.AgentBusy
+	case mission.EventPermissionRequest:
+		s.noteApproval(ms.ID, mission.Reading{
+			SessionID:  payload.SessionID,
+			Activity:   mission.ActivityWaitingApproval,
+			WaitingFor: res.Mission.WaitingFor,
+		}, now)
+		res.Mission.AgentState = mission.AgentBusy
 		res.Mission.WaitingFor = ""
 		res.ProposedStatus = ""
-	case hookspec.EventPreToolUse:
-		s.clearCodexApproval(mission.ID)
-		res.Mission.AgentState = domain.AgentBusy
+	case mission.EventPreToolUse:
+		s.clearApproval(ms.ID)
+		res.Mission.AgentState = mission.AgentBusy
 		res.Mission.WaitingFor = ""
-		res.ProposedStatus = domain.StatusActive
+		res.ProposedStatus = mission.StatusActive
 		res.Definite = true
-	case hookspec.EventPostToolUse, hookspec.EventUserPromptSubmit,
-		hookspec.EventSessionEnd:
-		s.clearCodexApproval(mission.ID)
+	case mission.EventPostToolUse, mission.EventUserPromptSubmit,
+		mission.EventSessionEnd:
+		s.clearApproval(ms.ID)
 	}
 }
 
@@ -157,7 +169,7 @@ func (s *Service) stabilizeCodexApproval(
 // the current lane was set moments ago and the proposal is not itself proof that the
 // situation resolved, which is what keeps a Stop from making a card that is blocked
 // on a permission prompt read as finished.
-func (s *Service) resolveLane(current domain.Mission, res statem.Result, now time.Time) (domain.Status, bool) {
+func (s *Service) resolveLane(current mission.Mission, res mission.Reduction, now time.Time) (mission.Status, bool) {
 	if res.ProposedStatus == "" || res.ProposedStatus == current.Status {
 		return "", false
 	}
@@ -184,12 +196,12 @@ func (s *Service) recordOrphan(req api.HookRequest, reason string) {
 	}
 
 	entry, err := json.Marshal(struct {
-		At        time.Time        `json:"at"`
-		Reason    string           `json:"reason"`
-		Tool      domain.Tool      `json:"tool"`
-		Event     string           `json:"event"`
-		MissionID domain.MissionID `json:"missionId,omitempty"`
-		Payload   json.RawMessage  `json:"payload,omitempty"`
+		At        time.Time         `json:"at"`
+		Reason    string            `json:"reason"`
+		Tool      mission.Tool      `json:"tool"`
+		Event     string            `json:"event"`
+		MissionID mission.MissionID `json:"missionId,omitempty"`
+		Payload   json.RawMessage   `json:"payload,omitempty"`
 	}{
 		At:        s.now(),
 		Reason:    reason,

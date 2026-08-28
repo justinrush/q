@@ -6,10 +6,9 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/justinrush/q/internal/client"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/state"
 )
 
 // reportOrphans lists mission directories and tmux sessions with no mission behind them.
@@ -54,7 +53,7 @@ func reportOrphans(ctx context.Context, rep *report, dirs paths.Dirs) {
 // The second result is false when the daemon cannot be reached, which is different from
 // there being no missions: without it, every directory would look orphaned.
 func knownMissionDirs(ctx context.Context, dirs paths.Dirs) (map[string]bool, bool) {
-	c, err := client.Connect(ctx, dirs)
+	c, err := api.Connect(ctx, dirs)
 	if err != nil {
 		return nil, false
 	}
@@ -70,12 +69,12 @@ func knownMissionDirs(ctx context.Context, dirs paths.Dirs) (map[string]bool, bo
 // ownedMissionDirs reports the directory each mission currently owns. A mission in briefing has no
 // persisted MissionDir yet, so its future slug-based path is reserved. Once a
 // launch chooses an actual directory, only that path belongs to the mission.
-func ownedMissionDirs(dirs paths.Dirs, snap state.Snapshot) map[string]bool {
+func ownedMissionDirs(dirs paths.Dirs, snap mission.Snapshot) map[string]bool {
 	known := make(map[string]bool, len(snap.Missions))
 
-	for _, mission := range snap.Missions {
-		if mission.MissionDir != "" {
-			known[mission.MissionDir] = true
+	for _, ms := range snap.Missions {
+		if ms.MissionDir != "" {
+			known[ms.MissionDir] = true
 
 			continue
 		}
@@ -83,8 +82,8 @@ func ownedMissionDirs(dirs paths.Dirs, snap state.Snapshot) map[string]bool {
 		// A mission that has never launched still reserves the directory name it would
 		// get, so a directory created immediately before state commit is not
 		// reported as a stray.
-		if operation, ok := snap.Operation(mission.OperationID); ok {
-			known[dirs.MissionDir(domain.MissionDirName(operation.Slug, mission.Slug))] = true
+		if operation, ok := snap.Operation(ms.OperationID); ok {
+			known[dirs.MissionDir(mission.MissionDirName(operation.Slug, ms.Slug))] = true
 		}
 	}
 

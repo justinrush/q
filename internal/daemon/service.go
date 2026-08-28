@@ -9,9 +9,8 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
-	"github.com/justinrush/q/internal/domain"
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
-	"github.com/justinrush/q/internal/state"
 )
 
 // Sentinel errors the HTTP layer maps to status codes.
@@ -31,7 +30,7 @@ var (
 // (a mission starts in draft, a codex mission cannot use plan mode, an operation with live
 // missions cannot be deleted) are unit-testable without a server or a git tree.
 type Service struct {
-	store  *state.Store
+	store  *mission.Store
 	hub    *Hub
 	dirs   paths.Dirs
 	logger *slog.Logger
@@ -48,80 +47,113 @@ type Service struct {
 	debriefer Debriefer
 	messenger Messenger
 	reclaimer Reclaimer
-	codex     CodexStatusReader
+	// runtimes and healers are the agents that can report on their own live
+	// sessions. Neither is required: without them the board relies on hooks alone.
+	runtimes map[mission.Tool]mission.Runtime
+	healers  []mission.Healer
 
-	codexApprovalMu sync.Mutex
-	codexApprovals  map[domain.MissionID]codexApprovalCandidate
-	inflight        inflight
+	approvalMu sync.Mutex
+	approvals  map[mission.MissionID]approvalCandidate
+	inflight   inflight
 }
 
-// ServiceConfig configures a Service.
-type ServiceConfig struct {
-	Store  *state.Store
-	Hub    *Hub
-	Dirs   paths.Dirs
-	Logger *slog.Logger
-	Now    func() time.Time
+// Option configures a Service.
+type Option func(*Service)
+
+// WithClock replaces the time source, for tests.
+func WithClock(now func() time.Time) Option {
+	return func(s *Service) { s.now = now }
 }
 
-// NewService returns a Service over the given store, publishing changes to its hub.
-func NewService(cfg ServiceConfig) *Service {
-	now := cfg.Now
-	if now == nil {
-		now = time.Now
-	}
-
-	logger := cfg.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	return &Service{
-		store:          cfg.Store,
-		hub:            cfg.Hub,
-		dirs:           cfg.Dirs,
-		logger:         logger,
-		now:            now,
-		codexApprovals: make(map[domain.MissionID]codexApprovalCandidate),
-	}
+// WithLogger sets where the service reports problems it does not fail on.
+func WithLogger(l *slog.Logger) Option {
+	return func(s *Service) { s.logger = l }
 }
 
-// SetLauncher attaches the component that provisions worktrees and starts agents.
-func (s *Service) SetLauncher(l Launcher) { s.launcher = l }
+// WithLauncher attaches the component that provisions worktrees and starts agents.
+func WithLauncher(l Launcher) Option {
+	return func(s *Service) { s.launcher = l }
+}
+
+// WithProbe attaches the component that reports whether a session is still live.
+func WithProbe(p SessionProbe) Option {
+	return func(s *Service) { s.probe = p }
+}
+
+// WithDebriefer attaches the component that opens a mission for debrief.
+func WithDebriefer(d Debriefer) Option {
+	return func(s *Service) { s.debriefer = d }
+}
+
+// WithRuntime attaches an agent runtime whose readings are authoritative.
+func WithRuntime(tool mission.Tool, r mission.Runtime) Option {
+	return func(s *Service) { s.runtimes[tool] = r }
+}
+
+// WithHealer attaches an agent registry whose readings correct a dropped hook.
+func WithHealer(h mission.Healer) Option {
+	return func(s *Service) { s.healers = append(s.healers, h) }
+}
+
+// NewService returns a Service over the given store, publishing changes to hub.
+//
+// Every dependency past the store is optional and supplied as an [Option], so a
+// daemon with no agent tooling available still serves the board and refuses the
+// actions it cannot perform, rather than failing to start.
+func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option) *Service {
+	s := &Service{
+		store:     store,
+		hub:       hub,
+		dirs:      dirs,
+		logger:    slog.Default(),
+		now:       time.Now,
+		runtimes:  make(map[mission.Tool]mission.Runtime),
+		approvals: make(map[mission.MissionID]approvalCandidate),
+	}
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	return s
+}
+
+// Hub returns the service's event hub, which the server publishes from.
+func (s *Service) Hub() *Hub { return s.hub }
 
 // Snapshot returns the current state.
-func (s *Service) Snapshot() state.Snapshot { return s.store.Snapshot() }
+func (s *Service) Snapshot() mission.Snapshot { return s.store.Snapshot() }
 
 // CreateOperation adds an operation, assigning its slug and palette color.
-func (s *Service) CreateOperation(req api.CreateOperationRequest) (domain.Operation, error) {
+func (s *Service) CreateOperation(req api.CreateOperationRequest) (mission.Operation, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		return domain.Operation{}, fmt.Errorf("%w: operation name is required", ErrInvalid)
+		return mission.Operation{}, fmt.Errorf("%w: operation name is required", ErrInvalid)
 	}
 
-	id, err := domain.NewOperationID()
+	id, err := mission.NewOperationID()
 	if err != nil {
-		return domain.Operation{}, err
+		return mission.Operation{}, err
 	}
 
 	now := s.now()
-	operation := domain.Operation{
+	operation := mission.Operation{
 		ID:        id,
 		Name:      name,
-		Slug:      domain.Slug(name),
+		Slug:      mission.Slug(name),
 		Summary:   strings.TrimSpace(req.Summary),
 		Repos:     normalizeRepos(req.Repos),
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
 
-	if err := s.store.Mutate("operation.create", func(snap *state.Snapshot) error {
+	if err := s.store.Mutate("operation.create", func(snap *mission.Snapshot) error {
 		operation.ColorIdx = snap.NextColorIdx()
 		snap.PutOperation(operation)
 
 		return nil
 	}); err != nil {
-		return domain.Operation{}, err
+		return mission.Operation{}, err
 	}
 
 	// Re-read so the caller sees the color the store assigned.
@@ -132,10 +164,10 @@ func (s *Service) CreateOperation(req api.CreateOperationRequest) (domain.Operat
 }
 
 // UpdateOperation patches an operation in place.
-func (s *Service) UpdateOperation(id domain.OperationID, req api.UpdateOperationRequest) (domain.Operation, error) {
-	var updated domain.Operation
+func (s *Service) UpdateOperation(id mission.OperationID, req api.UpdateOperationRequest) (mission.Operation, error) {
+	var updated mission.Operation
 
-	err := s.store.Mutate("operation.update", func(snap *state.Snapshot) error {
+	err := s.store.Mutate("operation.update", func(snap *mission.Snapshot) error {
 		operation, ok := snap.Operation(id)
 		if !ok {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, id)
@@ -148,7 +180,7 @@ func (s *Service) UpdateOperation(id domain.OperationID, req api.UpdateOperation
 			}
 
 			operation.Name = name
-			operation.Slug = domain.Slug(name)
+			operation.Slug = mission.Slug(name)
 		}
 
 		if req.Summary != nil {
@@ -160,7 +192,7 @@ func (s *Service) UpdateOperation(id domain.OperationID, req api.UpdateOperation
 		}
 
 		if req.ColorIdx != nil {
-			operation.ColorIdx = ((*req.ColorIdx % domain.PaletteSize) + domain.PaletteSize) % domain.PaletteSize
+			operation.ColorIdx = ((*req.ColorIdx % mission.PaletteSize) + mission.PaletteSize) % mission.PaletteSize
 		}
 
 		if req.Archived != nil {
@@ -174,7 +206,7 @@ func (s *Service) UpdateOperation(id domain.OperationID, req api.UpdateOperation
 		return nil
 	})
 	if err != nil {
-		return domain.Operation{}, err
+		return mission.Operation{}, err
 	}
 
 	s.publishOperation(updated)
@@ -187,10 +219,10 @@ func (s *Service) UpdateOperation(id domain.OperationID, req api.UpdateOperation
 // Operations with missions that are not done are refused unless force is set. An operation
 // is the only place a mission's repo list lives, so deleting one out from under a
 // running agent would leave the mission unable to describe its own worktrees.
-func (s *Service) DeleteOperation(id domain.OperationID, force bool) error {
-	var removedMissions []domain.MissionID
+func (s *Service) DeleteOperation(id mission.OperationID, force bool) error {
+	var removedMissions []mission.MissionID
 
-	err := s.store.Mutate("operation.delete", func(snap *state.Snapshot) error {
+	err := s.store.Mutate("operation.delete", func(snap *mission.Snapshot) error {
 		if _, ok := snap.Operation(id); !ok {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, id)
 		}
@@ -200,9 +232,9 @@ func (s *Service) DeleteOperation(id domain.OperationID, force bool) error {
 			return fmt.Errorf("%w: operation %s still has %d unfinished mission(s)", ErrConflict, id, len(active))
 		}
 
-		for _, mission := range snap.MissionsForOperation(id) {
-			removedMissions = append(removedMissions, mission.ID)
-			snap.DeleteMission(mission.ID)
+		for _, ms := range snap.MissionsForOperation(id) {
+			removedMissions = append(removedMissions, ms.ID)
+			snap.DeleteMission(ms.ID)
 		}
 
 		snap.DeleteOperation(id)
@@ -223,68 +255,68 @@ func (s *Service) DeleteOperation(id domain.OperationID, force bool) error {
 }
 
 // CreateMission adds a mission in the draft lane.
-func (s *Service) CreateMission(req api.CreateMissionRequest) (domain.Mission, error) {
+func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, error) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
-		return domain.Mission{}, fmt.Errorf("%w: mission name is required", ErrInvalid)
+		return mission.Mission{}, fmt.Errorf("%w: mission name is required", ErrInvalid)
 	}
 
 	if strings.TrimSpace(req.Prompt) == "" {
-		return domain.Mission{}, fmt.Errorf("%w: mission prompt is required", ErrInvalid)
+		return mission.Mission{}, fmt.Errorf("%w: mission prompt is required", ErrInvalid)
 	}
 
 	tool := req.Tool
 	if tool == "" {
-		tool = domain.ToolClaude
+		tool = mission.DefaultTool
 	}
 
 	if !tool.Valid() {
-		return domain.Mission{}, fmt.Errorf("%w: unknown tool %q", ErrInvalid, req.Tool)
+		return mission.Mission{}, fmt.Errorf("%w: unknown tool %q", ErrInvalid, req.Tool)
 	}
 
 	if req.PlanMode && !tool.SupportsPlanMode() {
-		return domain.Mission{}, fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, tool)
+		return mission.Mission{}, fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, tool)
 	}
 
-	id, err := domain.NewMissionID()
+	id, err := mission.NewMissionID()
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	now := s.now()
-	mission := domain.Mission{
+	ms := mission.Mission{
 		ID:          id,
 		OperationID: req.OperationID,
 		Name:        name,
-		Slug:        domain.Slug(name),
+		Slug:        mission.Slug(name),
 		Tool:        tool,
 		Prompt:      req.Prompt,
 		PlanMode:    req.PlanMode,
 		ExtraRepos:  normalizeRepos(req.ExtraRepos),
-		Status:      domain.StatusBriefing,
-		AgentState:  domain.AgentUnknown,
+		Status:      mission.StatusBriefing,
+		AgentState:  mission.AgentUnknown,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
 
-	err = s.store.Mutate("mission.create", func(snap *state.Snapshot) error {
+	err = s.store.Mutate("mission.create", func(snap *mission.Snapshot) error {
 		operation, ok := snap.Operation(req.OperationID)
 		if !ok {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, req.OperationID)
 		}
 
-		_, combineErr := domain.MissionRepos(operation, mission)
+		_, combineErr := mission.MissionRepos(operation, ms)
 		if combineErr != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, combineErr)
 		}
 
-		mission.Order = snap.NextOrder(domain.StatusBriefing)
-		snap.PutMission(mission)
+		ms.Order = snap.NextOrder(mission.StatusBriefing)
+		snap.PutMission(ms)
 
 		return nil
 	})
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	stored, _ := s.store.Snapshot().Mission(id)
@@ -294,27 +326,27 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (domain.Mission, e
 }
 
 // UpdateMission patches a mission's editable fields.
-func (s *Service) UpdateMission(id domain.MissionID, req api.UpdateMissionRequest) (domain.Mission, error) {
-	var updated domain.Mission
+func (s *Service) UpdateMission(id mission.MissionID, req api.UpdateMissionRequest) (mission.Mission, error) {
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.update", func(snap *state.Snapshot) error {
-		mission, ok := snap.Mission(id)
+	err := s.store.Mutate("mission.update", func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
 
-		if err := applyMissionPatch(snap, &mission, req); err != nil {
+		if err := applyMissionPatch(snap, &ms, req); err != nil {
 			return err
 		}
 
-		mission.UpdatedAt = s.now()
-		updated = mission
-		snap.PutMission(mission)
+		ms.UpdatedAt = s.now()
+		updated = ms
+		snap.PutMission(ms)
 
 		return nil
 	})
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	s.publishMission(updated)
@@ -323,13 +355,13 @@ func (s *Service) UpdateMission(id domain.MissionID, req api.UpdateMissionReques
 }
 
 // applyMissionPatch mutates mission according to req, validating as it goes.
-func applyMissionPatch(snap *state.Snapshot, mission *domain.Mission, req api.UpdateMissionRequest) error {
+func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.UpdateMissionRequest) error {
 	if req.OperationID != nil {
 		if _, ok := snap.Operation(*req.OperationID); !ok {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, *req.OperationID)
 		}
 
-		mission.OperationID = *req.OperationID
+		ms.OperationID = *req.OperationID
 	}
 
 	if req.Name != nil {
@@ -338,31 +370,31 @@ func applyMissionPatch(snap *state.Snapshot, mission *domain.Mission, req api.Up
 			return fmt.Errorf("%w: mission name cannot be empty", ErrInvalid)
 		}
 
-		mission.Name = name
-		mission.Slug = domain.Slug(name)
+		ms.Name = name
+		ms.Slug = mission.Slug(name)
 	}
 
 	if req.Prompt != nil {
-		mission.Prompt = *req.Prompt
+		ms.Prompt = *req.Prompt
 	}
 
 	if req.Order != nil {
-		mission.Order = *req.Order
+		ms.Order = *req.Order
 	}
 
 	if req.ExtraRepos != nil {
-		if mission.Status != domain.StatusBriefing {
+		if ms.Status != mission.StatusBriefing {
 			return fmt.Errorf("%w: cannot change repositories after launch", ErrConflict)
 		}
 
-		mission.ExtraRepos = normalizeRepos(*req.ExtraRepos)
+		ms.ExtraRepos = normalizeRepos(*req.ExtraRepos)
 	}
 
 	// Tool and plan mode are only meaningful before launch: they are baked into
 	// the agent's argv, so changing them afterwards would describe a session that
 	// is not the one running.
 	if req.Tool != nil || req.PlanMode != nil {
-		if mission.Launched() {
+		if ms.Launched() {
 			return fmt.Errorf("%w: cannot change tool or plan mode after launch", ErrConflict)
 		}
 	}
@@ -372,20 +404,20 @@ func applyMissionPatch(snap *state.Snapshot, mission *domain.Mission, req api.Up
 			return fmt.Errorf("%w: unknown tool %q", ErrInvalid, *req.Tool)
 		}
 
-		mission.Tool = *req.Tool
+		ms.Tool = *req.Tool
 	}
 
 	if req.PlanMode != nil {
-		mission.PlanMode = *req.PlanMode
+		ms.PlanMode = *req.PlanMode
 	}
 
-	if mission.PlanMode && !mission.Tool.SupportsPlanMode() {
-		return fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, mission.Tool)
+	if ms.PlanMode && !ms.Tool.SupportsPlanMode() {
+		return fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, ms.Tool)
 	}
 
 	if req.OperationID != nil || req.ExtraRepos != nil {
-		operation, _ := snap.Operation(mission.OperationID)
-		_, err := domain.MissionRepos(operation, *mission)
+		operation, _ := snap.Operation(ms.OperationID)
+		_, err := mission.MissionRepos(operation, *ms)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
@@ -400,57 +432,57 @@ func applyMissionPatch(snap *state.Snapshot, mission *domain.Mission, req api.Up
 // and resuming a dead session are side effects layered on top of this by the
 // orchestration packages; keeping them out of here is what makes the lane rules
 // testable on their own.
-func (s *Service) SetStatus(id domain.MissionID, to domain.Status) (domain.Mission, error) {
+func (s *Service) SetStatus(id mission.MissionID, to mission.Status) (mission.Mission, error) {
 	return s.setStatus(id, to, nil)
 }
 
 // setStatus applies a lane change and any state changes that must be stored with it.
 // Keeping them in one mutation prevents clients from observing a half-finished mission.
 func (s *Service) setStatus(
-	id domain.MissionID,
-	to domain.Status,
-	mutate func(*domain.Mission),
-) (domain.Mission, error) {
+	id mission.MissionID,
+	to mission.Status,
+	mutate func(*mission.Mission),
+) (mission.Mission, error) {
 	if !to.Valid() {
-		return domain.Mission{}, fmt.Errorf("%w: unknown status %q", ErrInvalid, to)
+		return mission.Mission{}, fmt.Errorf("%w: unknown status %q", ErrInvalid, to)
 	}
 
-	var updated domain.Mission
+	var updated mission.Mission
 
-	err := s.store.Mutate("mission.status", func(snap *state.Snapshot) error {
-		mission, ok := snap.Mission(id)
+	err := s.store.Mutate("mission.status", func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
 
-		if mission.Status == to {
-			updated = mission
+		if ms.Status == to {
+			updated = ms
 
 			return nil
 		}
 
 		now := s.now()
-		mission.Status = to
-		mission.Order = snap.NextOrder(to)
-		mission.UpdatedAt = now
+		ms.Status = to
+		ms.Order = snap.NextOrder(to)
+		ms.UpdatedAt = now
 
-		if to == domain.StatusClosed {
-			mission.FinishedAt = &now
+		if to == mission.StatusClosed {
+			ms.FinishedAt = &now
 		} else {
-			mission.FinishedAt = nil
+			ms.FinishedAt = nil
 		}
 
 		if mutate != nil {
-			mutate(&mission)
+			mutate(&ms)
 		}
 
-		updated = mission
-		snap.PutMission(mission)
+		updated = ms
+		snap.PutMission(ms)
 
 		return nil
 	})
 	if err != nil {
-		return domain.Mission{}, err
+		return mission.Mission{}, err
 	}
 
 	s.publishMission(updated)
@@ -462,8 +494,8 @@ func (s *Service) setStatus(
 //
 // Reclaiming its worktrees and tmux session is the caller's responsibility;
 // this only forgets the record.
-func (s *Service) DeleteMission(id domain.MissionID) error {
-	if err := s.store.Mutate("mission.delete", func(snap *state.Snapshot) error {
+func (s *Service) DeleteMission(id mission.MissionID) error {
+	if err := s.store.Mutate("mission.delete", func(snap *mission.Snapshot) error {
 		if !snap.DeleteMission(id) {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
@@ -479,8 +511,8 @@ func (s *Service) DeleteMission(id domain.MissionID) error {
 }
 
 // normalizeRepos trims and drops entries missing a name or path.
-func normalizeRepos(repos []domain.Repo) []domain.Repo {
-	out := make([]domain.Repo, 0, len(repos))
+func normalizeRepos(repos []mission.Repo) []mission.Repo {
+	out := make([]mission.Repo, 0, len(repos))
 
 	for _, r := range repos {
 		r.Name = strings.TrimSpace(r.Name)
@@ -498,20 +530,20 @@ func normalizeRepos(repos []domain.Repo) []domain.Repo {
 	return out
 }
 
-func (s *Service) publishOperation(t domain.Operation) {
+func (s *Service) publishOperation(t mission.Operation) {
 	if s.hub != nil {
-		s.hub.Broadcast(EventOperation, t)
+		s.hub.Broadcast(api.EventOperation, t)
 	}
 }
 
-func (s *Service) publishMission(t domain.Mission) {
+func (s *Service) publishMission(t mission.Mission) {
 	if s.hub != nil {
-		s.hub.Broadcast(EventMission, t)
+		s.hub.Broadcast(api.EventMission, t)
 	}
 }
 
 func (s *Service) publishDeleted(kind, id string) {
 	if s.hub != nil {
-		s.hub.Broadcast(EventDeleted, api.Deleted{Kind: kind, ID: id})
+		s.hub.Broadcast(api.EventDeleted, api.Deleted{Kind: kind, ID: id})
 	}
 }
