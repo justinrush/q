@@ -24,6 +24,7 @@ var versionArgs = map[toolName][]string{
 	toolTmux:   {"-V"},
 	toolClaude: {versionFlag},
 	toolCodex:  {versionFlag},
+	toolGemini: {versionFlag},
 }
 
 // envWarnings are environment variables that silently degrade q. Each is

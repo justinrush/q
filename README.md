@@ -5,8 +5,8 @@
 Q runs the mission board. An **operation** is an area of investigation: a high-level
 summary plus the repos it spans. A **mission** is one unit of agent work inside an
 operation. It inherits the operation's repos and can add repos needed only for that
-mission. q gives each mission its own git worktree per repo, starts `claude` or `codex`
-in a detached tmux session, and shows every mission on a board that updates itself as the
+mission. q gives each mission its own git worktree per repo, starts `claude`, `codex`,
+or `gemini` in a detached tmux session, and shows every mission on a board that updates itself as the
 agents work.
 
 ```
@@ -16,7 +16,7 @@ q  Board   Operations
 ╭────────────────────────────╮ —               ╭───────────────────────────╮ ╭─────────────────────╮   old-cleanup
 │ ◐ discussions-endpoint     │                 │ ⏸ Bash(rm -rf build)      │ │ ○ terraform-wiring  │   z to expand
 │ Add the endpoint.          │                 │ Audit the pipeline.       │ │ Wired the module.   │
-│ ◆ claude · plan · 2r · 4m  │                 │ ◇ codex · 3r · 22m        │ │ ◆ claude · 1r       │
+│ ◆ claude · plan · 2r · 4m  │                 │ ◇ codex · 3r · 22m        │ │ ◈ gemini · 1r       │
 ╰────────────────────────────╯                 ╰───────────────────────────╯ ╰─────────────────────╯
  nebula-migration                               discussions-api               discussions-api
 ```
@@ -40,7 +40,8 @@ branched from a freshly fetched default branch. Your own checkouts are never mod
 ## Requirements
 
 - **git** and **tmux**
-- **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** — at least one; q drives both
+- **[claude](https://claude.com/claude-code)**, **[codex](https://developers.openai.com/codex/cli)**,
+  or **[gemini](https://geminicli.com)** — at least one; q drives all three
 - **Go 1.26+** to build
 - macOS or Linux. Opening a debrief window natively uses
   [Ghostty](https://ghostty.org) 1.3+ on macOS; everywhere else you name your own
@@ -111,7 +112,8 @@ settings without writing anything.
   "agents": {
     "default": "claude",
     "claude": { "bin": "", "args": [] },
-    "codex": { "bin": "", "args": [], "configDir": "~/.codex", "profile": "q" }
+    "codex": { "bin": "", "args": [], "configDir": "~/.codex", "profile": "q" },
+    "gemini": { "bin": "", "args": [] }
   },
   "editor": { "command": ["nvim", "+Neotree"] },
   "terminal": { "mode": "ghostty", "command": [] },
@@ -280,6 +282,10 @@ plan mode, q routes that to **debrief** rather than to *awaiting orders*, and op
 debrief drops you into the live approval dialog. Approving it there switches claude into
 accept-edits and the card returns to *active*. Nothing is killed or restarted.
 
+A gemini mission works the same way. gemini starts in `--approval-mode plan` and asks to
+run `exit_plan_mode` when the plan is ready, which q routes to **debrief** exactly as it
+does claude's `ExitPlanMode`.
+
 codex has no plan mode, so the toggle is disabled for codex missions and says why.
 
 ## Operating it
@@ -308,7 +314,8 @@ id from the mission directory even when the startup hook was missed.
 The first codex mission ever run needs a one-time approval of q's hooks. Attach and choose
 *Trust all and continue*. Codex records the approval in `[hooks.state]` within q's
 profile, and q preserves that codex-owned section when refreshing its mission-directory
-entries.
+entries. gemini needs no equivalent: it warns once about the workspace's hooks and trusts
+them without blocking.
 
 ### Codex specifics
 
@@ -330,6 +337,33 @@ while a real unattended approval still reaches *awaiting orders*. A tool startin
 returning to active work clears the pending request immediately. The same grace period
 applies to the hook fallback when app-server status cannot be read.
 
+### Gemini specifics
+
+gemini names its hook events differently — `BeforeTool`, `AfterAgent`, and so on — so q
+subscribes under gemini's names and has each hook report q's canonical event. By the time
+an event reaches the board it is indistinguishable from claude's, and nothing outside
+`internal/gemini` knows the difference. gemini has no separate permission event: its one
+notification type, `ToolPermission`, *is* the blocked-on-the-human signal, so q reports it
+as a permission request rather than as the delayed backstop claude's same-named event is.
+
+Configuration is per-mission rather than global. q writes
+`<mission-dir>/.gemini/settings.json` with its hooks and the mission's worktrees, and your
+own `~/.gemini/settings.json` is never modified — gemini merges hook lists across scopes,
+so your hooks keep running alongside q's. Worktrees are granted there rather than with
+`--include-directories` because that flag is variadic and would swallow the positional
+prompt after it.
+
+The launch script exports `GEMINI_CLI_TRUST_WORKSPACE=true`. Folder trust is on by default
+in gemini 0.40.1, and every mission directory is new, so without it gemini would stop to
+ask about a directory nobody is watching — and, while it waited, would discard the very
+settings file carrying q's hooks. The variable is used rather than `--skip-trust` because
+gemini applies that flag only after argv is parsed, by which point its settings may
+already have been loaded and cached as untrusted.
+
+gemini has no `--session-id`, so q learns the id from `SessionStart` and resumes with
+`--resume <uuid>`, the same shape as codex. There is no display-name flag, so a gemini
+mission is identified in its own UI only by its working directory.
+
 ## Security
 
 q runs entirely on one machine and sends nothing anywhere except what the agents
@@ -348,9 +382,17 @@ q reads claude's session registry to recover from missed hooks. That directory a
 credential files, so the scan reads only `*.json`, and a test plants a decoy key file to
 prove it stays closed.
 
-No trust check is ever bypassed. codex offers a flag to skip hook trust; q does not use
-it, because it would disable the check for every hook in the invocation rather than just
-q's.
+Hook trust is never bypassed. codex offers a flag to skip it; q does not use that flag,
+because it would disable the check for every hook in the invocation rather than just q's.
+gemini has no such flag — it warns about a workspace's hooks and records them as trusted,
+so the first gemini mission shows a one-time banner naming q's hook commands.
+
+*Directory* trust is a different check, and q does pre-trust the mission directories it
+created itself: codex through its profile, gemini through `GEMINI_CLI_TRUST_WORKSPACE`.
+Both agents ask about an unknown directory interactively, which in a detached session is a
+question nobody will ever see. The scope is exactly what q made — a mission directory holds
+q's own generated prompt, script, and worktrees, and no directory q did not create is ever
+trusted on your behalf.
 
 ## Contributing
 
@@ -369,7 +411,8 @@ external commands should be argv built from validated state, never a shell strin
 
 **External-tool behavior is verified, not assumed.** Several of this tool's hardest bugs
 came from a flag that looked applied and was not. If a change relies on how `claude`,
-`codex`, `tmux`, `git`, or a terminal emulator behaves, say how that was checked, and add
+`codex`, `gemini`, `tmux`, `git`, or a terminal emulator behaves, say how that was checked,
+and add
 a test asserting the argv or the generated file.
 
 **Constraints are enforced by construction where possible.** `internal/git` exposes no
@@ -399,6 +442,7 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 | `internal/daemon` | the service rules, the HTTP server, hook intake, and the reconciler |
 | `internal/claude` | running missions with `claude`, and reading its session registry |
 | `internal/codex` | running missions with `codex`, and its app-server client |
+| `internal/gemini` | running missions with `gemini`, and translating its hook event names |
 | `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |
 | `internal/terminal` | tmux, and the window openers one per terminal strategy |
 | `internal/launch` | the launch sequence: provision, write, start, relaunch |

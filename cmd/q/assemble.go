@@ -10,6 +10,7 @@ import (
 	"github.com/justinrush/q/internal/codex"
 	"github.com/justinrush/q/internal/daemon"
 	"github.com/justinrush/q/internal/debrief"
+	"github.com/justinrush/q/internal/gemini"
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/launch"
 	"github.com/justinrush/q/internal/mission"
@@ -118,6 +119,10 @@ func agentsFor(s settings) []mission.Agent {
 			Profile:   s.Agents.Codex.Profile,
 			ConfigDir: s.Agents.Codex.ConfigDir,
 		}))
+	}
+
+	if bin, err := resolveTool(s, toolGemini); err == nil {
+		agents = append(agents, gemini.New(bin, gemini.Options{Args: s.Agents.Gemini.Args}))
 	}
 
 	return agents

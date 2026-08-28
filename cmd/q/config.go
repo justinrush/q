@@ -72,6 +72,7 @@ type agentsConfig struct {
 	Default string       `json:"default,omitempty"`
 	Claude  *agentConfig `json:"claude,omitempty"`
 	Codex   *codexConfig `json:"codex,omitempty"`
+	Gemini  *agentConfig `json:"gemini,omitempty"`
 }
 
 type agentConfig struct {
@@ -260,6 +261,13 @@ func applyAgents(out *settings, agents *agentsConfig) {
 			out.Agents.Codex.Args = c.Args
 		}
 	}
+
+	if c := agents.Gemini; c != nil {
+		out.Agents.Gemini.Bin = firstNonEmpty(c.Bin, out.Agents.Gemini.Bin)
+		if len(c.Args) > 0 {
+			out.Agents.Gemini.Args = c.Args
+		}
+	}
 }
 
 // applyEnv layers environment variables over the file.
@@ -309,6 +317,7 @@ func expandSettings(out *settings) {
 	out.Agents.Claude.Bin = expandHome(out.Agents.Claude.Bin)
 	out.Agents.Codex.Bin = expandHome(out.Agents.Codex.Bin)
 	out.Agents.Codex.ConfigDir = expandHome(out.Agents.Codex.ConfigDir)
+	out.Agents.Gemini.Bin = expandHome(out.Agents.Gemini.Bin)
 
 	for name, path := range out.Tools {
 		out.Tools[name] = expandHome(path)
@@ -381,6 +390,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 				ConfigDir: s.Agents.Codex.ConfigDir,
 				Profile:   s.Agents.Codex.Profile,
 			},
+			Gemini: &agentConfig{Bin: s.Agents.Gemini.Bin, Args: s.Agents.Gemini.Args},
 		},
 		Editor:   &editorConfig{Command: s.Editor.Command},
 		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},

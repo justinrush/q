@@ -161,9 +161,11 @@ func (l *Launcher) verifyAgentPane(ctx context.Context, ms mission.Mission) erro
 
 // AgentCommands are the process names a live agent pane runs.
 //
-// node appears because codex ships as a node wrapper.
+// node appears because codex and gemini both ship as node wrappers, so a pane
+// running either may report the interpreter rather than the agent.
 var AgentCommands = map[string]bool{
 	"claude": true,
 	"codex":  true,
+	"gemini": true,
 	"node":   true,
 }

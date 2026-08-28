@@ -129,12 +129,100 @@ func TestParseRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestIsPlanApproval(t *testing.T) {
-	if !(HookEvent{ToolName: ExitPlanModeTool}).IsPlanApproval() {
-		t.Error("ExitPlanMode should be recognized")
+	cases := []struct {
+		name string
+		tool string
+		want bool
+	}{
+		{"claude's tool", ExitPlanModeTool, true},
+		{"gemini's tool", ExitPlanModeToolGemini, true},
+		{"an ordinary tool", "Bash", false},
+		{"nothing named", "", false},
 	}
 
-	if (HookEvent{ToolName: "Bash"}).IsPlanApproval() {
-		t.Error("Bash is not a plan approval")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := (HookEvent{ToolName: tc.tool}).IsPlanApproval(); got != tc.want {
+				t.Errorf("IsPlanApproval() = %v for %q, want %v", got, tc.tool, tc.want)
+			}
+		})
+	}
+}
+
+// gemini ends a turn with AfterAgent, whose closing message is prompt_response
+// rather than last_assistant_message. Both must land in the same field, since the
+// state machine reads only one.
+func TestParseGeminiTurnEnd(t *testing.T) {
+	body := `{
+	  "session_id": "7f3d0c1e-0000-4000-8000-000000000001",
+	  "cwd": "/missions/t",
+	  "transcript_path": "/Users/j/.gemini/tmp/slug/chats/s.json",
+	  "hook_event_name": "AfterAgent",
+	  "prompt": "add the endpoint",
+	  "prompt_response": "All done.",
+	  "stop_hook_active": false
+	}`
+
+	got, err := ParseHookEventBytes([]byte(body), EventStop)
+	if err != nil {
+		t.Fatalf("ParseBytes: %v", err)
+	}
+
+	if got.LastAssistantMessage != "All done." {
+		t.Errorf("LastAssistantMessage = %q, want the prompt_response", got.LastAssistantMessage)
+	}
+
+	if got.Event != EventStop {
+		t.Errorf("Event = %q, want the canonical name the caller supplied", got.Event)
+	}
+}
+
+// gemini's permission request arrives as a ToolPermission notification, which
+// names what it is asking about under details.type and nowhere else.
+func TestParseGeminiPermissionRequest(t *testing.T) {
+	cases := []struct {
+		name         string
+		body         string
+		wantTool     string
+		wantApproval bool
+	}{{
+		name: "a plan waiting for approval",
+		body: `{"session_id":"s","cwd":"/","hook_event_name":"Notification",
+		  "notification_type":"ToolPermission","message":"Tool Plan Approval requires confirmation",
+		  "details":{"type":"exit_plan_mode","title":"Plan Approval"}}`,
+		wantTool:     ExitPlanModeToolGemini,
+		wantApproval: true,
+	}, {
+		name: "an ordinary command confirmation",
+		body: `{"session_id":"s","cwd":"/","hook_event_name":"Notification",
+		  "notification_type":"ToolPermission","message":"Tool Shell requires execution",
+		  "details":{"type":"exec","command":"go test ./..."}}`,
+		wantTool:     "exec",
+		wantApproval: false,
+	}, {
+		// claude sends tool_name and no details, and must keep winning.
+		name: "claude's own shape",
+		body: `{"session_id":"s","cwd":"/","hook_event_name":"PermissionRequest",
+		  "tool_name":"ExitPlanMode"}`,
+		wantTool:     ExitPlanModeTool,
+		wantApproval: true,
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := ParseHookEventBytes([]byte(tc.body), EventPermissionRequest)
+			if err != nil {
+				t.Fatalf("ParseBytes: %v", err)
+			}
+
+			if got.ToolName != tc.wantTool {
+				t.Errorf("ToolName = %q, want %q", got.ToolName, tc.wantTool)
+			}
+
+			if got.IsPlanApproval() != tc.wantApproval {
+				t.Errorf("IsPlanApproval() = %v, want %v", got.IsPlanApproval(), tc.wantApproval)
+			}
+		})
 	}
 }
 

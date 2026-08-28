@@ -1,6 +1,9 @@
 package mission
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Tool identifies which coding agent runs a mission.
 type Tool string
@@ -9,6 +12,7 @@ type Tool string
 const (
 	ToolClaude Tool = "claude"
 	ToolCodex  Tool = "codex"
+	ToolGemini Tool = "gemini"
 )
 
 // DefaultTool is the agent a mission gets when none is named.
@@ -17,28 +21,31 @@ const DefaultTool = ToolClaude
 // capabilities is what an agent can be asked to do.
 //
 // This is a property of the agent's identity rather than of the implementation
-// in internal/claude or internal/codex, because clients need it without holding
-// one: the board disables the plan toggle before any daemon is consulted, and
-// the CLI validates --plan before a request is sent.
+// in internal/claude, internal/codex, or internal/gemini, because clients need
+// it without holding one: the board disables the plan toggle before any daemon
+// is consulted, and the CLI validates --plan before a request is sent.
 type capabilities struct {
 	// glyph is the one-rune marker used on board cards.
 	glyph string
 	// planMode reports whether the agent can be launched into a plan-then-approve
 	// flow.
 	//
-	// Only claude can: it takes --permission-mode plan and raises an ExitPlanMode
-	// permission request that q routes to the debrief lane. codex 0.147.0 exposes
-	// no equivalent — it has no --permission-mode flag, and permission_mode does
-	// not appear in its binary at all — so the board disables the plan toggle for
-	// codex missions rather than accepting a flag it would silently ignore.
+	// claude and gemini can: claude takes --permission-mode plan and raises an
+	// ExitPlanMode permission request, gemini takes --approval-mode plan and
+	// raises an exit_plan_mode confirmation, and q routes either to the debrief
+	// lane. codex 0.147.0 exposes no equivalent — it has no --permission-mode
+	// flag, and permission_mode does not appear in its binary at all — so the
+	// board disables the plan toggle for codex missions rather than accepting a
+	// flag it would silently ignore.
 	planMode bool
 	// presetSessionID reports whether q can choose the agent's session identifier
 	// before launching it.
 	//
 	// claude accepts --session-id <uuid>, so its session is addressable for
-	// --resume from the moment it starts. codex generates a UUIDv7 internally with
-	// no way to override it, so q must learn the id from the SessionStart hook
-	// instead; until that hook arrives, a codex mission has no resumable handle.
+	// --resume from the moment it starts. codex and gemini both generate an id
+	// internally with no way to override it, so q must learn it from the
+	// SessionStart hook instead; until that hook arrives, such a mission has no
+	// resumable handle.
 	presetSessionID bool
 }
 
@@ -48,10 +55,11 @@ type capabilities struct {
 var known = map[Tool]capabilities{
 	ToolClaude: {glyph: "◆", planMode: true, presetSessionID: true},
 	ToolCodex:  {glyph: "◇"},
+	ToolGemini: {glyph: "◈", planMode: true},
 }
 
 // Tools lists every supported agent, in the order the board cycles them.
-var Tools = []Tool{ToolClaude, ToolCodex}
+var Tools = []Tool{ToolClaude, ToolCodex, ToolGemini}
 
 // Valid reports whether t is a supported agent.
 func (t Tool) Valid() bool { _, ok := known[t]; return ok }
@@ -88,5 +96,24 @@ func ParseTool(v string) (Tool, error) {
 		return t, nil
 	}
 
-	return "", fmt.Errorf("unknown tool %q (want claude or codex)", v)
+	return "", fmt.Errorf("unknown tool %q (want %s)", v, ToolList())
+}
+
+// ToolList renders the supported agents for a message, e.g. "claude, codex, or
+// gemini". Deriving it means a new agent updates every error and help string
+// that names the set.
+func ToolList() string {
+	names := make([]string, 0, len(Tools))
+	for _, tool := range Tools {
+		names = append(names, string(tool))
+	}
+
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	default:
+		return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+	}
 }

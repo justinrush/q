@@ -24,13 +24,14 @@ stale sessions and stale hook epochs being ignored, and `PostToolUse` clearing a
 card, which is what stops the board lying when you answer a prompt in the pane without
 touching q.
 
-**Argv construction** is asserted for git, tmux, every terminal mode, and both agents, because that is
+**Argv construction** is asserted for git, tmux, every terminal mode, and every agent, because that is
 where the subtle failures live. Specific things a test will fail on:
 
 - a `git fetch` without both an explicit remote and refspec, which the user's global
   `fetch.all` and `fetch.force` would otherwise widen
 - a tmux target missing its `=` prefix, which makes tmux prefix-match session names
-- claude's variadic `--add-dir`, which silently swallows the positional prompt after it
+- claude's variadic `--add-dir` or gemini's `--include-directories`, either of which
+  silently swallows the positional prompt after it
 - any bypass or trust-override flag in codex's argv
 - a Ghostty launch that creates a separate application instance instead of using the
   native AppleScript window API, and a `terminal.command` template that never says where
@@ -38,10 +39,13 @@ where the subtle failures live. Specific things a test will fail on:
 - a TUI binding using `ctrl+h/j/k/l`, which tmux intercepts before q sees them
 
 **Generated files** are golden-tested, each in its own agent's package: the composed
-prompt in `internal/mission`, claude's settings in `internal/claude`, and codex's profile
-in `internal/codex`. The codex profile test also asserts its `[hooks]` section stays byte-identical as
+prompt in `internal/mission`, claude's settings in `internal/claude`, codex's profile
+in `internal/codex`, and gemini's workspace settings in `internal/gemini`. The codex profile
+test also asserts its `[hooks]` section stays byte-identical as
 project entries change above it, because codex keys hook trust on the handler and a change
-would silently require re-approval.
+would silently require re-approval. The gemini test asserts the event-name translation in
+both directions and that timeouts are written in milliseconds, since gemini is the one
+agent that reads them in a different unit.
 
 **Closing-question detection** is tested from both sides, using a real codex message that
 ended on a numbered list of options: an ask has to reach *awaiting orders* with the ask as
@@ -132,10 +136,30 @@ should move to **awaiting orders** with the tool name or `Codex approval`. Appro
 terminal; as soon as Codex resumes, the card should return to **active**, without
 waiting for the tool to finish. `q doctor` should report `codex app-server  available`.
 
+### Gemini
+
+The first gemini mission shows a one-time warning naming q's hook commands, and then runs.
+It must not stop for it, and there should be **no directory-trust dialog**, ever. If one
+appears, `GEMINI_CLI_TRUST_WORKSPACE` is not reaching the process.
+
+Confirm `~/.gemini/settings.json` is unchanged: q writes only
+`<mission-dir>/.gemini/settings.json`. If you have your own gemini hooks, they should still
+fire alongside q's, since gemini concatenates hook lists across scopes.
+
+Ask the agent to read a file in a sibling worktree. It should be able to, without asking to
+add the directory — that is `context.includeDirectories` working.
+
+Provoke an approval prompt and leave it unanswered. The card should reach **awaiting
+orders** with the notification's message as the subtitle. Answer it in the pane without
+touching q; the card should return to **active** on its own.
+
+Run a plan mission. When gemini asks to run `exit_plan_mode`, the card should reach
+**debrief** rather than *awaiting orders*.
+
 ### Finishing
 
 Move a launched mission to **closed**. Its card should remain, but its tmux session, worktrees,
-and mission directory should be gone. Confirm the Codex or Claude process and any editor
+and mission directory should be gone. Confirm the agent process and any editor
 panes from that session also exited.
 
 - clean or pushed work: finish immediately and delete the local branch

@@ -192,8 +192,8 @@ func (f *missionForm) cycleOperation(keyName string) {
 
 // cycleTool changes the agent.
 //
-// Plan mode is dropped when switching to codex, because codex has no equivalent flag
-// and leaving it set would promise a behavior that cannot happen.
+// Plan mode is dropped when switching to an agent without one, because leaving it
+// set would promise a behavior that cannot happen.
 func (f *missionForm) cycleTool(keyName string) {
 	if f.launched {
 		return
@@ -344,7 +344,7 @@ func (f *missionForm) toolValue() string {
 func (f *missionForm) planValue() string {
 	if !f.tool.SupportsPlanMode() {
 		return styles.Disabled.Render("unavailable") +
-			styles.CardDetail.Render("  codex has no plan mode")
+			styles.CardDetail.Render("  "+f.tool.String()+" has no plan mode")
 	}
 
 	if f.planMode {

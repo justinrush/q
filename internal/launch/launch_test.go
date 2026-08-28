@@ -3,6 +3,7 @@ package launch
 import (
 	"github.com/justinrush/q/internal/claude"
 	"github.com/justinrush/q/internal/codex"
+	"github.com/justinrush/q/internal/gemini"
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
@@ -59,6 +60,7 @@ func newTestLauncher(t *testing.T) (*Launcher, *runner.Fake, paths.Dirs) {
 		WithLogger(logger),
 		WithAgent(claude.New(stubBin(t, "claude"), claude.Options{})),
 		WithAgent(codex.New(stubBin(t, "codex"), codex.Options{ConfigDir: filepath.Join(root, "codex")})),
+		WithAgent(gemini.New(stubBin(t, "gemini"), gemini.Options{})),
 	)
 
 	return launcher, fake, dirs
@@ -253,22 +255,65 @@ func TestLaunchPresetsClaudeSessionID(t *testing.T) {
 	}
 }
 
-// codex has no --session-id, so its id must be learned from its SessionStart hook
-// and stays empty until then.
-func TestLaunchDoesNotPresetCodexSessionID(t *testing.T) {
+// Neither codex nor gemini has a --session-id, so their ids must be learned from
+// their SessionStart hooks and stay empty until then.
+func TestLaunchDoesNotPresetSessionIDWithoutSupport(t *testing.T) {
+	for _, tool := range []mission.Tool{mission.ToolCodex, mission.ToolGemini} {
+		t.Run(tool.String(), func(t *testing.T) {
+			launcher, fake, _ := newTestLauncher(t)
+			seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
+
+			ms := testMission()
+			ms.Tool = tool
+
+			got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), ms)
+			if err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+
+			if got.AgentSessionID != "" {
+				t.Errorf("AgentSessionID = %q, want empty for %s", got.AgentSessionID, tool)
+			}
+		})
+	}
+}
+
+// gemini reads its configuration from the mission directory rather than from a
+// flag, so a launch that wrote the file anywhere else would come up with no hooks
+// and no worktree access, and the board would never hear from it again.
+func TestLaunchWritesGeminiWorkspaceSettings(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
 
 	ms := testMission()
-	ms.Tool = mission.ToolCodex
+	ms.Tool = mission.ToolGemini
 
 	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), ms)
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
 
-	if got.AgentSessionID != "" {
-		t.Errorf("AgentSessionID = %q, want empty for codex", got.AgentSessionID)
+	path := filepath.Join(got.MissionDir, gemini.SettingsDir, gemini.SettingsFile)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading the gemini settings: %v", err)
+	}
+
+	settings := string(data)
+	if !strings.Contains(settings, "includeDirectories") {
+		t.Errorf("settings should grant worktree access:\n%s", settings)
+	}
+
+	if !strings.Contains(settings, "hook gemini session-start") {
+		t.Errorf("settings should wire q's hooks:\n%s", settings)
+	}
+
+	// The mission directory is fresh, so gemini would otherwise stop to ask
+	// whether to trust it and discard the settings file above while it waited.
+	script := readArtifact(t, got, mission.LaunchScript)
+	if !strings.Contains(script, gemini.TrustEnvVar) {
+		t.Errorf("launch script does not trust the mission directory:\n%s", script)
 	}
 }
 

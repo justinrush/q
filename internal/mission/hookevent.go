@@ -1,12 +1,19 @@
 // Parsing the hook payloads agents write to a hook's standard input.
 //
-// The agents deliberately share event names and most field names, so one parser
-// serves them all. Where they differ, the difference is recorded here rather
-// than left for callers to rediscover:
+// claude and codex deliberately share event names and most field names, and
+// internal/gemini translates gemini's names to the same set, so one parser
+// serves them all. Where they still differ, the difference is recorded here
+// rather than left for callers to rediscover:
 //
 //   - codex has no Notification, PermissionDenied, or StopFailure event.
 //   - codex's transcript_path may be null; claude's is always a string.
 //   - codex's session-end reason is always the literal "other" in 0.147.0.
+//   - gemini names its events differently — BeforeTool, AfterAgent, and so on.
+//     That mapping lives in internal/gemini, which emits q's canonical name in
+//     the hook command, so nothing here knows about it. What gemini does change
+//     is two field names: the closing message of a turn is prompt_response
+//     rather than last_assistant_message, and a permission request names the
+//     tool under details.type rather than tool_name.
 //   - Fields such as permission_mode are absent on session-lifecycle events even
 //     though the schema marks them optional, so every optional field is a pointer.
 
@@ -20,7 +27,7 @@ import (
 	"unicode"
 )
 
-// Canonical hook event names, shared by both agents except where noted.
+// Canonical hook event names, shared by every agent except where noted.
 const (
 	EventSessionStart      = "SessionStart"
 	EventSessionEnd        = "SessionEnd"
@@ -42,9 +49,22 @@ const (
 	EventSubagentStop  = "SubagentStop"
 )
 
-// ExitPlanModeTool is the tool whose permission request means a plan is ready for
-// debrief, rather than that the agent is blocked on something routine.
-const ExitPlanModeTool = "ExitPlanMode"
+// The tools whose permission request means a plan is ready for debrief, rather
+// than that the agent is blocked on something routine. Each agent names its own.
+const (
+	// ExitPlanModeTool is claude's.
+	ExitPlanModeTool = "ExitPlanMode"
+	// ExitPlanModeToolGemini is gemini's, which arrives as the type of a
+	// ToolPermission notification rather than as a tool name.
+	ExitPlanModeToolGemini = "exit_plan_mode"
+)
+
+// planApprovalTools is every agent's name for that tool, so [HookEvent.IsPlanApproval]
+// stays one check rather than a branch on which agent sent the event.
+var planApprovalTools = map[string]bool{
+	ExitPlanModeTool:       true,
+	ExitPlanModeToolGemini: true,
+}
 
 // Notification types claude uses. Notification is really eleven distinct events
 // sharing one name, so the type is what carries the meaning.
@@ -60,6 +80,12 @@ const (
 	NotificationAgentNeedsInput = "agent_needs_input"
 	// NotificationWorkerPermissionPrompt reports a worker awaiting permission.
 	NotificationWorkerPermissionPrompt = "worker_permission_prompt"
+	// NotificationToolPermission is gemini's only notification type, and unlike
+	// claude's it is the primary blocked-on-the-human signal rather than a
+	// backstop: gemini has no PermissionRequest event. internal/gemini therefore
+	// reports it as EventPermissionRequest, and it never reaches
+	// [applyNotification].
+	NotificationToolPermission = "ToolPermission"
 )
 
 // SessionStart sources.
@@ -89,7 +115,9 @@ type HookEvent struct {
 	// Reason is set on SessionEnd and on StopFailure, where it names the API
 	// failure.
 	Reason string
-	// ToolName is set on the tool and permission events.
+	// ToolName is set on the tool and permission events. For a gemini permission
+	// request it is filled from details.type, which is the only place gemini
+	// names what it is asking about.
 	ToolName string
 	// NotificationType is set on Notification and carries its actual meaning.
 	NotificationType string
@@ -126,6 +154,15 @@ type raw struct {
 	StopHookActive       *bool             `json:"stop_hook_active"`
 	BackgroundTasks      []json.RawMessage `json:"background_tasks"`
 	PermissionMode       *string           `json:"permission_mode"`
+	PromptResponse       *string           `json:"prompt_response"`
+	Details              *details          `json:"details"`
+}
+
+// details is the alert metadata gemini attaches to a notification. Only the type
+// is read: it is what distinguishes a plan approval from an ordinary tool
+// confirmation.
+type details struct {
+	Type string `json:"type"`
 }
 
 // Parse decodes a hook payload.
@@ -164,11 +201,11 @@ func ParseHookEventBytes(data []byte, event string) (HookEvent, error) {
 		TranscriptPath:       deref(body.TranscriptPath),
 		Source:               deref(body.Source),
 		Reason:               deref(body.Reason),
-		ToolName:             deref(body.ToolName),
+		ToolName:             firstNonEmpty(deref(body.ToolName), detailType(body.Details)),
 		NotificationType:     deref(body.NotificationType),
 		Message:              deref(body.Message),
 		Prompt:               deref(body.Prompt),
-		LastAssistantMessage: deref(body.LastAssistantMessage),
+		LastAssistantMessage: firstNonEmpty(deref(body.LastAssistantMessage), deref(body.PromptResponse)),
 		StopHookActive:       body.StopHookActive != nil && *body.StopHookActive,
 		BackgroundTasks:      len(body.BackgroundTasks),
 		PermissionMode:       deref(body.PermissionMode),
@@ -184,10 +221,32 @@ func deref(p *string) string {
 	return *p
 }
 
-// IsPlanApproval reports whether the payload concerns claude's exit-from-plan-mode
+// detailType returns a gemini notification's alert type, or empty.
+func detailType(d *details) string {
+	if d == nil {
+		return ""
+	}
+
+	return d.Type
+}
+
+// firstNonEmpty returns the first value that is set. It resolves the two fields
+// gemini names differently without giving either agent's spelling precedence
+// over a value the other actually sent.
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+
+	return ""
+}
+
+// IsPlanApproval reports whether the payload concerns an exit-from-plan-mode
 // tool, whose permission request means a plan is ready for a human to read rather
 // than that the agent is stuck.
-func (p HookEvent) IsPlanApproval() bool { return p.ToolName == ExitPlanModeTool }
+func (p HookEvent) IsPlanApproval() bool { return planApprovalTools[p.ToolName] }
 
 // CanonicalEvent converts a command-line event slug such as "session-start" to its
 // canonical name.

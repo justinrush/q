@@ -126,7 +126,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&operation, "operation", "", "Operation id this mission belongs to (required)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "What the agent should do (required)")
-	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude or codex")
+	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: "+mission.ToolList())
 	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude only)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
 

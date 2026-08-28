@@ -46,10 +46,11 @@ type gitSettings struct {
 
 // agentsSettings configures the coding agents q can dispatch.
 type agentsSettings struct {
-	// Default is the agent a new mission gets: "claude" or "codex".
+	// Default is the agent a new mission gets: "claude", "codex", or "gemini".
 	Default string
 	Claude  agentSettings
 	Codex   codexSettings
+	Gemini  agentSettings
 }
 
 // agentSettings configures one coding agent.

@@ -2,6 +2,7 @@ package mission
 
 import (
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,27 +92,39 @@ func TestAgentStateValid(t *testing.T) {
 	}
 }
 
-// Plan mode is claude-only: codex 0.147.0 exposes no --permission-mode flag, so
-// offering the toggle for codex would silently do nothing.
-func TestPlanModeIsClaudeOnly(t *testing.T) {
-	if !ToolClaude.SupportsPlanMode() {
-		t.Error("claude should support plan mode")
+// Offering a toggle the agent cannot honor would silently do nothing, so each
+// capability is asserted per agent rather than assumed.
+func TestToolCapabilities(t *testing.T) {
+	cases := []struct {
+		name string
+		tool Tool
+		// plan is whether the agent can be launched into a plan-then-approve flow.
+		// claude takes --permission-mode plan and gemini --approval-mode plan;
+		// codex 0.147.0 exposes no equivalent flag at all.
+		plan bool
+		// preset is whether q can choose the session id up front. Only claude
+		// takes --session-id; the others must be learned from SessionStart.
+		preset bool
+	}{
+		{"claude", ToolClaude, true, true},
+		{"codex", ToolCodex, false, false},
+		{"gemini", ToolGemini, true, false},
 	}
 
-	if ToolCodex.SupportsPlanMode() {
-		t.Error("codex must not advertise plan mode support")
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.tool.SupportsPlanMode(); got != tc.plan {
+				t.Errorf("SupportsPlanMode() = %v, want %v", got, tc.plan)
+			}
 
-// claude takes --session-id; codex generates its own UUIDv7 and must be learned
-// from its SessionStart hook instead.
-func TestPresetSessionIDIsClaudeOnly(t *testing.T) {
-	if !ToolClaude.SupportsPresetSessionID() {
-		t.Error("claude should accept a preset session id")
+			if got := tc.tool.SupportsPresetSessionID(); got != tc.preset {
+				t.Errorf("SupportsPresetSessionID() = %v, want %v", got, tc.preset)
+			}
+		})
 	}
 
-	if ToolCodex.SupportsPresetSessionID() {
-		t.Error("codex must not advertise preset session id support")
+	if len(cases) != len(Tools) {
+		t.Errorf("%d agents are supported but %d are asserted here", len(Tools), len(cases))
 	}
 }
 
@@ -119,7 +132,7 @@ func TestParseTool(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
 		want Tool
-	}{{"claude", ToolClaude}, {"codex", ToolCodex}} {
+	}{{"claude", ToolClaude}, {"codex", ToolCodex}, {"gemini", ToolGemini}} {
 		got, err := ParseTool(tc.in)
 		if err != nil || got != tc.want {
 			t.Errorf("ParseTool(%q) = %q, %v", tc.in, got, err)
@@ -132,8 +145,52 @@ func TestParseTool(t *testing.T) {
 }
 
 func TestToolGlyphsAreDistinct(t *testing.T) {
-	if ToolClaude.Glyph() == ToolCodex.Glyph() {
-		t.Error("tool glyphs must differ to be useful on a card")
+	seen := map[string]Tool{}
+
+	for _, tool := range Tools {
+		glyph := tool.Glyph()
+		if glyph == "" {
+			t.Errorf("%s has no glyph", tool)
+		}
+
+		if other, dup := seen[glyph]; dup {
+			t.Errorf("%s and %s share the glyph %q; they must differ to be useful on a card",
+				other, tool, glyph)
+		}
+
+		seen[glyph] = tool
+	}
+}
+
+// Next has to visit every agent and come back, since it is the board's only way
+// to reach one.
+func TestToolNextCyclesEveryAgent(t *testing.T) {
+	seen := map[Tool]bool{}
+
+	tool := DefaultTool
+	for range Tools {
+		seen[tool] = true
+		tool = tool.Next()
+	}
+
+	if tool != DefaultTool {
+		t.Errorf("cycling %d times landed on %q, want back at %q", len(Tools), tool, DefaultTool)
+	}
+
+	if len(seen) != len(Tools) {
+		t.Errorf("cycling reached %d of %d agents: %v", len(seen), len(Tools), seen)
+	}
+}
+
+// The error a user sees when they mistype --tool has to name every agent, or the
+// one they wanted looks unsupported.
+func TestToolListNamesEveryAgent(t *testing.T) {
+	got := ToolList()
+
+	for _, tool := range Tools {
+		if !strings.Contains(got, string(tool)) {
+			t.Errorf("ToolList() = %q, missing %q", got, tool)
+		}
 	}
 }
 

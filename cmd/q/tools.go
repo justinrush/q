@@ -1,11 +1,11 @@
 // Absolute paths to the external programs q drives.
 //
 // Absolute paths matter here more than usual. q launches processes from a
-// daemon that may have been started with a minimal environment, and two of the
-// tools it needs are not reachable that way: codex lives inside an
-// nvm-managed node version directory, and Ghostty ships only as an app bundle
-// with no binary on PATH. Relying on the inherited PATH would work from an
-// interactive shell and fail from the daemon.
+// daemon that may have been started with a minimal environment, and several of
+// the tools it needs are not reachable that way: codex and gemini both live
+// inside an nvm-managed node version directory, and Ghostty ships only as an app
+// bundle with no binary on PATH. Relying on the inherited PATH would work from
+// an interactive shell and fail from the daemon.
 package main
 
 import (
@@ -27,16 +27,17 @@ const (
 	toolTmux      toolName = "tmux"
 	toolClaude    toolName = "claude"
 	toolCodex     toolName = "codex"
+	toolGemini    toolName = "gemini"
 	toolOsaScript toolName = "osascript"
 )
 
 // allTools lists every tool, in the order q doctor reports them.
-var allTools = []toolName{toolGit, toolTmux, toolClaude, toolCodex, toolOsaScript}
+var allTools = []toolName{toolGit, toolTmux, toolClaude, toolCodex, toolGemini, toolOsaScript}
 
 // defaultRequiredTools lists the tools q cannot function at all without.
 //
-// Claude and Codex are absent because a user may reasonably have only one of
-// them, and osascript because it is only needed by the Ghostty terminal mode;
+// The agents are absent because a user may reasonably have only one of them,
+// and osascript because it is only needed by the Ghostty terminal mode;
 // callers that need it add it to toolOptions.Required.
 var defaultRequiredTools = []toolName{toolGit, toolTmux}
 
@@ -63,6 +64,10 @@ func toolOptionsFor(s settings) toolOptions {
 
 	if bin := s.Agents.Codex.Bin; bin != "" {
 		overrides[toolCodex] = bin
+	}
+
+	if bin := s.Agents.Gemini.Bin; bin != "" {
+		overrides[toolGemini] = bin
 	}
 
 	return toolOptions{Overrides: overrides, Required: requiredToolsFor(s)}
@@ -104,6 +109,7 @@ var fallbacks = map[toolName][]string{
 	toolTmux:      {"/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"},
 	toolClaude:    {"~/.local/bin/claude", "/opt/homebrew/bin/claude"},
 	toolCodex:     {"~/.nvm/versions/node/*/bin/codex", "/opt/homebrew/bin/codex"},
+	toolGemini:    {"~/.nvm/versions/node/*/bin/gemini", "/opt/homebrew/bin/gemini"},
 	toolOsaScript: {"/usr/bin/osascript"},
 }
 
@@ -237,7 +243,7 @@ func firstFallback(t toolName) string {
 
 // expand resolves a leading ~ and any glob in a candidate path. Glob matches
 // come back newest-first, so the most recently installed node version wins for
-// codex.
+// the node-hosted agents.
 func expand(cand string) []string {
 	if strings.HasPrefix(cand, "~/") {
 		home, err := os.UserHomeDir()
