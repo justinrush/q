@@ -1,0 +1,167 @@
+package mission
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+	"unicode"
+)
+
+// Environment variables q exports into an agent's session.
+//
+// The prefix is Q_ rather than the more obvious TZ_-style abbreviation of the
+// binary name: TZ is the POSIX timezone variable, and a near-miss like
+// TZ_MISSION_ID=ms_abc123 would corrupt time handling in every child process the
+// agent spawns, git included.
+const (
+	// EnvMissionID tells a hook which mission it belongs to. This is the primary
+	// identity channel, ahead of matching on session id or working directory.
+	EnvMissionID = "Q_MISSION_ID"
+	// EnvHookEpoch is the launch generation the hook was configured for, so
+	// events from a session q has already abandoned can be discarded
+	// instead of moving a live card.
+	EnvHookEpoch = "Q_HOOK_EPOCH"
+	// EnvDaemonFile is the path to the daemon handle. The path is passed rather
+	// than the token itself, because `tmux show-environment` prints a session's
+	// environment in plaintext.
+	EnvDaemonFile = "Q_DAEMON_FILE"
+	// EnvBin overrides the q binary path used in generated hook commands.
+	EnvBin = "Q_BIN"
+)
+
+// Artifact file names written into a mission's .q directory.
+const (
+	// ArtifactDir is the subdirectory of a mission directory holding generated files.
+	ArtifactDir = ".q"
+	// PromptFile holds the composed prompt.
+	PromptFile = "prompt.md"
+	// LaunchScript starts the agent.
+	LaunchScript = "launch.sh"
+	// MetaFile records what was generated, as a debugging aid.
+	MetaFile = "meta.json"
+)
+
+// HookTimeoutSeconds bounds each hook invocation.
+//
+// Hooks must never make the agent wait: in claude a PreToolUse hook that exits
+// non-zero can block the tool outright, so the bridge is built to be fast and to
+// fail open.
+const HookTimeoutSeconds = 5
+
+// PromptArg is the shell expression an agent's argv uses to pass the composed
+// prompt as one positional argument.
+//
+// It is emitted unquoted on purpose: the command substitution must be evaluated,
+// and the surrounding double quotes keep the result a single argument regardless
+// of the newlines and spaces it contains.
+const PromptArg = `"$(cat "$d/` + PromptFile + `")"`
+
+// ArtifactArg is the shell expression naming a generated file, for an agent flag
+// that takes one.
+func ArtifactArg(name string) string { return `"$d/` + name + `"` }
+
+// ShellQuote wraps a string in single quotes for POSIX sh, escaping any it
+// contains.
+//
+// Prompts routinely contain quotes, backticks, dollar signs, and newlines, all of
+// which a shell would otherwise interpret, so this is applied to every generated
+// value without exception.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ShellQuoteAll quotes each of args.
+func ShellQuoteAll(args []string) []string {
+	out := make([]string, 0, len(args))
+	for _, arg := range args {
+		out = append(out, ShellQuote(arg))
+	}
+
+	return out
+}
+
+// HookSlug converts a hook event name to the subcommand form q uses, e.g.
+// "SessionStart" to "session-start".
+func HookSlug(event string) string {
+	var b strings.Builder
+
+	for i, r := range event {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				b.WriteByte('-')
+			}
+
+			b.WriteRune(unicode.ToLower(r))
+
+			continue
+		}
+
+		b.WriteRune(r)
+	}
+
+	return b.String()
+}
+
+// HookCommand renders the shell command a hook runs.
+//
+// The q binary is named by absolute path because hooks execute in the
+// agent's environment, which for codex is a login shell and for claude is
+// whatever the tmux session inherited; neither reliably has q on PATH.
+func HookCommand(qBin string, tool Tool, event string) string {
+	return qBin + " hook " + string(tool) + " " + HookSlug(event)
+}
+
+// ArtifactPath returns the on-disk location of one of an agent's artifacts.
+func (inv Invocation) ArtifactPath(artifact Artifact) string {
+	if filepath.IsAbs(artifact.Path) {
+		return artifact.Path
+	}
+
+	return filepath.Join(inv.MissionDir, ArtifactDir, artifact.Path)
+}
+
+// RenderLaunchScript generates the shell script that starts an agent.
+//
+// A script is generated rather than passing argv straight to tmux because tmux
+// joins the trailing arguments of new-session and re-parses them through sh when
+// they contain shell metacharacters. A composed prompt contains newlines, quotes,
+// and backticks, so that path is unwinnable. Reading the prompt from a file
+// sidesteps quoting entirely.
+//
+// The script is also the best debugging affordance in the tool: it can be run by
+// hand to reproduce a launch exactly, and it is reused verbatim to relaunch.
+//
+// It ends in exec so the process replaces the shell. That is what makes tmux's
+// pane_current_command report the agent's name, which the guard on sending
+// messages to a live session depends on, and it makes pane death mean agent
+// death.
+func RenderLaunchScript(agent Agent, inv Invocation) string {
+	var b strings.Builder
+
+	b.WriteString("#!/bin/sh\n")
+	b.WriteString("# Generated by q. Safe to run by hand to reproduce this launch.\n")
+	b.WriteString("set -eu\n")
+	b.WriteString(`d="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"` + "\n")
+
+	fmt.Fprintf(&b, "export %s=%s\n", EnvMissionID, ShellQuote(string(inv.MissionID)))
+	fmt.Fprintf(&b, "export %s=%s\n", EnvHookEpoch, ShellQuote(fmt.Sprint(inv.HookEpoch)))
+	fmt.Fprintf(&b, "export %s=%s\n", EnvDaemonFile, ShellQuote(inv.DaemonFile))
+
+	if inv.PathEnv != "" {
+		fmt.Fprintf(&b, "export PATH=%s\n", ShellQuote(inv.PathEnv))
+	}
+
+	b.WriteString(agent.Prologue(inv))
+
+	b.WriteString("\nexec ")
+	b.WriteString(ShellQuote(agent.Bin()))
+
+	for _, arg := range agent.Args(inv) {
+		b.WriteString(" \\\n  ")
+		b.WriteString(arg)
+	}
+
+	b.WriteString("\n")
+
+	return b.String()
+}

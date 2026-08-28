@@ -1,0 +1,6 @@
+# Build output from install.sh.
+bin/
+
+# Go coverage and test artifacts.
+*.out
+*.test
