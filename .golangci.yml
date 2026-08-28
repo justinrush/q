@@ -1,0 +1,143 @@
+version: "2"
+run:
+  issues-exit-code: 1
+  tests: false
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+      colors: false
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - dogsled
+    - errcheck
+    - funlen
+    - gocognit
+    - goconst
+    - gocritic
+    - godox
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nakedret
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+  settings:
+    dogsled:
+      max-blank-identifiers: 2
+    dupl:
+      threshold: 200
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    funlen:
+      lines: 100
+      # A handful of wiring functions — the daemon's startup sequence, provisioning
+      # one repo's worktree — are long because they are a linear list of steps with
+      # rollback, and splitting them scatters the rollback away from what it undoes.
+      statements: 50
+    gocognit:
+      min-complexity: 30
+    goconst:
+      min-len: 3
+      min-occurrences: 3
+    gocritic:
+      settings:
+        captLocal:
+          paramsOnly: true
+    gocyclo:
+      min-complexity: 30
+    godox:
+      keywords:
+        - BUG
+        - FIXME
+        - OPTIMIZE
+        - HACK
+    gosec:
+      excludes:
+        - G104
+        - G304
+        # G703 flags any os.Stat or os.WriteFile whose path was built from a
+        # value that entered the process from outside. Every such path here is
+        # composed from validated state under q's own directories, and the one
+        # place that execs anything (internal/runner) builds argv rather than a
+        # shell string, which is the constraint that actually matters.
+        - G703
+      config:
+        gobal:
+          nosec: false
+    lll:
+      line-length: 120
+      tab-width: 1
+    misspell:
+      locale: US
+    nakedret:
+      max-func-lines: 30
+    prealloc:
+      simple: true
+      range-loops: true
+      for-loops: false
+    staticcheck:
+      checks:
+      # The following are the default settings: https://golangci-lint.run/docs/linters/configuration/#staticcheck
+      - "all" # this must come first
+      - -ST1000
+      - -ST1003
+      - -ST1016
+      - -ST1020
+      - -ST1022
+      # explicitly disable this QF1008 - Omit embedded fields from selector
+      # expression. This is a silly rule which enforces fewer identifiers at the
+      # cost of explicitness.
+      - -QF1008
+    unparam:
+      check-exported: false
+    whitespace:
+      multi-if: false
+      multi-func: false
+    wsl:
+      strict-append: true
+      allow-assign-and-call: true
+      allow-multiline-assign: true
+      force-case-trailing-whitespace: 0
+      allow-trailing-comment: false
+      allow-cuddle-declarations: false
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - dupl
+          - errcheck
+          - funlen
+          - gochecknoglobals
+          - gocyclo
+          - gosec
+        path: _test\.go
+      - linters:
+          - lll
+        source: '^//go:generate '
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+formatters:
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
