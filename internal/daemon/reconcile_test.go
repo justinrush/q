@@ -1,8 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // This is the pane codex showed for 25 minutes in a detached session with nothing on
@@ -98,5 +103,74 @@ func TestPromptMarkersAreLowercase(t *testing.T) {
 		if marker != strings.ToLower(marker) {
 			t.Errorf("marker %q must be lowercase; matching is done on a lowered line", marker)
 		}
+	}
+}
+
+// stubProbe answers with one pane, which is all the session checks read.
+type stubProbe struct {
+	pane terminal.PaneInfo
+}
+
+func (p stubProbe) HasSession(context.Context, string) bool { return true }
+
+func (p stubProbe) ListPanes(context.Context, terminal.Target) ([]terminal.PaneInfo, error) {
+	return []terminal.PaneInfo{p.pane}, nil
+}
+
+func (p stubProbe) CapturePane(context.Context, terminal.Target, int) (string, error) {
+	return "", nil
+}
+
+// Reconciliation may only file a card on evidence that the agent is gone. It once
+// took an unfamiliar process name as that evidence, and claude's native install
+// shows one: the launcher is a symlink to a versioned binary, so a live session's
+// pane reports "2.1.251". Cards went to debrief seconds after going active, while
+// the agent kept working and kept sending hooks.
+func TestReconcileLeavesActiveMissionsRunningAnAgent(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    mission.Status
+	}{
+		{name: "claude on PATH", command: "claude", want: mission.StatusActive},
+		{name: "claude's versioned binary", command: "2.1.251", want: mission.StatusActive},
+		{name: "codex's node wrapper", command: "node", want: mission.StatusActive},
+		{name: "a pane that fell back to a shell", command: "zsh", want: mission.StatusDebrief},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t)
+			ms := launchedServiceMission(t, svc)
+
+			// Past the launch grace, so the pane's command is what decides.
+			started := time.Now().Add(-time.Hour)
+			ms.StartedAt = &started
+			ms.TmuxSession = "q-mission"
+			ms.AgentPaneID = "%1"
+			ms.Status = mission.StatusActive
+			ms.AgentState = mission.AgentBusy
+			ms.LastEventAt = time.Now()
+
+			if err := svcStore(svc).Mutate("test.active", func(snap *mission.Snapshot) error {
+				snap.PutMission(ms)
+
+				return nil
+			}); err != nil {
+				t.Fatalf("storing active mission: %v", err)
+			}
+
+			svc.apply(WithProbe(stubProbe{pane: terminal.PaneInfo{ID: "%1", Command: tc.command}}))
+			svc.Reconcile(t.Context())
+
+			stored, ok := svc.Snapshot().Mission(ms.ID)
+			if !ok {
+				t.Fatal("mission disappeared")
+			}
+
+			if stored.Status != tc.want {
+				t.Errorf("status = %q, want %q (pane running %q)", stored.Status, tc.want, tc.command)
+			}
+		})
 	}
 }

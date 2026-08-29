@@ -25,8 +25,8 @@ type Agent interface {
 	// script.
 	Args(Invocation) []string
 	// Prologue is shell emitted before the script's final exec, for an agent that
-	// needs to start a sidecar or try a preferred invocation first. Most agents
-	// return "".
+	// needs an environment variable exported, a sidecar started, or a preferred
+	// invocation tried first. Most agents return "".
 	Prologue(Invocation) string
 	// Artifacts are the files the agent needs written before it starts.
 	Artifacts(Invocation) ([]Artifact, error)

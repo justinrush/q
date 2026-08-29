@@ -278,3 +278,32 @@ func TestRelaunchRejectsANeverLaunchedMission(t *testing.T) {
 		t.Error("expected an error for a mission that was never launched")
 	}
 }
+
+// The bug this guards against filed cards for sessions that were still working.
+// claude's native install symlinks the launcher at a versioned binary, so the pane
+// of a perfectly healthy claude reports "2.1.251", and an allowlist of agent names
+// read that as an agent that had died.
+func TestPaneRunsAgent(t *testing.T) {
+	cases := []struct {
+		name    string
+		command string
+		want    bool
+	}{
+		{name: "claude on PATH", command: "claude", want: true},
+		{name: "claude's versioned binary", command: "2.1.251", want: true},
+		{name: "a later claude release", command: "2.2.7", want: true},
+		{name: "codex's node wrapper", command: "node", want: true},
+		{name: "codex", command: "codex", want: true},
+		{name: "a pane that fell back to zsh", command: "zsh", want: false},
+		{name: "a pane that fell back to bash", command: "bash", want: false},
+		{name: "a pane running sh", command: "sh", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PaneRunsAgent(tc.command); got != tc.want {
+				t.Errorf("PaneRunsAgent(%q) = %v, want %v", tc.command, got, tc.want)
+			}
+		})
+	}
+}

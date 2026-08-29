@@ -7,6 +7,7 @@ import (
 	"github.com/justinrush/q/internal/api"
 	"strings"
 
+	"github.com/justinrush/q/internal/launch"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/terminal"
 )
@@ -270,7 +271,7 @@ func (s *Service) sessionAlive(ctx context.Context, ms mission.Mission) bool {
 
 	for _, pane := range panes {
 		if pane.ID == ms.AgentPaneID {
-			return !pane.Dead && agentCommands[pane.Command]
+			return !pane.Dead && launch.PaneRunsAgent(pane.Command)
 		}
 	}
 

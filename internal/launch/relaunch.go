@@ -146,9 +146,9 @@ func (l *Launcher) verifyAgentPane(ctx context.Context, ms mission.Mission) erro
 			return fmt.Errorf("the agent pane for %s has exited; relaunch instead of messaging it", ms.ID)
 		}
 
-		if !AgentCommands[pane.Command] {
+		if !PaneRunsAgent(pane.Command) {
 			return fmt.Errorf(
-				"refusing to send to pane %s: it is running %q rather than an agent, "+
+				"refusing to send to pane %s: it is running the shell %q rather than an agent, "+
 					"so the message would be executed as a command",
 				pane.ID, pane.Command)
 		}
@@ -159,11 +159,37 @@ func (l *Launcher) verifyAgentPane(ctx context.Context, ms mission.Mission) erro
 	return fmt.Errorf("the agent pane for %s is gone; relaunch instead of messaging it", ms.ID)
 }
 
-// AgentCommands are the process names a live agent pane runs.
+// shellCommands are the process names that mean a pane has fallen back to a shell.
 //
-// node appears because codex ships as a node wrapper.
-var AgentCommands = map[string]bool{
-	"claude": true,
-	"codex":  true,
-	"node":   true,
+// The judgement is made by naming the shells rather than by naming the agents,
+// because an agent's process name is whatever its installer happens to exec and is
+// not stable. claude's native install symlinks the launcher at a versioned binary,
+// so a healthy pane reports "2.1.251" and gains a digit every release; codex reports
+// "node" for its wrapper. An allowlist of agent names was wrong the moment either
+// tool changed its layout, and it failed in the worst direction: q read an
+// unfamiliar name as a dead agent and filed cards for sessions that were working.
+//
+// What the two callers need is narrower than "is this the agent" and does not
+// move between releases. Reconciliation must not mistake an unfamiliar name for a
+// dead agent, and messaging must not paste prose into something that would run it.
+// Naming the shells answers both.
+var shellCommands = map[string]bool{
+	"sh":    true,
+	"bash":  true,
+	"zsh":   true,
+	"fish":  true,
+	"dash":  true,
+	"ksh":   true,
+	"csh":   true,
+	"tcsh":  true,
+	"ash":   true,
+	"login": true,
 }
+
+// PaneRunsAgent reports whether a pane's foreground command could still be a live
+// agent.
+//
+// An unrecognized command counts as one. That is the direction q must err in: the
+// alternative is to declare an agent dead on the strength of not knowing its
+// process name, which files a card for work still in progress.
+func PaneRunsAgent(command string) bool { return !shellCommands[command] }

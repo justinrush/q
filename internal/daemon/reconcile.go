@@ -68,13 +68,6 @@ var promptMarkers = []string{
 // capturedPromptLines is how much of the pane to read when looking for a question.
 const capturedPromptLines = 40
 
-// agentCommands are the process names a live agent pane runs.
-//
-// Anything else in an agent pane means the agent has exited, which matters for more
-// than reporting: sending a message to a pane that fell back to a shell would execute
-// it. The list is shared with the launcher so both judgements agree.
-var agentCommands = launch.AgentCommands
-
 // Reconcile brings mission records back in line with observable reality.
 //
 // It exists because hooks can be missed: the daemon may have been down, a hook may
@@ -243,11 +236,13 @@ func (s *Service) checkSession(ctx context.Context, ms *mission.Mission, now tim
 			continue
 		}
 
-		// A dead pane means the agent exited. A pane running something other than an
-		// agent means the same thing, except during the moment after launch when the
+		// A dead pane means the agent exited. A pane that has fallen back to a shell
+		// means the same thing, except during the moment after launch when the
 		// generated script has not yet exec'd. tmux-resurrect can also restore a
-		// session whose panes are dead, which looks alive by name alone.
-		if pane.Dead || (!agentCommands[pane.Command] && !starting) {
+		// session whose panes are dead, which looks alive by name alone. The
+		// judgement is shared with the launcher so both agree; see
+		// [launch.PaneRunsAgent] for why it names shells rather than agents.
+		if pane.Dead || (!launch.PaneRunsAgent(pane.Command) && !starting) {
 			s.markSessionGone(ms)
 
 			return false
