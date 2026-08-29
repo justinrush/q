@@ -23,6 +23,9 @@ import (
 // SettingsFile is the per-mission settings document passed with --settings.
 const SettingsFile = "claude-settings.json"
 
+// EnvSandboxed tells claude its working directory is already vouched for.
+const EnvSandboxed = "CLAUDE_CODE_SANDBOXED"
+
 // hooks are the events q subscribes to, with the matcher each needs.
 //
 // The set is chosen from what each event actually tells us:
@@ -93,8 +96,24 @@ func (*Agent) HookEvents() []string {
 	return out
 }
 
-// Prologue is empty: claude needs nothing started before it.
-func (*Agent) Prologue(mission.Invocation) string { return "" }
+// Prologue exports the one variable that answers claude's workspace trust gate.
+//
+// Every mission runs in a directory that has never existed before, so claude's
+// per-project trust record never matches it and the launch stops on "Accessing
+// workspace" inside a detached tmux pane where nobody is looking. Setting this is
+// what q is asserting anyway: the directory holds worktrees of the user's own
+// repositories, provisioned moments earlier by q itself.
+//
+// It is an environment variable rather than a pre-seeded trust record because
+// claude keeps trust in ~/.claude.json, which is its own live global config,
+// rewritten by every running session. codex's trust lives in a file q owns
+// outright, so that agent is served by a generated profile instead.
+//
+// It grants trust and nothing else. Permission prompts still apply, and because
+// the variable is read per launch, no trust is left recorded on disk afterwards.
+func (*Agent) Prologue(mission.Invocation) string {
+	return "export " + EnvSandboxed + "=1\n"
+}
 
 // Args builds claude's arguments.
 //
