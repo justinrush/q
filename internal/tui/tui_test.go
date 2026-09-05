@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +11,10 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/muesli/termenv"
 )
@@ -1156,5 +1160,156 @@ func TestKeyNameConstantsMatchTheBindings(t *testing.T) {
 		if !found {
 			t.Errorf("%s binding %q does not include the constant %q", pair.name, pair.binding, pair.want)
 		}
+	}
+}
+
+// testApp returns a board wired to a client that cannot reach anything, which is
+// all the reconnect path needs: it exercises the model, not the transport.
+func testApp(t *testing.T) *App {
+	t.Helper()
+
+	// Port 9 is discard; nothing listens, so a stream attempt fails immediately
+	// rather than hanging the test.
+	return New(api.NewClient(api.Handle{Addr: "127.0.0.1:9", Token: "t"}), Options{})
+}
+
+// reconnectMsg used to fall through Update into the intent handlers, which dropped
+// it. The backoff timer fired into the void and the board never reconnected: it
+// simply kept rendering the last snapshot it had, with every card frozen in
+// whatever lane it was in when the connection died.
+func TestReconnectOpensAFreshStream(t *testing.T) {
+	a := testApp(t)
+	a.streamDown = true
+
+	before := a.stream
+
+	if _, cmd := a.Update(reconnectMsg{}); cmd == nil {
+		t.Fatal("reconnectMsg produced no command; it is being dropped")
+	}
+
+	if a.stream == before {
+		t.Errorf("stream = %d, want a new one after %d", a.stream, before)
+	}
+}
+
+// A reconnect has to re-read daemon.json. The daemon binds an ephemeral port and
+// mints a new token each start, so retrying only the address the board launched
+// with can never reach a restarted daemon.
+func TestReconnectPicksUpARestartedDaemon(t *testing.T) {
+	root := t.TempDir()
+	dirs := paths.Dirs{Data: root, State: root, Config: root}
+
+	if err := api.WriteHandle(dirs.DaemonFile(), api.Handle{
+		PID: os.Getpid(), Addr: "127.0.0.1:9", Token: "first",
+	}); err != nil {
+		t.Fatalf("WriteHandle: %v", err)
+	}
+
+	c, err := api.OpenClient(dirs)
+	if err != nil {
+		t.Fatalf("OpenClient: %v", err)
+	}
+
+	a := New(c, Options{})
+	a.streamDown = true
+
+	// The daemon restarts: same file, new port, new token.
+	if err := api.WriteHandle(dirs.DaemonFile(), api.Handle{
+		PID: os.Getpid(), Addr: "127.0.0.1:10", Token: "second",
+	}); err != nil {
+		t.Fatalf("WriteHandle: %v", err)
+	}
+
+	a.Update(reconnectMsg{})
+
+	if got := a.client.Handle(); got.Addr != "127.0.0.1:10" || got.Token != "second" {
+		t.Errorf("handle = %s/%s, want 127.0.0.1:10/second", got.Addr, got.Token)
+	}
+}
+
+// Only the stream the board is actually listening to may drive the retry clock.
+// A reader a reconnect already replaced reports itself down as it unwinds, and
+// acting on that would double the retry rate and undo the connection that
+// replaced it.
+func TestStreamDownIgnoresASupersededStream(t *testing.T) {
+	cases := []struct {
+		name string
+		// stream is the generation the message claims to come from.
+		stream      int
+		wantDown    bool
+		wantBackoff time.Duration
+	}{
+		{
+			name:        "the live stream going down starts the retry clock",
+			stream:      2,
+			wantDown:    true,
+			wantBackoff: time.Second,
+		},
+		{
+			name:        "a replaced stream unwinding is old news",
+			stream:      1,
+			wantDown:    false,
+			wantBackoff: 500 * time.Millisecond,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			a.stream = 2
+
+			a.Update(streamDownMsg{Stream: tc.stream, Err: errors.New("connection refused")})
+
+			if a.streamDown != tc.wantDown {
+				t.Errorf("streamDown = %v, want %v", a.streamDown, tc.wantDown)
+			}
+
+			if a.reconnectIn != tc.wantBackoff {
+				t.Errorf("reconnectIn = %v, want %v", a.reconnectIn, tc.wantBackoff)
+			}
+		})
+	}
+}
+
+// Every relative timestamp on a disconnected board keeps ticking, so a board that
+// has stopped receiving looks exactly like one where nothing is happening. How long
+// it has been out is the only thing that tells the two apart.
+func TestHeaderReportsHowLongTheStreamHasBeenDown(t *testing.T) {
+	cases := []struct {
+		name      string
+		down      bool
+		downFor   time.Duration
+		wantEmpty bool
+		want      string
+	}{
+		{name: "a live stream says nothing", down: false, wantEmpty: true},
+		{name: "a blip is not worth a number", down: true, downFor: 3 * time.Second, want: "reconnecting"},
+		{name: "a long outage is reported", down: true, downFor: 3 * time.Minute, want: "reconnecting 3m"},
+		{name: "so is a very long one", down: true, downFor: 26 * time.Hour, want: "reconnecting 1d"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			a.streamDown = tc.down
+
+			if tc.down {
+				a.downSince = time.Now().Add(-tc.downFor)
+			}
+
+			status := a.status()
+
+			if tc.wantEmpty {
+				if strings.Contains(status, "reconnecting") {
+					t.Errorf("status = %q, want no reconnecting marker", status)
+				}
+
+				return
+			}
+
+			if !strings.Contains(status, tc.want) {
+				t.Errorf("status = %q, want it to contain %q", status, tc.want)
+			}
+		})
 	}
 }
