@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,20 +26,34 @@ func (a *App) fetchSnapshot() tea.Cmd {
 //
 // The goroutine owns the HTTP response body; the model only ever receives from the
 // channel, which is what keeps bubbletea's single-operationed update loop intact.
+//
+// Each stream is numbered and the previous one is canceled, because the reader this
+// replaces may be blocked on a half-open socket that will never error. Without
+// both, a reconnect would leave a goroutine behind every time and the dead
+// connection would still be able to report itself down.
 func (a *App) startStream() tea.Cmd {
+	if a.stopStream != nil {
+		a.stopStream()
+	}
+
+	ctx, cancel := context.WithCancel(a.ctx())
+	a.stopStream = cancel
+	a.stream++
+	stream := a.stream
+
 	return func() tea.Msg {
 		go func() {
 			events := make(chan api.Event, 32)
 			done := make(chan error, 1)
 
-			go func() { done <- a.client.Stream(a.ctx(), events) }()
+			go func() { done <- a.client.Stream(ctx, events) }()
 
 			for {
 				select {
 				case event := <-events:
-					a.events <- streamEventMsg{Event: event}
+					a.events <- streamEventMsg{Stream: stream, Event: event}
 				case err := <-done:
-					a.events <- streamDownMsg{Err: err}
+					a.events <- streamDownMsg{Stream: stream, Err: err}
 
 					return
 				}
