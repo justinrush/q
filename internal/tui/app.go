@@ -53,6 +53,11 @@ type Options struct {
 	Repos git.ScanOptions
 	// DefaultTool is the agent a new mission starts with.
 	DefaultTool mission.Tool
+	// Models is what each agent says it can run. It arrives from the daemon
+	// rather than from configuration, and is empty until the first fetch lands,
+	// which the form renders as "the agent's own default" rather than as an
+	// agent that offers nothing.
+	Models map[mission.Tool]mission.ModelSet
 }
 
 // withDefaults fills in anything cmd/q left unset.
@@ -119,6 +124,7 @@ func New(c *api.Client, opts Options) *App {
 func (a *App) Init() tea.Cmd {
 	return tea.Batch(
 		a.fetchSnapshot(),
+		a.fetchModels(),
 		a.startStream(),
 		a.listen(),
 		tea.Tick(tickInterval, func(time.Time) tea.Msg { return tickMsg{} }),
@@ -131,6 +137,11 @@ type (
 	tickMsg struct{}
 	// snapshotMsg carries a full state fetch.
 	snapshotMsg struct{ Snapshot mission.Snapshot }
+	// modelsMsg carries the model catalog. It is fetched separately from the
+	// snapshot because it changes on the order of hours rather than seconds.
+	modelsMsg struct {
+		Models map[mission.Tool]mission.ModelSet
+	}
 	// streamEventMsg carries one decoded event from the daemon.
 	streamEventMsg struct{ Event api.Event }
 	// streamDownMsg reports that the event stream ended.
@@ -158,6 +169,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleKey(m)
 	case snapshotMsg:
 		return a, a.applySnapshot(m.Snapshot)
+	case modelsMsg:
+		return a, a.applyModels(m.Models)
 	case streamEventMsg:
 		return a, a.handleStreamEvent(m)
 	case streamDownMsg:
@@ -477,3 +490,22 @@ func (a *App) currentOperationID() mission.OperationID {
 // Requests are short-lived and the client applies its own timeout, so a background
 // context is the right scope here.
 func (a *App) ctx() context.Context { return context.Background() }
+
+// applyModels records the catalog and hands it to an open mission form.
+//
+// A form already on screen is updated in place rather than left with whatever
+// was known when it opened, which is what makes the fetch issued on opening it
+// worth making at all.
+func (a *App) applyModels(models map[mission.Tool]mission.ModelSet) tea.Cmd {
+	if len(models) == 0 {
+		return nil
+	}
+
+	a.opts.Models = models
+
+	if form, ok := a.modal.(*missionForm); ok {
+		form.setModels(models)
+	}
+
+	return nil
+}

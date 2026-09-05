@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/justinrush/q/internal/paths"
 )
@@ -38,6 +39,8 @@ const (
 	EnvTerminal    = "Q_TERMINAL"
 	EnvBranchPfx   = "Q_BRANCH_PREFIX"
 	EnvDefaultTool = "Q_DEFAULT_AGENT"
+	EnvClaudeModel = "Q_CLAUDE_MODEL"
+	EnvCodexModel  = "Q_CODEX_MODEL"
 	EnvLogLevel    = "Q_LOG_LEVEL"
 )
 
@@ -72,16 +75,25 @@ type agentsConfig struct {
 	Default string       `json:"default,omitempty"`
 	Claude  *agentConfig `json:"claude,omitempty"`
 	Codex   *codexConfig `json:"codex,omitempty"`
+	// ModelRefresh is a duration string, e.g. "6h", bounding how stale the model
+	// list on the board may be.
+	ModelRefresh string `json:"modelRefresh,omitempty"`
 }
 
 type agentConfig struct {
-	Bin  string   `json:"bin,omitempty"`
-	Args []string `json:"args,omitempty"`
+	Bin    string   `json:"bin,omitempty"`
+	Args   []string `json:"args,omitempty"`
+	Model  string   `json:"model,omitempty"`
+	Effort string   `json:"effort,omitempty"`
+	Models []string `json:"models,omitempty"`
 }
 
 type codexConfig struct {
 	Bin       string   `json:"bin,omitempty"`
 	Args      []string `json:"args,omitempty"`
+	Model     string   `json:"model,omitempty"`
+	Effort    string   `json:"effort,omitempty"`
+	Models    []string `json:"models,omitempty"`
 	ConfigDir string   `json:"configDir,omitempty"`
 	Profile   string   `json:"profile,omitempty"`
 }
@@ -244,8 +256,14 @@ func applyAgents(out *settings, agents *agentsConfig) {
 		out.Agents.Default = agents.Default
 	}
 
+	if d, ok := parseRefresh(agents.ModelRefresh); ok {
+		out.Agents.ModelRefresh = d
+	}
+
 	if c := agents.Claude; c != nil {
 		out.Agents.Claude.Bin = firstNonEmpty(c.Bin, out.Agents.Claude.Bin)
+		applyAgentModels(&out.Agents.Claude, c.Model, c.Effort, c.Models)
+
 		if len(c.Args) > 0 {
 			out.Agents.Claude.Args = c.Args
 		}
@@ -255,11 +273,39 @@ func applyAgents(out *settings, agents *agentsConfig) {
 		out.Agents.Codex.Bin = firstNonEmpty(c.Bin, out.Agents.Codex.Bin)
 		out.Agents.Codex.ConfigDir = firstNonEmpty(c.ConfigDir, out.Agents.Codex.ConfigDir)
 		out.Agents.Codex.Profile = firstNonEmpty(c.Profile, out.Agents.Codex.Profile)
+		applyAgentModels(&out.Agents.Codex.agentSettings, c.Model, c.Effort, c.Models)
 
 		if len(c.Args) > 0 {
 			out.Agents.Codex.Args = c.Args
 		}
 	}
+}
+
+// applyAgentModels layers the model keys shared by every agent.
+func applyAgentModels(out *agentSettings, model, effort string, models []string) {
+	out.Model = firstNonEmpty(model, out.Model)
+	out.Effort = firstNonEmpty(effort, out.Effort)
+
+	if len(models) > 0 {
+		out.Models = models
+	}
+}
+
+// parseRefresh reads a refresh interval, ignoring one that is unparseable or not
+// positive. A bad value leaves the daemon's own default in place rather than
+// disabling refreshes, which would silently freeze the board's model list.
+func parseRefresh(v string) (time.Duration, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+
+	return d, true
 }
 
 // applyEnv layers environment variables over the file.
@@ -290,6 +336,14 @@ func applyEnv(out *settings) {
 
 	if v := strings.TrimSpace(os.Getenv(EnvDefaultTool)); v != "" {
 		out.Agents.Default = v
+	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvClaudeModel)); v != "" {
+		out.Agents.Claude.Model = v
+	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvCodexModel)); v != "" {
+		out.Agents.Codex.Model = v
 	}
 
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
@@ -374,13 +428,23 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Git:   &gitConfig{BranchPrefix: branchPrefixOrUser(s)},
 		Agents: &agentsConfig{
 			Default: s.Agents.Default,
-			Claude:  &agentConfig{Bin: s.Agents.Claude.Bin, Args: s.Agents.Claude.Args},
+			Claude: &agentConfig{
+				Bin:    s.Agents.Claude.Bin,
+				Args:   s.Agents.Claude.Args,
+				Model:  s.Agents.Claude.Model,
+				Effort: s.Agents.Claude.Effort,
+				Models: s.Agents.Claude.Models,
+			},
 			Codex: &codexConfig{
 				Bin:       s.Agents.Codex.Bin,
 				Args:      s.Agents.Codex.Args,
+				Model:     s.Agents.Codex.Model,
+				Effort:    s.Agents.Codex.Effort,
+				Models:    s.Agents.Codex.Models,
 				ConfigDir: s.Agents.Codex.ConfigDir,
 				Profile:   s.Agents.Codex.Profile,
 			},
+			ModelRefresh: refreshString(s.Agents.ModelRefresh),
 		},
 		Editor:   &editorConfig{Command: s.Editor.Command},
 		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
@@ -438,4 +502,14 @@ func createConfigFile(path string, force bool) (string, error) {
 	}
 
 	return path, nil
+}
+
+// refreshString renders a refresh interval for the sample config, leaving it out
+// when the daemon's own default applies.
+func refreshString(d time.Duration) string {
+	if d <= 0 {
+		return ""
+	}
+
+	return d.String()
 }

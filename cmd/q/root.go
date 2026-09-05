@@ -37,6 +37,7 @@ func BuildRootCommand() *cobra.Command {
 		buildHookSubcommand(),
 		buildOpenSubcommand(),
 		buildMissionSubcommand(),
+		buildModelsSubcommand(),
 		buildOperationSubcommand(),
 		buildTUISubcommand(),
 	)

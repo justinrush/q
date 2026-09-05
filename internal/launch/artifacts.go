@@ -24,6 +24,8 @@ import (
 type meta struct {
 	MissionID   mission.MissionID `json:"missionId"`
 	Tool        mission.Tool      `json:"tool"`
+	Model       string            `json:"model,omitempty"`
+	Effort      string            `json:"effort,omitempty"`
 	HookEpoch   int               `json:"hookEpoch"`
 	SessionID   string            `json:"sessionId,omitempty"`
 	TmuxSession string            `json:"tmuxSession"`
@@ -147,6 +149,8 @@ func (l *Launcher) writeMeta(ms mission.Mission, agent mission.Agent, inv missio
 	data, err := json.MarshalIndent(meta{
 		MissionID:   ms.ID,
 		Tool:        ms.Tool,
+		Model:       ms.Model,
+		Effort:      ms.Effort,
 		HookEpoch:   ms.HookEpoch,
 		SessionID:   inv.SessionID,
 		TmuxSession: ms.TmuxSession,
@@ -182,6 +186,8 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		SessionID:   ms.AgentSessionID,
 		Resume:      resume,
 		PlanMode:    ms.PlanMode,
+		Model:       ms.Model,
+		Effort:      ms.Effort,
 		DisplayName: "q: " + ms.Name,
 		Worktrees:   git.WorktreePaths(ms),
 		PathEnv:     os.Getenv("PATH"),

@@ -1158,3 +1158,233 @@ func TestKeyNameConstantsMatchTheBindings(t *testing.T) {
 		}
 	}
 }
+
+// testModels is a catalog shaped like what the daemon serves: claude with an
+// effort-taking default and one model that takes none, codex with neither.
+func testModels() map[mission.Tool]mission.ModelSet {
+	return map[mission.Tool]mission.ModelSet{
+		mission.ToolClaude: {
+			Default: "opus",
+			Options: []mission.ModelOption{
+				{Value: "opus", Label: "Opus", Efforts: []string{"low", "high"}},
+				{Value: "haiku", Label: "Haiku"},
+			},
+		},
+		mission.ToolCodex: {
+			Default:       "gpt-5.1-codex",
+			DefaultEffort: "medium",
+			Options: []mission.ModelOption{
+				{Value: "gpt-5.1-codex", Label: "gpt-5.1-codex", Efforts: []string{"low", "medium"}},
+			},
+		},
+	}
+}
+
+// A new mission starts on the model its agent reports, which is what makes the
+// board agree with what the agent would have done unprompted.
+func TestMissionFormStartsOnTheAgentDefault(t *testing.T) {
+	cases := []struct {
+		name       string
+		tool       mission.Tool
+		wantModel  string
+		wantEffort string
+	}{
+		{name: "claude", tool: mission.ToolClaude, wantModel: "opus"},
+		{
+			name: "codex carries its configured effort too", tool: mission.ToolCodex,
+			wantModel: "gpt-5.1-codex", wantEffort: "medium",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+				"op_1", Options{DefaultTool: tc.tool, Models: testModels()})
+
+			if form.model != tc.wantModel {
+				t.Errorf("model = %q, want %q", form.model, tc.wantModel)
+			}
+
+			if form.effort != tc.wantEffort {
+				t.Errorf("effort = %q, want %q", form.effort, tc.wantEffort)
+			}
+		})
+	}
+}
+
+// An existing mission keeps what it was given, including a model the catalog no
+// longer lists, because that is what its agent was actually launched with.
+func TestMissionFormKeepsAnExistingModel(t *testing.T) {
+	form := newMissionForm(
+		mission.Mission{ID: "ms_1", Tool: mission.ToolClaude, Model: "retired-model", Effort: "high"},
+		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
+		Options{Models: testModels()},
+	)
+
+	if form.model != "retired-model" {
+		t.Errorf("model = %q, want the stored one", form.model)
+	}
+}
+
+func TestMissionFormCyclesModelAndEffort(t *testing.T) {
+	cases := []struct {
+		name string
+		// steps are the fields to cycle, in order.
+		steps      []int
+		wantModel  string
+		wantEffort string
+	}{
+		{
+			name:      "cycling the model moves through the agent's list",
+			steps:     []int{fieldMissionModel},
+			wantModel: "haiku",
+		},
+		{
+			name:      "cycling wraps back around",
+			steps:     []int{fieldMissionModel, fieldMissionModel},
+			wantModel: "opus",
+		},
+		{
+			name:       "effort steps off the model's own default",
+			steps:      []int{fieldMissionEffort},
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name:       "effort keeps stepping through the model's levels",
+			steps:      []int{fieldMissionEffort, fieldMissionEffort},
+			wantModel:  "opus",
+			wantEffort: "high",
+		},
+		{
+			name: "an effort is dropped by a model that takes none",
+			// Set an effort, then move to haiku, which reports no effort levels.
+			steps:      []int{fieldMissionEffort, fieldMissionModel},
+			wantModel:  "haiku",
+			wantEffort: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+				"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+
+			for _, field := range tc.steps {
+				form.focusField(field)
+				form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+			}
+
+			if form.model != tc.wantModel {
+				t.Errorf("model = %q, want %q", form.model, tc.wantModel)
+			}
+
+			if form.effort != tc.wantEffort {
+				t.Errorf("effort = %q, want %q", form.effort, tc.wantEffort)
+			}
+		})
+	}
+}
+
+// Switching agent must re-choose from the new agent's list: an opus on a codex
+// mission would be rejected at launch, in a detached pane.
+func TestMissionFormResetsModelWhenAgentChanges(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+
+	if form.model != "opus" {
+		t.Fatalf("model = %q, want opus to start", form.model)
+	}
+
+	form.cycleTool(keySpace)
+
+	if form.tool != mission.ToolCodex {
+		t.Fatalf("tool = %q, want codex", form.tool)
+	}
+
+	if form.model != "gpt-5.1-codex" {
+		t.Errorf("model = %q, want codex's own default", form.model)
+	}
+
+	if form.effort != "medium" {
+		t.Errorf("effort = %q, want codex's own default", form.effort)
+	}
+}
+
+// A launched mission's model is fixed, like its tool and plan mode.
+func TestMissionFormFreezesModelAfterLaunch(t *testing.T) {
+	started := time.Now()
+	form := newMissionForm(
+		mission.Mission{
+			ID: "ms_1", Tool: mission.ToolClaude, Model: "opus", Effort: "high",
+			StartedAt: &started,
+		},
+		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
+		Options{Models: testModels()},
+	)
+
+	form.cycleModel(keySpace)
+	form.cycleEffort(keySpace)
+
+	if form.model != "opus" || form.effort != "high" {
+		t.Errorf("model/effort = %q/%q, want them unchanged", form.model, form.effort)
+	}
+}
+
+// The catalog arrives after the form opens, so a form built before the first
+// fetch must take the default once it lands rather than staying blank.
+func TestMissionFormAdoptsModelsWhenTheyArrive(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude})
+
+	if form.model != "" {
+		t.Fatalf("model = %q, want it empty before any fetch", form.model)
+	}
+
+	form.setModels(testModels())
+
+	if form.model != "opus" {
+		t.Errorf("model = %q, want the default once the catalog arrives", form.model)
+	}
+}
+
+// A model the human already chose must survive a later fetch.
+func TestMissionFormKeepsChoiceWhenModelsRefresh(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+
+	form.focusField(fieldMissionModel)
+	form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+
+	if form.model != "haiku" {
+		t.Fatalf("model = %q, want haiku after cycling", form.model)
+	}
+
+	form.setModels(testModels())
+
+	if form.model != "haiku" {
+		t.Errorf("model = %q, want the chosen model to survive a refresh", form.model)
+	}
+}
+
+func TestMissionFormSubmitsModelAndEffort(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+	form.name.SetValue("mission")
+	form.prompt.SetValue("do it")
+	form.effort = "high"
+
+	_, cmd := form.submit(false)
+	if cmd == nil {
+		t.Fatal("expected the form to submit")
+	}
+
+	msg, ok := cmd().(submitMissionMsg)
+	if !ok {
+		t.Fatalf("got %T, want submitMissionMsg", cmd())
+	}
+
+	if msg.Model != "opus" || msg.Effort != "high" {
+		t.Errorf("model/effort = %q/%q, want opus/high", msg.Model, msg.Effort)
+	}
+}

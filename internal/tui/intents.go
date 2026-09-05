@@ -25,13 +25,9 @@ func (a *App) handleIntent(msg tea.Msg) tea.Cmd {
 func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 	switch m := msg.(type) {
 	case newMissionMsg:
-		a.showMissionForm(mission.Mission{})
-
-		return nil, true
+		return a.showMissionForm(mission.Mission{}), true
 	case editMissionMsg:
-		a.showMissionForm(m.Mission)
-
-		return nil, true
+		return a.showMissionForm(m.Mission), true
 	case deleteMissionMsg:
 		return a.confirmDeleteMission(m.Mission), true
 	case deletePlanMsg:
@@ -89,8 +85,14 @@ func (a *App) handleOperationIntent(msg tea.Msg) tea.Cmd {
 }
 
 // showMissionForm opens the mission editor.
-func (a *App) showMissionForm(ms mission.Mission) {
+//
+// The form is built from the catalog already in hand so it draws immediately,
+// and a fresh one is fetched behind it: a board left open overnight would
+// otherwise keep offering the models it learned when it started.
+func (a *App) showMissionForm(ms mission.Mission) tea.Cmd {
 	a.modal = newMissionForm(ms, a.snapshot.Operations, a.currentOperationID(), a.opts)
+
+	return a.fetchModels()
 }
 
 // showOperationForm opens the operation editor.

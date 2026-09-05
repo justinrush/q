@@ -51,6 +51,13 @@ type Service struct {
 	// sessions. Neither is required: without them the board relies on hooks alone.
 	runtimes map[mission.Tool]mission.Runtime
 	healers  []mission.Healer
+	// probers are the agents that can be asked which models they offer, and
+	// models is what they last answered. Without a prober the catalog is whatever
+	// was last cached, and failing that empty, which leaves every mission on its
+	// agent's own default.
+	probers      []mission.ModelProber
+	models       *catalog
+	modelRefresh time.Duration
 
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
@@ -108,6 +115,7 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		logger:    slog.Default(),
 		now:       time.Now,
 		runtimes:  make(map[mission.Tool]mission.Runtime),
+		models:    newCatalog(),
 		approvals: make(map[mission.MissionID]approvalCandidate),
 	}
 
@@ -278,6 +286,10 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 		return mission.Mission{}, fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, tool)
 	}
 
+	if err := validateModelFlags(req.Model, req.Effort); err != nil {
+		return mission.Mission{}, err
+	}
+
 	id, err := mission.NewMissionID()
 	if err != nil {
 		return mission.Mission{}, err
@@ -292,6 +304,8 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 		Tool:        tool,
 		Prompt:      req.Prompt,
 		PlanMode:    req.PlanMode,
+		Model:       req.Model,
+		Effort:      req.Effort,
 		ExtraRepos:  normalizeRepos(req.ExtraRepos),
 		Status:      mission.StatusBriefing,
 		AgentState:  mission.AgentUnknown,
@@ -390,12 +404,28 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		ms.ExtraRepos = normalizeRepos(*req.ExtraRepos)
 	}
 
-	// Tool and plan mode are only meaningful before launch: they are baked into
-	// the agent's argv, so changing them afterwards would describe a session that
-	// is not the one running.
-	if req.Tool != nil || req.PlanMode != nil {
+	// Tool, plan mode, model, and effort are only meaningful before launch: they
+	// are baked into the agent's argv, so changing one afterwards would describe a
+	// session that is not the one running.
+	if req.Tool != nil || req.PlanMode != nil || req.Model != nil || req.Effort != nil {
 		if ms.Launched() {
-			return fmt.Errorf("%w: cannot change tool or plan mode after launch", ErrConflict)
+			return fmt.Errorf("%w: cannot change tool, plan mode, model, or effort after launch", ErrConflict)
+		}
+	}
+
+	if req.Model != nil {
+		ms.Model = *req.Model
+	}
+
+	if req.Effort != nil {
+		ms.Effort = *req.Effort
+	}
+
+	// Checked only when one of them was actually sent, so renaming a mission
+	// cannot fail over a model value that was already stored.
+	if req.Model != nil || req.Effort != nil {
+		if err := validateModelFlags(ms.Model, ms.Effort); err != nil {
+			return err
 		}
 	}
 
@@ -546,4 +576,23 @@ func (s *Service) publishDeleted(kind, id string) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventDeleted, api.Deleted{Kind: kind, ID: id})
 	}
+}
+
+// validateModelFlags rejects a model or effort q cannot put on a command line.
+//
+// It deliberately does not check membership in the model catalog. A probe can be
+// stale, or absent on a machine that has never reached the agent, and refusing a
+// model the agent would have accepted is a worse failure than passing an unknown
+// one through and letting the agent object to it.
+func validateModelFlags(model, effort string) error {
+	for _, check := range []struct{ kind, value string }{
+		{"model", model},
+		{"effort", effort},
+	} {
+		if err := mission.ValidateModelFlag(check.kind, check.value); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
+		}
+	}
+
+	return nil
 }

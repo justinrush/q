@@ -20,6 +20,22 @@ func (a *App) fetchSnapshot() tea.Cmd {
 	}
 }
 
+// fetchModels reads the model catalog from the daemon.
+//
+// A failure is silent rather than a toast: the catalog is advisory, the board
+// works without it, and an agent q cannot reach is already reported by
+// q doctor. Nagging about it every time a form opens would be noise.
+func (a *App) fetchModels() tea.Cmd {
+	return func() tea.Msg {
+		models, err := a.client.Models(a.ctx())
+		if err != nil {
+			return modelsMsg{}
+		}
+
+		return modelsMsg{Models: models}
+	}
+}
+
 // startStream opens the event stream in a goroutine that forwards frames onto the
 // model's channel.
 //
@@ -170,6 +186,8 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			Name:        msg.Name,
 			Prompt:      msg.Prompt,
 			Tool:        msg.Tool,
+			Model:       msg.Model,
+			Effort:      msg.Effort,
 			PlanMode:    msg.PlanMode,
 			ExtraRepos:  msg.ExtraRepos,
 		})
@@ -199,10 +217,12 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 			OperationID: &msg.OperationID,
 		}
 
-		// Tool and plan mode are immutable after launch, so they are only sent for a
-		// mission that has not started.
+		// Tool, model, effort, and plan mode are immutable after launch, so they are
+		// only sent for a mission that has not started.
 		if ms, ok := a.snapshot.Mission(msg.ID); ok && !ms.Launched() {
 			req.Tool = &msg.Tool
+			req.Model = &msg.Model
+			req.Effort = &msg.Effort
 			req.PlanMode = &msg.PlanMode
 		}
 

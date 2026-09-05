@@ -23,6 +23,12 @@ import (
 // requestTimeout bounds ordinary requests. The event stream bypasses it.
 const requestTimeout = 10 * time.Second
 
+// refreshTimeout bounds a model refresh, which is bounded by how long each agent
+// takes to start rather than by anything the daemon does. It is generous because
+// the alternative — timing out a probe that was about to succeed — leaves the
+// board with a stale catalog and no explanation.
+const refreshTimeout = 2 * time.Minute
+
 // Client is a connection to a running daemon.
 type Client struct {
 	handle Handle
@@ -104,6 +110,24 @@ func (c *Client) CreateMission(ctx context.Context, req CreateMissionRequest) (m
 	return send[mission.Mission](ctx, c, http.MethodPost, "/v1/missions", req)
 }
 
+// Models returns what each agent says it can run, as the daemon last learned it.
+func (c *Client) Models(ctx context.Context) (map[mission.Tool]mission.ModelSet, error) {
+	res, err := get[ModelsResponse](ctx, c, "/v1/models")
+
+	return res.Models, err
+}
+
+// RefreshModels re-asks every agent before answering.
+//
+// It is slower than [Client.Models] by however long the agents take to start, so
+// it belongs behind an explicit request rather than on the path of opening a form.
+func (c *Client) RefreshModels(ctx context.Context) (map[mission.Tool]mission.ModelSet, error) {
+	res, err := sendWithin[ModelsResponse](
+		ctx, c, http.MethodPost, "/v1/models/refresh", struct{}{}, refreshTimeout)
+
+	return res.Models, err
+}
+
 // UpdateMission patches a mission.
 func (c *Client) UpdateMission(ctx context.Context, id mission.MissionID, req UpdateMissionRequest) (mission.Mission, error) {
 	return send[mission.Mission](ctx, c, http.MethodPatch, "/v1/missions/"+string(id), req)
@@ -166,9 +190,21 @@ func get[T any](ctx context.Context, c *Client, path string) (T, error) {
 
 // send performs a request with an optional JSON body and decodes the response.
 func send[T any](ctx context.Context, c *Client, method, path string, body any) (T, error) {
+	return sendWithin[T](ctx, c, method, path, body, requestTimeout)
+}
+
+// sendWithin is send with a caller-chosen deadline, for the few endpoints whose
+// work is bounded by an external process rather than by the daemon.
+func sendWithin[T any](
+	ctx context.Context,
+	c *Client,
+	method, path string,
+	body any,
+	timeout time.Duration,
+) (T, error) {
 	var zero T
 
-	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := c.newRequest(ctx, method, path, body)

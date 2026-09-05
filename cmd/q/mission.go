@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -82,6 +83,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 		operation string
 		prompt    string
 		tool      string
+		model     string
+		effort    string
 		planMode  bool
 		repos     []string
 	)
@@ -106,11 +109,20 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
+			// An unnamed model resolves to whatever the agent itself reports, so a
+			// scripted mission gets the same default the board would have offered
+			// rather than silently differing from it.
+			if model == "" {
+				model, effort = defaultModelFor(cmd.Context(), c, parsedTool, effort)
+			}
+
 			ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
 				OperationID: mission.OperationID(operation),
 				Name:        args[0],
 				Prompt:      prompt,
 				Tool:        parsedTool,
+				Model:       model,
+				Effort:      effort,
 				PlanMode:    planMode,
 				ExtraRepos:  parsedRepos,
 			})
@@ -127,6 +139,10 @@ func buildMissionAddSubcommand() *cobra.Command {
 	cmd.Flags().StringVar(&operation, "operation", "", "Operation id this mission belongs to (required)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "What the agent should do (required)")
 	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude or codex")
+	cmd.Flags().StringVar(&model, "model", "",
+		"Model to run on; defaults to the agent's own (see q models)")
+	cmd.Flags().StringVar(&effort, "effort", "",
+		"Reasoning effort, for a model that takes one (see q models)")
 	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude only)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
 
@@ -363,6 +379,10 @@ func renderBoard(out io.Writer, snap mission.Snapshot, lanes []mission.Status) e
 func missionDetail(ms mission.Mission) string {
 	parts := make([]string, 0, 4)
 
+	if ms.Model != "" {
+		parts = append(parts, modelLabel(ms))
+	}
+
 	if ms.PlanMode {
 		parts = append(parts, "plan")
 	}
@@ -390,4 +410,46 @@ func missionDetail(ms mission.Mission) string {
 	}
 
 	return strings.Join(parts, " · ")
+}
+
+// defaultModelFor asks the daemon what a new mission on this agent should run
+// on, so an unflagged `q mission add` matches what the board would have offered.
+//
+// A daemon that cannot answer is not an error: the mission is created with no
+// model, which leaves the agent on its own default. That is strictly better than
+// refusing to create it over a catalog that is only ever advisory.
+func defaultModelFor(
+	ctx context.Context,
+	c modelClient,
+	tool mission.Tool,
+	effort string,
+) (string, string) {
+	sets, err := c.Models(ctx)
+	if err != nil {
+		return "", effort
+	}
+
+	set := sets[tool]
+
+	if effort == "" {
+		effort = set.DefaultEffort
+	}
+
+	// An effort the chosen model does not accept is dropped rather than sent: it
+	// would be rejected by the agent at launch, in a detached pane.
+	if !set.ValidEffort(set.Default, effort) {
+		effort = ""
+	}
+
+	return set.Default, effort
+}
+
+// modelLabel renders a mission's model, with its effort appended when it has
+// one, e.g. "opus/high".
+func modelLabel(ms mission.Mission) string {
+	if ms.Effort == "" {
+		return ms.Model
+	}
+
+	return ms.Model + "/" + ms.Effort
 }

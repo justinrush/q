@@ -75,7 +75,12 @@ type CreateMissionRequest struct {
 	Prompt      string              `json:"prompt"`
 	Tool        mission.Tool        `json:"tool"`
 	PlanMode    bool                `json:"planMode"`
-	ExtraRepos  []mission.Repo      `json:"extraRepos,omitempty"`
+	// Model and Effort name the agent model to run on and how hard it should
+	// think. Both are empty when the caller has no opinion, in which case q emits
+	// no flag and the agent uses its own default.
+	Model      string         `json:"model,omitempty"`
+	Effort     string         `json:"effort,omitempty"`
+	ExtraRepos []mission.Repo `json:"extraRepos,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
@@ -84,6 +89,8 @@ type UpdateMissionRequest struct {
 	Prompt      *string              `json:"prompt,omitempty"`
 	Tool        *mission.Tool        `json:"tool,omitempty"`
 	PlanMode    *bool                `json:"planMode,omitempty"`
+	Model       *string              `json:"model,omitempty"`
+	Effort      *string              `json:"effort,omitempty"`
 	OperationID *mission.OperationID `json:"operationId,omitempty"`
 	ExtraRepos  *[]mission.Repo      `json:"extraRepos,omitempty"`
 	Order       *int                 `json:"order,omitempty"`
@@ -152,6 +159,16 @@ type HookRequest struct {
 	HookEpoch int `json:"hookEpoch"`
 	// Payload is the raw JSON the agent wrote to the hook's standard input.
 	Payload json.RawMessage `json:"payload"`
+}
+
+// ModelsResponse is what each agent says it can run.
+//
+// It is a separate endpoint rather than part of the state snapshot because it
+// changes on the order of hours while the snapshot changes on the order of
+// seconds, and every board would otherwise re-receive an unchanged model list
+// with each event.
+type ModelsResponse struct {
+	Models map[mission.Tool]mission.ModelSet `json:"models"`
 }
 
 // Deleted identifies an entity that no longer exists, for the deleted event.

@@ -29,10 +29,34 @@ type ThreadSnapshot struct {
 }
 
 // StartProxy connects to the managed app-server through Codex's stdio proxy.
+//
+// This is the connection used to observe live sessions, because those belong to
+// the managed server that the missions themselves are talking to.
 func StartProxy(ctx context.Context, codexBin, version string, run runner.OS) (*Proxy, error) {
+	return startAppServer(ctx, codexBin, version, run, []string{"app-server", "proxy"})
+}
+
+// StartAppServer runs a private app-server over stdio, owned by this process.
+//
+// It exists for questions about Codex itself rather than about a running
+// session — the model catalog is the only one so far. Going direct matters
+// because [StartProxy] requires the managed daemon, which needs Codex's
+// standalone installer; a machine with codex from npm has no managed daemon and
+// would otherwise be unable to answer a question codex is perfectly able to.
+func StartAppServer(ctx context.Context, codexBin, version string, run runner.OS) (*Proxy, error) {
+	return startAppServer(ctx, codexBin, version, run, []string{"app-server"})
+}
+
+// startAppServer brings up a client over one of Codex's stdio transports.
+func startAppServer(
+	ctx context.Context,
+	codexBin, version string,
+	run runner.OS,
+	args []string,
+) (*Proxy, error) {
 	process, err := run.StartStream(ctx, runner.Spec{
 		Name: codexBin,
-		Args: []string{"app-server", "proxy"},
+		Args: args,
 	})
 	if err != nil {
 		return nil, err
@@ -58,7 +82,7 @@ func StartProxy(ctx context.Context, codexBin, version string, run runner.OS) (*
 	if err != nil {
 		_ = process.Stop()
 
-		return nil, fmt.Errorf("initializing Codex app-server proxy: %w", err)
+		return nil, fmt.Errorf("initializing Codex app-server: %w", err)
 	}
 
 	go func() { _ = process.Wait() }()
@@ -123,6 +147,84 @@ func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, boo
 	}
 
 	return ThreadSnapshot{}, false, nil
+}
+
+// Model is one entry of codex's own model catalog, as model/list reports it.
+type Model struct {
+	// ID is the catalog identifier; Model is what -m/--model takes. They are
+	// usually the same string, and Model is the one q puts on a command line.
+	ID    string `json:"id"`
+	Model string `json:"model"`
+
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	// IsDefault marks the model codex would use if none were named.
+	IsDefault bool `json:"isDefault"`
+	// Hidden marks a model codex keeps out of its own picker. q asks for these
+	// too, so a model named in the user's configuration is still recognized.
+	Hidden bool `json:"hidden"`
+
+	DefaultReasoningEffort    string                  `json:"defaultReasoningEffort"`
+	SupportedReasoningEfforts []ReasoningEffortOption `json:"supportedReasoningEfforts"`
+}
+
+// ReasoningEffortOption is one effort level a model advertises.
+type ReasoningEffortOption struct {
+	ReasoningEffort string `json:"reasoningEffort"`
+	Description     string `json:"description"`
+}
+
+// modelPageLimit is how many models to ask for per call. The catalog is small
+// enough that this is one round trip in practice; the cursor loop exists because
+// the protocol paginates and a silently truncated list would be worse than a
+// second call.
+const modelPageLimit = 100
+
+// modelPageCap bounds the cursor loop, so a server that kept handing back a
+// cursor could not spin here forever.
+const modelPageCap = 20
+
+// ListModels returns codex's model catalog.
+//
+// Hidden models are included: codex hides them from its own picker, but a user
+// who has named one in their configuration should still see q recognize it
+// rather than report it as unknown.
+func (p *Proxy) ListModels(ctx context.Context) ([]Model, error) {
+	var (
+		out    []Model
+		cursor string
+	)
+
+	for range modelPageCap {
+		params := struct {
+			IncludeHidden bool   `json:"includeHidden"`
+			Limit         int    `json:"limit"`
+			Cursor        string `json:"cursor,omitempty"`
+		}{
+			IncludeHidden: true,
+			Limit:         modelPageLimit,
+			Cursor:        cursor,
+		}
+
+		var result struct {
+			Data       []Model `json:"data"`
+			NextCursor string  `json:"nextCursor"`
+		}
+
+		if err := p.client.Request(ctx, "model/list", params, &result); err != nil {
+			return nil, err
+		}
+
+		out = append(out, result.Data...)
+
+		if result.NextCursor == "" || len(result.Data) == 0 {
+			return out, nil
+		}
+
+		cursor = result.NextCursor
+	}
+
+	return out, nil
 }
 
 // Close stops the local proxy process. It does not stop the managed app-server.
