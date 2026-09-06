@@ -103,17 +103,30 @@ func detailLine(ms mission.Mission, width int) string {
 	return styles.CardDetail.Render(styles.Truncate(firstLine(ms.Prompt), width))
 }
 
-// metaLine is the card's third line: tool, cost, mode, repo count, age, and badges.
+// metaLine is the card's third line: tool, cost, model, mode, repo count, age,
+// and badges.
 //
-// Cost sits second rather than last because the line is truncated to the card's
-// width and a card may be as narrow as [MinCardWidth]. Everything after it —
-// age, repo count, badges — is recoverable by opening the mission; a running
-// total is the one thing on this line that exists only here.
+// Cost sits second, ahead of the model that explains it, because the line is
+// truncated to the card's width and a lane can be narrow enough that only one
+// of them survives. Everything after it — the model, the repo count, the age,
+// the badges — is a property you chose or can recover by opening the mission. A
+// running total is the one thing on this line that exists only here.
 func metaLine(ms mission.Mission, width int) string {
 	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
 
 	if cost := missionCost(ms); cost != "" {
 		parts = append(parts, cost)
+	}
+
+	// The effort rides on the model rather than taking a slot of its own, because
+	// a card is narrow and the two only ever mean anything together.
+	if ms.Model != "" {
+		model := ms.Model
+		if ms.Effort != "" {
+			model += "/" + ms.Effort
+		}
+
+		parts = append(parts, model)
 	}
 
 	if ms.PlanMode {

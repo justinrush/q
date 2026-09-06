@@ -63,8 +63,11 @@ var codexPricing = Pricing{Models: map[string]ModelPrice{"gpt-test": {Input: 10,
 
 func TestCodexMeterTokens(t *testing.T) {
 	cases := []struct {
-		name         string
-		lines        []string
+		name string
+		// lines are the rollout file.
+		lines []string
+		// missionModel is the model the mission was launched with, if any.
+		missionModel string
 		wantMeasured bool
 		wantModel    string
 		wantTokens   mission.ModelTokens
@@ -125,6 +128,27 @@ func TestCodexMeterTokens(t *testing.T) {
 			wantTokens:   mission.ModelTokens{Input: 100, Output: 10},
 		},
 		{
+			name: "a rollout that names no model falls back to the mission's own choice",
+			lines: []string{
+				tokenRecord("t1", "resp-1", 100, 0, 0, 10),
+			},
+			missionModel: "gpt-test",
+			wantMeasured: true,
+			wantModel:    "gpt-test",
+			wantTokens:   mission.ModelTokens{Input: 100, Output: 10},
+		},
+		{
+			name: "the rollout outranks the mission, since it records what actually ran",
+			lines: []string{
+				turnContext("gpt-test"),
+				tokenRecord("t1", "resp-1", 100, 0, 0, 10),
+			},
+			missionModel: "something-else",
+			wantMeasured: true,
+			wantModel:    "gpt-test",
+			wantTokens:   mission.ModelTokens{Input: 100, Output: 10},
+		},
+		{
 			name: "the flatter model nesting older rollouts used is still read",
 			lines: []string{
 				`{"timestamp":"2026-09-05T14:00:00Z","type":"turn_context","payload":` +
@@ -177,7 +201,7 @@ func TestCodexMeterTokens(t *testing.T) {
 			path := writeRollout(t, tc.lines...)
 
 			got, measured, err := NewCodex(codexPricing).Meter(
-				mission.Mission{TranscriptPath: path},
+				mission.Mission{TranscriptPath: path, Model: tc.missionModel},
 			)
 			if err != nil {
 				t.Fatalf("Meter() error = %v", err)

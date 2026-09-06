@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,25 +21,55 @@ func (a *App) fetchSnapshot() tea.Cmd {
 	}
 }
 
+// fetchModels reads the model catalog from the daemon.
+//
+// A failure is silent rather than a toast: the catalog is advisory, the board
+// works without it, and an agent q cannot reach is already reported by
+// q doctor. Nagging about it every time a form opens would be noise.
+func (a *App) fetchModels() tea.Cmd {
+	return func() tea.Msg {
+		models, err := a.client.Models(a.ctx())
+		if err != nil {
+			return modelsMsg{}
+		}
+
+		return modelsMsg{Models: models}
+	}
+}
+
 // startStream opens the event stream in a goroutine that forwards frames onto the
 // model's channel.
 //
 // The goroutine owns the HTTP response body; the model only ever receives from the
 // channel, which is what keeps bubbletea's single-operationed update loop intact.
+//
+// Each stream is numbered and the previous one is canceled, because the reader this
+// replaces may be blocked on a half-open socket that will never error. Without
+// both, a reconnect would leave a goroutine behind every time and the dead
+// connection would still be able to report itself down.
 func (a *App) startStream() tea.Cmd {
+	if a.stopStream != nil {
+		a.stopStream()
+	}
+
+	ctx, cancel := context.WithCancel(a.ctx())
+	a.stopStream = cancel
+	a.stream++
+	stream := a.stream
+
 	return func() tea.Msg {
 		go func() {
 			events := make(chan api.Event, 32)
 			done := make(chan error, 1)
 
-			go func() { done <- a.client.Stream(a.ctx(), events) }()
+			go func() { done <- a.client.Stream(ctx, events) }()
 
 			for {
 				select {
 				case event := <-events:
-					a.events <- streamEventMsg{Event: event}
+					a.events <- streamEventMsg{Stream: stream, Event: event}
 				case err := <-done:
-					a.events <- streamDownMsg{Err: err}
+					a.events <- streamDownMsg{Stream: stream, Err: err}
 
 					return
 				}
@@ -179,6 +210,8 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			Name:        msg.Name,
 			Prompt:      msg.Prompt,
 			Tool:        msg.Tool,
+			Model:       msg.Model,
+			Effort:      msg.Effort,
 			PlanMode:    msg.PlanMode,
 			ExtraRepos:  msg.ExtraRepos,
 		})
@@ -208,10 +241,12 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 			OperationID: &msg.OperationID,
 		}
 
-		// Tool and plan mode are immutable after launch, so they are only sent for a
-		// mission that has not started.
+		// Tool, model, effort, and plan mode are immutable after launch, so they are
+		// only sent for a mission that has not started.
 		if ms, ok := a.snapshot.Mission(msg.ID); ok && !ms.Launched() {
 			req.Tool = &msg.Tool
+			req.Model = &msg.Model
+			req.Effort = &msg.Effort
 			req.PlanMode = &msg.PlanMode
 		}
 

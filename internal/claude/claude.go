@@ -142,6 +142,18 @@ func (a *Agent) Args(inv mission.Invocation) []string {
 	}
 
 	args = append(args, "--permission-mode", mode)
+
+	// Both are omitted entirely when unset, so a mission that names no model runs
+	// on whatever claude's own configuration says, exactly as it did before
+	// missions could carry one.
+	if inv.Model != "" {
+		args = append(args, "--model", mission.ShellQuote(inv.Model))
+	}
+
+	if inv.Effort != "" {
+		args = append(args, "--effort", mission.ShellQuote(inv.Effort))
+	}
+
 	args = append(args, "--settings", mission.ArtifactArg(SettingsFile))
 	args = append(args, mission.ShellQuoteAll(a.args)...)
 

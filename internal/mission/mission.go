@@ -68,6 +68,14 @@ type Mission struct {
 	Tool        Tool        `json:"tool"`
 	Prompt      string      `json:"prompt"`
 	PlanMode    bool        `json:"planMode"`
+	// Model is the agent model this mission runs on, named as that agent's own
+	// CLI names it. Empty means q passes no model flag and the agent uses
+	// whatever it would have used anyway, which is what a mission created before
+	// model selection existed still does.
+	Model string `json:"model,omitempty"`
+	// Effort is the reasoning effort level, for a model that accepts one. Empty
+	// means q passes no effort flag.
+	Effort string `json:"effort,omitempty"`
 	// ExtraRepos are repositories this mission adds to the repositories inherited
 	// from its operation. They are editable until the mission starts.
 	ExtraRepos []Repo `json:"extraRepos,omitempty"`

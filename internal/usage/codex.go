@@ -116,7 +116,15 @@ func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 		return mission.Metering{Limit: counts.limit}, false, nil
 	}
 
+	// The rollout names the model per turn, but an ephemeral or truncated one
+	// may never have. The mission's own choice is the next best answer — it is
+	// what q put on the command line — and only when there is neither does the
+	// usage get a name no price can match.
 	model := counts.model
+	if model == "" {
+		model = ms.Model
+	}
+
 	if model == "" {
 		model = unknownCodexModel
 	}

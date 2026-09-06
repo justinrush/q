@@ -56,6 +56,11 @@ type Invocation struct {
 	// PlanMode starts the agent in a plan-then-approve flow, for an agent that
 	// supports one.
 	PlanMode bool
+	// Model names the model to run on, as the agent's own CLI names it. Empty
+	// means emit no model flag, leaving the agent its own default.
+	Model string
+	// Effort is the reasoning effort level. Empty means emit no effort flag.
+	Effort string
 	// DisplayName is shown in the agent's own UI.
 	DisplayName string
 	// Worktrees are the absolute worktree paths the agent may touch.

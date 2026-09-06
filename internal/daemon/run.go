@@ -52,6 +52,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	go svc.RunRuntimeWatchers(ctx)
 
+	// The model catalog is learned in the background: the first probe starts each
+	// agent, and nothing that opens a board should wait on that.
+	go svc.RunModelRefresher(ctx)
+
 	// Hook events are reduced on a single goroutine, so the HTTP handler can answer
 	// instantly and no lock is held while other work happens.
 	queue := newHookQueue()

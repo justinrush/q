@@ -53,6 +53,11 @@ type Options struct {
 	Repos git.ScanOptions
 	// DefaultTool is the agent a new mission starts with.
 	DefaultTool mission.Tool
+	// Models is what each agent says it can run. It arrives from the daemon
+	// rather than from configuration, and is empty until the first fetch lands,
+	// which the form renders as "the agent's own default" rather than as an
+	// agent that offers nothing.
+	Models map[mission.Tool]mission.ModelSet
 }
 
 // withDefaults fills in anything cmd/q left unset.
@@ -83,10 +88,19 @@ type App struct {
 
 	// events carries frames from the SSE reader goroutine.
 	events chan tea.Msg
+	// stream identifies the reader goroutine whose frames are current. A
+	// superseded goroutine's frames are dropped, so the connection a reconnect
+	// replaced cannot report itself down and undo the one that replaced it.
+	stream int
+	// stopStream unwinds the previous reader goroutine when a new one starts.
+	stopStream context.CancelFunc
 	// lastEvent is when the stream last said anything, heartbeats included.
 	lastEvent time.Time
 	// streamDown reports that the event stream is not currently connected.
 	streamDown bool
+	// downSince is when the stream went down, reported in the header so a board
+	// that has quietly stopped updating cannot be mistaken for a quiet one.
+	downSince time.Time
 	// streamErr is the last reason the stream ended, so a repeated failure is not
 	// reported repeatedly.
 	streamErr string
@@ -119,6 +133,7 @@ func New(c *api.Client, opts Options) *App {
 func (a *App) Init() tea.Cmd {
 	return tea.Batch(
 		a.fetchSnapshot(),
+		a.fetchModels(),
 		a.startStream(),
 		a.listen(),
 		tea.Tick(tickInterval, func(time.Time) tea.Msg { return tickMsg{} }),
@@ -131,10 +146,21 @@ type (
 	tickMsg struct{}
 	// snapshotMsg carries a full state fetch.
 	snapshotMsg struct{ Snapshot mission.Snapshot }
+	// modelsMsg carries the model catalog. It is fetched separately from the
+	// snapshot because it changes on the order of hours rather than seconds.
+	modelsMsg struct {
+		Models map[mission.Tool]mission.ModelSet
+	}
 	// streamEventMsg carries one decoded event from the daemon.
-	streamEventMsg struct{ Event api.Event }
+	streamEventMsg struct {
+		Stream int
+		Event  api.Event
+	}
 	// streamDownMsg reports that the event stream ended.
-	streamDownMsg struct{ Err error }
+	streamDownMsg struct {
+		Stream int
+		Err    error
+	}
 	// toastMsg shows a transient message.
 	toastMsg struct {
 		text string
@@ -158,10 +184,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleKey(m)
 	case snapshotMsg:
 		return a, a.applySnapshot(m.Snapshot)
+	case modelsMsg:
+		return a, a.applyModels(m.Models)
 	case streamEventMsg:
 		return a, a.handleStreamEvent(m)
 	case streamDownMsg:
 		return a, a.handleStreamDown(m)
+	case reconnectMsg:
+		return a, a.handleReconnect()
 	case tickMsg:
 		return a, a.handleTick()
 	case toastMsg:
@@ -254,13 +284,20 @@ func (a *App) applySnapshot(snap mission.Snapshot) tea.Cmd {
 // handleStreamEvent applies one event and re-arms the listener.
 //
 // Re-arming on every event is the standard way to model a channel as a bubbletea
-// subscription: each received message schedules the next receive.
+// subscription: each received message schedules the next receive. Exactly one
+// receive is outstanding at any moment, which is why every handler of a frame from
+// the channel re-arms exactly once and nothing else ever does.
 func (a *App) handleStreamEvent(msg streamEventMsg) tea.Cmd {
+	cmds := []tea.Cmd{a.listen()}
+
+	if msg.Stream != a.stream {
+		return tea.Batch(cmds...)
+	}
+
 	a.lastEvent = time.Now()
 	a.streamDown = false
+	a.downSince = time.Time{}
 	a.reconnectIn = 500 * time.Millisecond
-
-	cmds := []tea.Cmd{a.listen()}
 
 	if cmd := a.applyEvent(msg.Event); cmd != nil {
 		cmds = append(cmds, cmd)
@@ -275,7 +312,19 @@ func (a *App) handleStreamEvent(msg streamEventMsg) tea.Cmd {
 // than exceptional; it is only worth telling the user about if it keeps happening,
 // which the backoff makes visible in the header.
 func (a *App) handleStreamDown(msg streamDownMsg) tea.Cmd {
+	cmds := []tea.Cmd{a.listen()}
+
+	// The stream this reports is one a reconnect already replaced, so its death is
+	// old news and scheduling another attempt would double the retry rate.
+	if msg.Stream != a.stream {
+		return tea.Batch(cmds...)
+	}
+
 	a.streamDown = true
+
+	if a.downSince.IsZero() {
+		a.downSince = time.Now()
+	}
 
 	if msg.Err != nil {
 		log := a.streamErr
@@ -293,11 +342,40 @@ func (a *App) handleStreamDown(msg streamDownMsg) tea.Cmd {
 		a.reconnectIn *= 2
 	}
 
-	return tea.Tick(delay, func(time.Time) tea.Msg { return reconnectMsg{} })
+	cmds = append(cmds, tea.Tick(delay, func(time.Time) tea.Msg { return reconnectMsg{} }))
+
+	return tea.Batch(cmds...)
 }
 
 // reconnectMsg asks for another attempt at the event stream.
 type reconnectMsg struct{}
+
+// handleReconnect re-reads the daemon handle and opens a fresh stream.
+//
+// Re-reading is the point of the exercise. The daemon binds an ephemeral port and
+// mints a new token every time it starts, so a board that retried only the address
+// it was launched with would never reach a restarted daemon; it would sit on a
+// frozen snapshot, showing every card in whatever lane it last heard about, for as
+// long as it stayed open.
+func (a *App) handleReconnect() tea.Cmd {
+	var cmds []tea.Cmd
+
+	switch moved, err := a.client.Refresh(); {
+	case err != nil:
+		// Nothing to do but keep trying: the daemon may be mid-restart, in which
+		// case the handle is briefly absent.
+		a.streamErr = err.Error()
+	case moved:
+		// A new daemon means new state, and the first frame of a stream is a
+		// snapshot anyway; fetching one here means the board is right even if the
+		// stream is refused. The model catalog is fetched for the same reason: a
+		// different daemon may have been started with different agents.
+		a.streamErr = ""
+		cmds = append(cmds, a.fetchSnapshot(), a.fetchModels())
+	}
+
+	return tea.Batch(append(cmds, a.startStream())...)
+}
 
 // handleTick checks stream liveness and keeps relative timestamps honest.
 func (a *App) handleTick() tea.Cmd {
@@ -308,8 +386,10 @@ func (a *App) handleTick() tea.Cmd {
 	}
 
 	// The daemon heartbeats, so prolonged silence means the socket died quietly.
+	// A half-open socket never errors, so nothing else would notice.
 	if !a.streamDown && time.Since(a.lastEvent) > streamSilentAfter {
 		a.streamDown = true
+		a.downSince = time.Now()
 		cmds = append(cmds, a.startStream(), a.fetchSnapshot())
 	}
 
@@ -361,7 +441,7 @@ func (a *App) status() string {
 	var parts []string
 
 	if a.streamDown {
-		parts = append(parts, styles.CardError.Render("● reconnecting"))
+		parts = append(parts, styles.CardError.Render("● reconnecting"+a.downFor()))
 	}
 
 	if label := a.board.FilterLabel(); label != "" && a.active == tabBoard {
@@ -378,6 +458,25 @@ func (a *App) status() string {
 	}
 
 	return strings.Join(parts, "  ")
+}
+
+// downFor renders how long the stream has been down, once that is long enough to
+// mean something.
+//
+// A card's age is drawn from the snapshot, so a board that stopped receiving looks
+// current: every relative timestamp on it keeps ticking. Saying how long the
+// connection has been gone is what tells the human the lanes may be stale.
+func (a *App) downFor() string {
+	if a.downSince.IsZero() {
+		return ""
+	}
+
+	down := time.Since(a.downSince)
+	if down < streamSilentAfter {
+		return ""
+	}
+
+	return " " + shortDuration(down)
 }
 
 // footer renders the contextual help line.
@@ -477,3 +576,22 @@ func (a *App) currentOperationID() mission.OperationID {
 // Requests are short-lived and the client applies its own timeout, so a background
 // context is the right scope here.
 func (a *App) ctx() context.Context { return context.Background() }
+
+// applyModels records the catalog and hands it to an open mission form.
+//
+// A form already on screen is updated in place rather than left with whatever
+// was known when it opened, which is what makes the fetch issued on opening it
+// worth making at all.
+func (a *App) applyModels(models map[mission.Tool]mission.ModelSet) tea.Cmd {
+	if len(models) == 0 {
+		return nil
+	}
+
+	a.opts.Models = models
+
+	if form, ok := a.modal.(*missionForm); ok {
+		form.setModels(models)
+	}
+
+	return nil
+}

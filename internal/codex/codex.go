@@ -169,10 +169,24 @@ func (a *Agent) remoteArgs(inv mission.Invocation) []string {
 // Trust itself is not passed here. codex ignores it as a -c override and reads it from
 // a config file only, so it lives in the profile instead.
 func (a *Agent) commonArgs(inv mission.Invocation) []string {
-	return append([]string{
+	args := []string{
 		"--cd", mission.ShellQuote(inv.MissionDir),
 		"--profile", mission.ShellQuote(a.profile),
-	}, mission.ShellQuoteAll(a.args)...)
+	}
+
+	// The model is a flag while the effort is a -c override, because codex exposes
+	// the first on the command line and keeps the second in configuration only.
+	// Both are layered over the profile, so a mission that names neither still
+	// gets whatever the profile and config.toml resolve to.
+	if inv.Model != "" {
+		args = append(args, "--model", mission.ShellQuote(inv.Model))
+	}
+
+	if inv.Effort != "" {
+		args = append(args, "-c", mission.ShellQuote(keyEffort+"="+inv.Effort))
+	}
+
+	return append(args, mission.ShellQuoteAll(a.args)...)
 }
 
 // resumeArgs resumes a codex session by id.

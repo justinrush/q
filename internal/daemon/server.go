@@ -169,6 +169,9 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
 	mux.HandleFunc("GET /v1/missions/{id}/delete-plan", s.handleDeletePlan)
 
+	mux.HandleFunc("GET /v1/models", s.handleModels)
+	mux.HandleFunc("POST /v1/models/refresh", s.handleRefreshModels)
+
 	mux.HandleFunc("POST /v1/hooks/{tool}/{event}", s.handleHook)
 
 	return s.guard(mux)
@@ -520,6 +523,18 @@ func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleModels serves the catalog as it stands, without probing. A board opening
+// a form must not wait on an agent starting up.
+func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, api.ModelsResponse{Models: s.svc.Models()})
+}
+
+// handleRefreshModels re-asks every agent before answering. It is the explicit,
+// slow path: a probe starts the agent, so nothing takes it automatically.
+func (s *Server) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, api.ModelsResponse{Models: s.svc.RefreshModels(r.Context())})
 }
 
 // handleDeleteMission removes a mission and reclaims what it provisioned.

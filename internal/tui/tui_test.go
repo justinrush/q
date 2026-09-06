@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +11,10 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/tui/keys"
 	"github.com/muesli/termenv"
 )
@@ -1159,6 +1163,387 @@ func TestKeyNameConstantsMatchTheBindings(t *testing.T) {
 	}
 }
 
+// testModels is a catalog shaped like what the daemon serves: claude with an
+// effort-taking default and one model that takes none, codex with neither.
+func testModels() map[mission.Tool]mission.ModelSet {
+	return map[mission.Tool]mission.ModelSet{
+		mission.ToolClaude: {
+			Default: "opus",
+			Options: []mission.ModelOption{
+				{Value: "opus", Label: "Opus", Efforts: []string{"low", "high"}},
+				{Value: "haiku", Label: "Haiku"},
+			},
+		},
+		mission.ToolCodex: {
+			Default:       "gpt-5.1-codex",
+			DefaultEffort: "medium",
+			Options: []mission.ModelOption{
+				{Value: "gpt-5.1-codex", Label: "gpt-5.1-codex", Efforts: []string{"low", "medium"}},
+			},
+		},
+	}
+}
+
+// A new mission starts on the model its agent reports, which is what makes the
+// board agree with what the agent would have done unprompted.
+func TestMissionFormStartsOnTheAgentDefault(t *testing.T) {
+	cases := []struct {
+		name       string
+		tool       mission.Tool
+		wantModel  string
+		wantEffort string
+	}{
+		{name: "claude", tool: mission.ToolClaude, wantModel: "opus"},
+		{
+			name: "codex carries its configured effort too", tool: mission.ToolCodex,
+			wantModel: "gpt-5.1-codex", wantEffort: "medium",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+				"op_1", Options{DefaultTool: tc.tool, Models: testModels()}, nil, time.Time{})
+
+			if form.model != tc.wantModel {
+				t.Errorf("model = %q, want %q", form.model, tc.wantModel)
+			}
+
+			if form.effort != tc.wantEffort {
+				t.Errorf("effort = %q, want %q", form.effort, tc.wantEffort)
+			}
+		})
+	}
+}
+
+// An existing mission keeps what it was given, including a model the catalog no
+// longer lists, because that is what its agent was actually launched with.
+func TestMissionFormKeepsAnExistingModel(t *testing.T) {
+	form := newMissionForm(
+		mission.Mission{ID: "ms_1", Tool: mission.ToolClaude, Model: "retired-model", Effort: "high"},
+		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
+		Options{Models: testModels()}, nil, time.Time{},
+	)
+
+	if form.model != "retired-model" {
+		t.Errorf("model = %q, want the stored one", form.model)
+	}
+}
+
+func TestMissionFormCyclesModelAndEffort(t *testing.T) {
+	cases := []struct {
+		name string
+		// steps are the fields to cycle, in order.
+		steps      []int
+		wantModel  string
+		wantEffort string
+	}{
+		{
+			name:      "cycling the model moves through the agent's list",
+			steps:     []int{fieldMissionModel},
+			wantModel: "haiku",
+		},
+		{
+			name:      "cycling wraps back around",
+			steps:     []int{fieldMissionModel, fieldMissionModel},
+			wantModel: "opus",
+		},
+		{
+			name:       "effort steps off the model's own default",
+			steps:      []int{fieldMissionEffort},
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name:       "effort keeps stepping through the model's levels",
+			steps:      []int{fieldMissionEffort, fieldMissionEffort},
+			wantModel:  "opus",
+			wantEffort: "high",
+		},
+		{
+			name: "an effort is dropped by a model that takes none",
+			// Set an effort, then move to haiku, which reports no effort levels.
+			steps:      []int{fieldMissionEffort, fieldMissionModel},
+			wantModel:  "haiku",
+			wantEffort: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+				"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
+
+			for _, field := range tc.steps {
+				form.focusField(field)
+				form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+			}
+
+			if form.model != tc.wantModel {
+				t.Errorf("model = %q, want %q", form.model, tc.wantModel)
+			}
+
+			if form.effort != tc.wantEffort {
+				t.Errorf("effort = %q, want %q", form.effort, tc.wantEffort)
+			}
+		})
+	}
+}
+
+// Switching agent must re-choose from the new agent's list: an opus on a codex
+// mission would be rejected at launch, in a detached pane.
+func TestMissionFormResetsModelWhenAgentChanges(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
+
+	if form.model != "opus" {
+		t.Fatalf("model = %q, want opus to start", form.model)
+	}
+
+	form.cycleTool(keySpace)
+
+	if form.tool != mission.ToolCodex {
+		t.Fatalf("tool = %q, want codex", form.tool)
+	}
+
+	if form.model != "gpt-5.1-codex" {
+		t.Errorf("model = %q, want codex's own default", form.model)
+	}
+
+	if form.effort != "medium" {
+		t.Errorf("effort = %q, want codex's own default", form.effort)
+	}
+}
+
+// A launched mission's model is fixed, like its tool and plan mode.
+func TestMissionFormFreezesModelAfterLaunch(t *testing.T) {
+	started := time.Now()
+	form := newMissionForm(
+		mission.Mission{
+			ID: "ms_1", Tool: mission.ToolClaude, Model: "opus", Effort: "high",
+			StartedAt: &started,
+		},
+		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
+		Options{Models: testModels()}, nil, time.Time{},
+	)
+
+	form.cycleModel(keySpace)
+	form.cycleEffort(keySpace)
+
+	if form.model != "opus" || form.effort != "high" {
+		t.Errorf("model/effort = %q/%q, want them unchanged", form.model, form.effort)
+	}
+}
+
+// The catalog arrives after the form opens, so a form built before the first
+// fetch must take the default once it lands rather than staying blank.
+func TestMissionFormAdoptsModelsWhenTheyArrive(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude}, nil, time.Time{})
+
+	if form.model != "" {
+		t.Fatalf("model = %q, want it empty before any fetch", form.model)
+	}
+
+	form.setModels(testModels())
+
+	if form.model != "opus" {
+		t.Errorf("model = %q, want the default once the catalog arrives", form.model)
+	}
+}
+
+// A model the human already chose must survive a later fetch.
+func TestMissionFormKeepsChoiceWhenModelsRefresh(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
+
+	form.focusField(fieldMissionModel)
+	form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
+
+	if form.model != "haiku" {
+		t.Fatalf("model = %q, want haiku after cycling", form.model)
+	}
+
+	form.setModels(testModels())
+
+	if form.model != "haiku" {
+		t.Errorf("model = %q, want the chosen model to survive a refresh", form.model)
+	}
+}
+
+func TestMissionFormSubmitsModelAndEffort(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
+	form.name.SetValue("mission")
+	form.prompt.SetValue("do it")
+	form.effort = "high"
+
+	_, cmd := form.submit(false)
+	if cmd == nil {
+		t.Fatal("expected the form to submit")
+	}
+
+	msg, ok := cmd().(submitMissionMsg)
+	if !ok {
+		t.Fatalf("got %T, want submitMissionMsg", cmd())
+	}
+
+	if msg.Model != "opus" || msg.Effort != "high" {
+		t.Errorf("model/effort = %q/%q, want opus/high", msg.Model, msg.Effort)
+	}
+}
+
+// testApp returns a board wired to a client that cannot reach anything, which is
+// all the reconnect path needs: it exercises the model, not the transport.
+func testApp(t *testing.T) *App {
+	t.Helper()
+
+	// Port 9 is discard; nothing listens, so a stream attempt fails immediately
+	// rather than hanging the test.
+	return New(api.NewClient(api.Handle{Addr: "127.0.0.1:9", Token: "t"}), Options{})
+}
+
+// reconnectMsg used to fall through Update into the intent handlers, which dropped
+// it. The backoff timer fired into the void and the board never reconnected: it
+// simply kept rendering the last snapshot it had, with every card frozen in
+// whatever lane it was in when the connection died.
+func TestReconnectOpensAFreshStream(t *testing.T) {
+	a := testApp(t)
+	a.streamDown = true
+
+	before := a.stream
+
+	if _, cmd := a.Update(reconnectMsg{}); cmd == nil {
+		t.Fatal("reconnectMsg produced no command; it is being dropped")
+	}
+
+	if a.stream == before {
+		t.Errorf("stream = %d, want a new one after %d", a.stream, before)
+	}
+}
+
+// A reconnect has to re-read daemon.json. The daemon binds an ephemeral port and
+// mints a new token each start, so retrying only the address the board launched
+// with can never reach a restarted daemon.
+func TestReconnectPicksUpARestartedDaemon(t *testing.T) {
+	root := t.TempDir()
+	dirs := paths.Dirs{Data: root, State: root, Config: root}
+
+	if err := api.WriteHandle(dirs.DaemonFile(), api.Handle{
+		PID: os.Getpid(), Addr: "127.0.0.1:9", Token: "first",
+	}); err != nil {
+		t.Fatalf("WriteHandle: %v", err)
+	}
+
+	c, err := api.OpenClient(dirs)
+	if err != nil {
+		t.Fatalf("OpenClient: %v", err)
+	}
+
+	a := New(c, Options{})
+	a.streamDown = true
+
+	// The daemon restarts: same file, new port, new token.
+	if err := api.WriteHandle(dirs.DaemonFile(), api.Handle{
+		PID: os.Getpid(), Addr: "127.0.0.1:10", Token: "second",
+	}); err != nil {
+		t.Fatalf("WriteHandle: %v", err)
+	}
+
+	a.Update(reconnectMsg{})
+
+	if got := a.client.Handle(); got.Addr != "127.0.0.1:10" || got.Token != "second" {
+		t.Errorf("handle = %s/%s, want 127.0.0.1:10/second", got.Addr, got.Token)
+	}
+}
+
+// Only the stream the board is actually listening to may drive the retry clock.
+// A reader a reconnect already replaced reports itself down as it unwinds, and
+// acting on that would double the retry rate and undo the connection that
+// replaced it.
+func TestStreamDownIgnoresASupersededStream(t *testing.T) {
+	cases := []struct {
+		name string
+		// stream is the generation the message claims to come from.
+		stream      int
+		wantDown    bool
+		wantBackoff time.Duration
+	}{
+		{
+			name:        "the live stream going down starts the retry clock",
+			stream:      2,
+			wantDown:    true,
+			wantBackoff: time.Second,
+		},
+		{
+			name:        "a replaced stream unwinding is old news",
+			stream:      1,
+			wantDown:    false,
+			wantBackoff: 500 * time.Millisecond,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			a.stream = 2
+
+			a.Update(streamDownMsg{Stream: tc.stream, Err: errors.New("connection refused")})
+
+			if a.streamDown != tc.wantDown {
+				t.Errorf("streamDown = %v, want %v", a.streamDown, tc.wantDown)
+			}
+
+			if a.reconnectIn != tc.wantBackoff {
+				t.Errorf("reconnectIn = %v, want %v", a.reconnectIn, tc.wantBackoff)
+			}
+		})
+	}
+}
+
+// Every relative timestamp on a disconnected board keeps ticking, so a board that
+// has stopped receiving looks exactly like one where nothing is happening. How long
+// it has been out is the only thing that tells the two apart.
+func TestHeaderReportsHowLongTheStreamHasBeenDown(t *testing.T) {
+	cases := []struct {
+		name      string
+		down      bool
+		downFor   time.Duration
+		wantEmpty bool
+		want      string
+	}{
+		{name: "a live stream says nothing", down: false, wantEmpty: true},
+		{name: "a blip is not worth a number", down: true, downFor: 3 * time.Second, want: "reconnecting"},
+		{name: "a long outage is reported", down: true, downFor: 3 * time.Minute, want: "reconnecting 3m"},
+		{name: "so is a very long one", down: true, downFor: 26 * time.Hour, want: "reconnecting 1d"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := testApp(t)
+			a.streamDown = tc.down
+
+			if tc.down {
+				a.downSince = time.Now().Add(-tc.downFor)
+			}
+
+			status := a.status()
+
+			if tc.wantEmpty {
+				if strings.Contains(status, "reconnecting") {
+					t.Errorf("status = %q, want no reconnecting marker", status)
+				}
+
+				return
+			}
+
+			if !strings.Contains(status, tc.want) {
+				t.Errorf("status = %q, want it to contain %q", status, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatUSD(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1240,7 +1625,8 @@ func TestRenderCardShowsCost(t *testing.T) {
 }
 
 // The meta line is truncated to the card's width, so cost is placed ahead of
-// the details that can be recovered by opening the mission.
+// the model that explains it and the details that can be recovered by opening
+// the mission.
 //
 // The width tested is the narrowest a lane is ever actually dealt: a board
 // below focusModeBelow shows a single lane spanning the whole terminal, so the
@@ -1252,6 +1638,9 @@ func TestRenderCardKeepsCostOnANarrowCard(t *testing.T) {
 	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
 	ms.PlanMode = true
 	ms.Badges = []mission.Badge{{Kind: mission.BadgeStale, Detail: "idle"}}
+	// The model shares this line and is the segment cost has to outrank, so it
+	// is set here rather than left out of the case that tests the ordering.
+	ms.Model, ms.Effort = "opus", "high"
 	ms.Usage = mission.Usage{
 		PerModel: map[string]mission.ModelTokens{"claude-opus-5": {Output: 1000}},
 		USD:      1.23,
