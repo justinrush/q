@@ -18,6 +18,8 @@ type submitMissionMsg struct {
 	Name        string
 	Prompt      string
 	Tool        mission.Tool
+	Model       string
+	Effort      string
 	PlanMode    bool
 	OperationID mission.OperationID
 	ExtraRepos  []mission.Repo
@@ -44,10 +46,16 @@ type missionForm struct {
 	repos  *repoField
 
 	tool         mission.Tool
+	model        string
+	effort       string
 	planMode     bool
 	operationIdx int
 	field        int
 	err          string
+	// models is what each agent offers, as the daemon last learned it. It can be
+	// empty — no daemon has reached the agent yet — in which case the form offers
+	// the agent's own default and says so.
+	models map[mission.Tool]mission.ModelSet
 	// launched is true when editing an already-started mission, which fixes the tool
 	// and plan mode because both are baked into the running agent's arguments.
 	launched bool
@@ -60,6 +68,8 @@ const (
 	fieldMissionName = iota
 	fieldMissionOperation
 	fieldMissionTool
+	fieldMissionModel
+	fieldMissionEffort
 	fieldMissionPlan
 	fieldMissionRepos
 	fieldMissionPrompt
@@ -75,13 +85,23 @@ func newMissionForm(ms mission.Mission, operations []mission.Operation, defaultO
 		prompt:      newTextArea(ms.Prompt, true),
 		repos:       newRepoField(ms.ExtraRepos, opts.Repos),
 		tool:        ms.Tool,
+		model:       ms.Model,
+		effort:      ms.Effort,
 		planMode:    ms.PlanMode,
 		launched:    ms.Launched(),
 		reposLocked: ms.Status != "" && ms.Status != mission.StatusBriefing,
+		models:      opts.Models,
 	}
 
 	if form.tool == "" {
 		form.tool = opts.DefaultTool
+	}
+
+	// A mission being created has no model yet, so it starts on whatever its
+	// agent reports as its own. An existing one keeps what it was given, even a
+	// model the current catalog no longer lists.
+	if ms.ID == "" {
+		form.resetModel()
 	}
 
 	wanted := ms.OperationID
@@ -143,6 +163,10 @@ func (f *missionForm) updateField(msg tea.KeyMsg) (modal, tea.Cmd) {
 		f.cycleOperation(msg.String())
 	case fieldMissionTool:
 		f.cycleTool(msg.String())
+	case fieldMissionModel:
+		f.cycleModel(msg.String())
+	case fieldMissionEffort:
+		f.cycleEffort(msg.String())
 	case fieldMissionPlan:
 		f.togglePlan(msg.String())
 	case fieldMissionRepos:
@@ -199,9 +223,84 @@ func (f *missionForm) cycleTool(keyName string) {
 		return
 	}
 
-	switch keyName {
-	case keyLeft, keyVimLeft, keyRight, keyVimRight, keyUp, keyVimUp, keyDown, keyVimDown, keySpace:
+	// The direction is discarded: with two agents, forward and backward are the
+	// same move, and Tool.Next is the rotation the board already uses.
+	if _, ok := cycleDelta(keyName); ok {
 		f.tool = f.tool.Next()
+
+		// The models one agent offers mean nothing to another, so the choice is
+		// re-made from the new agent's own list rather than carried across.
+		f.resetModel()
+	}
+}
+
+// cycleModel changes the model.
+func (f *missionForm) cycleModel(keyName string) {
+	if f.launched {
+		return
+	}
+
+	delta, ok := cycleDelta(keyName)
+	if !ok {
+		return
+	}
+
+	f.model = f.modelSet().NextModel(f.model, delta)
+	f.clampEffort()
+}
+
+// cycleEffort changes the reasoning effort.
+func (f *missionForm) cycleEffort(keyName string) {
+	if f.launched || !f.modelSet().SupportsEffort(f.model) {
+		return
+	}
+
+	if delta, ok := cycleDelta(keyName); ok {
+		f.effort = f.modelSet().NextEffort(f.model, f.effort, delta)
+	}
+}
+
+// cycleDelta reads a keypress as a step through a list, or reports that it is
+// not one.
+func cycleDelta(keyName string) (int, bool) {
+	switch keyName {
+	case keyLeft, keyVimLeft, keyUp, keyVimUp:
+		return -1, true
+	case keyRight, keyVimRight, keyDown, keyVimDown, keySpace:
+		return 1, true
+	}
+
+	return 0, false
+}
+
+// modelSet is what the selected agent offers.
+func (f *missionForm) modelSet() mission.ModelSet { return f.models[f.tool] }
+
+// setModels replaces the catalog behind an open form, filling in a choice the
+// form could not make when it opened because nothing had been fetched yet.
+func (f *missionForm) setModels(models map[mission.Tool]mission.ModelSet) {
+	f.models = models
+
+	if f.model == "" && !f.launched {
+		f.resetModel()
+	}
+
+	f.clampEffort()
+}
+
+// resetModel takes the selected agent's own default.
+func (f *missionForm) resetModel() {
+	set := f.modelSet()
+	f.model = set.Default
+	f.effort = set.DefaultEffort
+	f.clampEffort()
+}
+
+// clampEffort drops an effort the selected model does not accept, so switching
+// to a model with no effort levels cannot leave a stale one attached to it.
+func (f *missionForm) clampEffort() {
+	if !f.modelSet().ValidEffort(f.model, f.effort) {
+		f.effort = ""
 	}
 }
 
@@ -254,6 +353,8 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 		Name:        name,
 		Prompt:      f.prompt.Value(),
 		Tool:        f.tool,
+		Model:       f.model,
+		Effort:      f.effort,
 		PlanMode:    f.planMode && f.tool.SupportsPlanMode(),
 		OperationID: f.operations[f.operationIdx].ID,
 		ExtraRepos:  parseRepoLines(f.repos.Value()),
@@ -278,6 +379,8 @@ func (f *missionForm) View(width, height int) string {
 		"",
 		f.label("Operation", fieldMissionOperation) + "  " + f.operationValue(),
 		f.label("Agent", fieldMissionTool) + "   " + f.toolValue(),
+		f.label("Model", fieldMissionModel) + "   " + f.modelValue(),
+		f.label("Effort", fieldMissionEffort) + "  " + f.effortValue(),
 		f.label("Plan mode", fieldMissionPlan) + " " + f.planValue(),
 		"",
 		f.label("Additional repos", fieldMissionRepos),
@@ -338,6 +441,93 @@ func (f *missionForm) toolValue() string {
 	}
 
 	return value
+}
+
+// modelValue renders the model choice, with the agent's own description beside it.
+func (f *missionForm) modelValue() string {
+	set := f.modelSet()
+
+	if f.model == "" {
+		if len(set.Options) == 0 {
+			return styles.Disabled.Render("the agent's own default") +
+				styles.CardDetail.Render("  "+f.catalogHint())
+		}
+
+		return styles.Disabled.Render("the agent's own default")
+	}
+
+	value := f.model
+
+	if f.launched {
+		return value + styles.CardDetail.Render("  (fixed once launched)")
+	}
+
+	var notes []string
+
+	if f.model == set.Default {
+		notes = append(notes, "default")
+	}
+
+	if opt, ok := set.Option(f.model); ok && opt.Detail != "" {
+		notes = append(notes, opt.Detail)
+	} else if !ok {
+		// A model the catalog does not list is still launched as written, so the
+		// form says it is unrecognized rather than quietly correcting it.
+		notes = append(notes, "not in "+string(f.tool)+"'s list")
+	}
+
+	if len(notes) == 0 {
+		return value
+	}
+
+	return value + styles.CardDetail.Render("  "+strings.Join(notes, " · "))
+}
+
+// catalogHint explains an empty model list, which is a reachability problem
+// rather than an agent that offers nothing.
+func (f *missionForm) catalogHint() string {
+	if f.modelSet().Err != "" {
+		return string(f.tool) + " could not be asked; run q doctor"
+	}
+
+	return string(f.tool) + " has not been asked yet"
+}
+
+// effortValue renders the effort choice, explaining when it is unavailable.
+func (f *missionForm) effortValue() string {
+	set := f.modelSet()
+
+	if !set.SupportsEffort(f.model) {
+		return styles.Disabled.Render("unavailable") +
+			styles.CardDetail.Render("  "+f.effortHint(set))
+	}
+
+	if f.effort == "" {
+		return styles.Disabled.Render("the model's own default")
+	}
+
+	value := f.effort
+	if f.launched {
+		return value + styles.CardDetail.Render("  (fixed once launched)")
+	}
+
+	return value
+}
+
+// effortHint explains why no effort can be chosen.
+//
+// "this model takes none" and "q could not ask" are different facts and the
+// difference matters: the first is settled, the second is a board that will
+// answer differently once the agent is reachable.
+func (f *missionForm) effortHint(set mission.ModelSet) string {
+	switch {
+	case f.model == "":
+		return "pick a model first"
+	case set.Err != "":
+		return string(f.tool) + " could not be asked which efforts it takes"
+	default:
+		return "this model takes no effort setting"
+	}
 }
 
 // planValue renders the plan-mode choice, explaining when it is unavailable.

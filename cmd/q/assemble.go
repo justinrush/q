@@ -47,6 +47,7 @@ func assembleService(
 		daemon.WithLogger(logger),
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
+		daemon.WithModelRefresh(s.Agents.ModelRefresh),
 	}
 
 	tools, err := requiredTools(s)
@@ -73,6 +74,10 @@ func assembleService(
 	launchOpts := []launch.Option{launch.WithLogger(logger)}
 	for _, agent := range agentsFor(s) {
 		launchOpts = append(launchOpts, launch.WithAgent(agent))
+	}
+
+	for _, prober := range probersFor(s, run, version) {
+		opts = append(opts, daemon.WithProber(prober))
 	}
 
 	launcher := launch.New(dirs, workspace, tmux, launchOpts...)
@@ -121,6 +126,35 @@ func agentsFor(s settings) []mission.Agent {
 	}
 
 	return agents
+}
+
+// probersFor builds a model prober for every agent this machine has.
+//
+// The two are asked differently, and the difference is not incidental. claude
+// answers a control request with its own model list, so its prober runs the
+// binary. codex has no interface q can ask, so its prober reads the
+// configuration file codex documents. An agent whose binary is missing gets no
+// prober at all, which leaves its models unknown rather than guessed at.
+func probersFor(s settings, run runner.OS, version string) []mission.ModelProber {
+	var probers []mission.ModelProber
+
+	if bin, err := resolveTool(s, toolClaude); err == nil {
+		probers = append(probers, withOverrides(
+			claude.NewProber(bin, run, claude.ProberOptions{}), s.Agents.Claude))
+	}
+
+	if bin, err := resolveTool(s, toolCodex); err == nil {
+		probers = append(probers, withOverrides(codex.NewProber(codex.ProberOptions{
+			Bin:       bin,
+			Version:   version,
+			Run:       run,
+			ConfigDir: s.Agents.Codex.ConfigDir,
+			Profile:   s.Agents.Codex.Profile,
+			Models:    s.Agents.Codex.Models,
+		}), s.Agents.Codex.agentSettings))
+	}
+
+	return probers
 }
 
 // requiredTools resolves everything the configuration cannot start without.

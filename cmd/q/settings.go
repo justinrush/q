@@ -4,6 +4,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // settings is the complete set of resolved options.
@@ -50,6 +51,9 @@ type agentsSettings struct {
 	Default string
 	Claude  agentSettings
 	Codex   codexSettings
+	// ModelRefresh is how often the daemon re-asks each agent which models it
+	// offers. Zero means the daemon's own default.
+	ModelRefresh time.Duration
 }
 
 // agentSettings configures one coding agent.
@@ -58,6 +62,15 @@ type agentSettings struct {
 	Bin string
 	// Args are extra arguments appended to every invocation, before the prompt.
 	Args []string
+	// Model overrides the default q discovers by asking the agent. It exists for
+	// a user who wants q missions on a different model from their own interactive
+	// sessions, and as the escape hatch when discovery is wrong.
+	Model string
+	// Effort overrides the discovered default reasoning effort.
+	Effort string
+	// Models replaces the model list offered on the board, for an agent q cannot
+	// ask. It is ignored for an agent that answers with its own list.
+	Models []string
 }
 
 // codexSettings adds the settings that only apply to codex.

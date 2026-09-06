@@ -107,6 +107,17 @@ func detailLine(ms mission.Mission, width int) string {
 func metaLine(ms mission.Mission, width int) string {
 	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
 
+	// The effort rides on the model rather than taking a slot of its own, because
+	// a card is narrow and the two only ever mean anything together.
+	if ms.Model != "" {
+		model := ms.Model
+		if ms.Effort != "" {
+			model += "/" + ms.Effort
+		}
+
+		parts = append(parts, model)
+	}
+
 	if ms.PlanMode {
 		parts = append(parts, "plan")
 	}

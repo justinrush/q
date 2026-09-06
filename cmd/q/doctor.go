@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/spf13/cobra"
@@ -188,6 +189,52 @@ func reportTools(ctx context.Context, rep *report) {
 	}
 
 	rep.line("")
+	reportModels(ctx, rep)
+}
+
+// reportModels asks each agent what it offers, right here rather than through
+// the daemon.
+//
+// Going direct is the point: q doctor exists to show what this machine can
+// reach, and a daemon that started hours ago may be serving a cached answer, or
+// may not be running at all. A disagreement between this and `q models` is
+// itself the diagnosis.
+func reportModels(ctx context.Context, rep *report) {
+	rep.line("models")
+
+	probers := probersFor(cfg, runner.OS{}, semanticVersion())
+	if len(probers) == 0 {
+		rep.line("  no agent to ask")
+		rep.line("")
+
+		return
+	}
+
+	for _, prober := range probers {
+		set, err := prober.Probe(ctx)
+		if err != nil {
+			rep.row("  %s	UNAVAILABLE	%v", prober.Tool(), err)
+
+			continue
+		}
+
+		rep.row("  %s	%s	%d available", prober.Tool(), defaultLabel(set), len(set.Options))
+	}
+
+	rep.line("")
+}
+
+// defaultLabel names the model a new mission on this agent would get.
+func defaultLabel(set mission.ModelSet) string {
+	if set.Default == "" {
+		return "(the agent's own default)"
+	}
+
+	if set.DefaultEffort != "" {
+		return set.Default + "/" + set.DefaultEffort
+	}
+
+	return set.Default
 }
 
 // reportCodexAppServer verifies the two subcommands Q needs for structured

@@ -12,13 +12,13 @@ agents work.
 ```
 q  Board   Operations
 
- BRIEFING 1                   ACTIVE 0          AWAITING ORDERS 1             DEBRIEF 1               CLOSED 1
-╭────────────────────────────╮ —               ╭───────────────────────────╮ ╭─────────────────────╮   old-cleanup
-│ ◐ discussions-endpoint     │                 │ ⏸ Bash(rm -rf build)      │ │ ○ terraform-wiring  │   z to expand
-│ Add the endpoint.          │                 │ Audit the pipeline.       │ │ Wired the module.   │
-│ ◆ claude · plan · 2r · 4m  │                 │ ◇ codex · 3r · 22m        │ │ ◆ claude · 1r       │
-╰────────────────────────────╯                 ╰───────────────────────────╯ ╰─────────────────────╯
- nebula-migration                               discussions-api               discussions-api
+ BRIEFING 1                            ACTIVE 0    AWAITING ORDERS 1                      DEBRIEF 1                  CLOSED 1
+ ╭──────────────────────────────────╮  —           ╭───────────────────────────────────╮  ╭───────────────────────╮   old-cleanup
+ │ ◐ discussions-endpoint           │              │ ⏸ Bash(rm -rf build)              │  │ ○ terraform-wiring    │   z to expand
+ │ Add the endpoint.                │              │ Audit the pipeline.               │  │ Wired the module.     │
+ │ ◆ claude · opus · plan · 2r · 4m │              │ ◇ codex · gpt-5.4-mini · 3r · 22m │  │ ◆ claude · haiku · 1r │
+ ╰──────────────────────────────────╯              ╰───────────────────────────────────╯  ╰───────────────────────╯
+ nebula-migration                                  discussions-api                        discussions-api
 ```
 
 Each card carries a bar in its operation's color, so a glance tells you which
@@ -75,7 +75,7 @@ Press `?` for the full keymap. The essentials:
 |---|---|
 | `tab` | switch between Board and Operations |
 | `a` (Operations) | add an operation: a summary plus the repos it spans, named by fragment |
-| `n` (Board) | new mission, optionally with additional repos; `ctrl+s` saves, `ctrl+r` launches |
+| `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+s` saves, `ctrl+r` launches |
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
 | `m` | send a message to a running agent |
@@ -87,6 +87,8 @@ Everything is also scriptable, which is the quickest way to see what the board i
 ```sh
 op=$(q operation add "Discussions API" --summary "…" --repo ~/dev/weave --repo ~/dev/azure-tf)
 q mission add discussions-endpoint --operation "$op" --prompt "Add the endpoint." --plan
+q mission add tidy-imports --operation "$op" --prompt "Tidy them." --model haiku
+q models                       # what each agent offers, and the default a mission gets
 q mission move ms_… active     # launches the agent
 q mission list                 # the board, as text
 q open ms_…                    # open the debrief session
@@ -110,8 +112,10 @@ settings without writing anything.
   "git": { "branchPrefix": "jane" },
   "agents": {
     "default": "claude",
-    "claude": { "bin": "", "args": [] },
-    "codex": { "bin": "", "args": [], "configDir": "~/.codex", "profile": "q" }
+    "modelRefresh": "6h",
+    "claude": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
+    "codex": { "bin": "", "args": [], "model": "", "effort": "", "models": [],
+               "configDir": "~/.codex", "profile": "q" }
   },
   "editor": { "command": ["nvim", "+Neotree"] },
   "terminal": { "mode": "ghostty", "command": [] },
@@ -130,6 +134,10 @@ settings without writing anything.
 | `agents.default` | the agent a new mission starts with |
 | `agents.<agent>.bin` | absolute path to the agent, when it is not on `PATH` |
 | `agents.<agent>.args` | extra arguments, appended after q's own and before the prompt |
+| `agents.<agent>.model` | override the default model q discovers by asking the agent |
+| `agents.<agent>.effort` | override the default reasoning effort |
+| `agents.<agent>.models` | the models to offer when the agent itself cannot be asked |
+| `agents.modelRefresh` | how often to re-ask each agent what it offers. Defaults to `6h` |
 | `agents.codex.configDir` | where codex keeps its configuration. q writes only its own profile there |
 | `agents.codex.profile` | the codex profile name q writes and selects |
 | `editor.command` | argv opened on each changed worktree in a debrief. Defaults to `$VISUAL`, `$EDITOR`, then `vi` |
@@ -180,6 +188,7 @@ one-off run can point q somewhere else without editing the file:
 | `Q_TERMINAL` | `terminal.mode` |
 | `Q_BRANCH_PREFIX` | `git.branchPrefix` |
 | `Q_DEFAULT_AGENT` | `agents.default` |
+| `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
@@ -205,6 +214,38 @@ writer is also what makes a plain JSON state file safe.
 One thing worth knowing: a running daemon keeps serving with the binary and environment
 it started with, and `q daemon run` defers to it rather than replacing it. After
 reinstalling, use `q daemon restart`. `q daemon status` reports which binary is running.
+
+### Models
+
+A mission carries a model and, where the model takes one, a reasoning effort. Both are
+chosen in the briefing form, frozen once the agent starts — they are baked into its
+argv — and shown on the card.
+
+q does not keep a list of model names. It asks the agents, because a table compiled into
+q would be wrong within weeks and would not know what a given account is entitled to:
+
+- **claude** answers an `initialize` control request over its stream-json protocol with
+  its models, their descriptions, and the effort levels each accepts. The probe runs with
+  `--no-session-persistence`, so it leaves no session behind for `--resume` or for q's own
+  healer to trip over.
+- **codex** answers `model/list` on its app-server. q starts a private app-server for the
+  question rather than using the managed daemon, so this works on an install that has no
+  managed daemon. If codex cannot be reached, q falls back to the models named in
+  `~/.codex/config.toml` and offers no effort levels, because which efforts a model takes
+  is knowable only from codex.
+
+The daemon asks on startup and every `agents.modelRefresh` after that, caching the answer
+so a restarted daemon has something to offer immediately. `q models` prints the catalog
+and how long ago it was learned; `q models --refresh` asks again now. Probing claude
+starts it, which fires your own `SessionStart` hooks — that is why it is cached and
+infrequent rather than done every time a form opens.
+
+The default a new mission gets is what that agent would have used unprompted. Your own
+configuration wins over the account default, in the agent's own precedence order: for
+claude, `ANTHROPIC_MODEL`, then managed settings, then `model` in `~/.claude/settings.json`;
+for codex, `model` under the profile q launches with, then the top-level one. `q doctor`
+reports what each resolves to. Nothing validates a mission's model against the catalog —
+a stale probe should not stop you launching a model the agent would have accepted.
 
 ### Lanes
 
