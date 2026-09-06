@@ -9,6 +9,7 @@ type Tool string
 const (
 	ToolClaude Tool = "claude"
 	ToolCodex  Tool = "codex"
+	ToolAgy    Tool = "agy"
 )
 
 // DefaultTool is the agent a mission gets when none is named.
@@ -48,10 +49,11 @@ type capabilities struct {
 var known = map[Tool]capabilities{
 	ToolClaude: {glyph: "◆", planMode: true, presetSessionID: true},
 	ToolCodex:  {glyph: "◇"},
+	ToolAgy:    {glyph: "△"},
 }
 
 // Tools lists every supported agent, in the order the board cycles them.
-var Tools = []Tool{ToolClaude, ToolCodex}
+var Tools = []Tool{ToolClaude, ToolCodex, ToolAgy}
 
 // Valid reports whether t is a supported agent.
 func (t Tool) Valid() bool { _, ok := known[t]; return ok }
@@ -88,5 +90,5 @@ func ParseTool(v string) (Tool, error) {
 		return t, nil
 	}
 
-	return "", fmt.Errorf("unknown tool %q (want claude or codex)", v)
+	return "", fmt.Errorf("unknown tool %q (want claude, codex, or agy)", v)
 }

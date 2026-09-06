@@ -27,11 +27,12 @@ const (
 	toolTmux      toolName = "tmux"
 	toolClaude    toolName = "claude"
 	toolCodex     toolName = "codex"
+	toolAgy       toolName = "agy"
 	toolOsaScript toolName = "osascript"
 )
 
 // allTools lists every tool, in the order q doctor reports them.
-var allTools = []toolName{toolGit, toolTmux, toolClaude, toolCodex, toolOsaScript}
+var allTools = []toolName{toolGit, toolTmux, toolClaude, toolCodex, toolAgy, toolOsaScript}
 
 // defaultRequiredTools lists the tools q cannot function at all without.
 //
@@ -63,6 +64,10 @@ func toolOptionsFor(s settings) toolOptions {
 
 	if bin := s.Agents.Codex.Bin; bin != "" {
 		overrides[toolCodex] = bin
+	}
+
+	if bin := s.Agents.Agy.Bin; bin != "" {
+		overrides[toolAgy] = bin
 	}
 
 	return toolOptions{Overrides: overrides, Required: requiredToolsFor(s)}
@@ -105,6 +110,7 @@ var fallbacks = map[toolName][]string{
 	toolClaude:    {"~/.local/bin/claude", "/opt/homebrew/bin/claude"},
 	toolCodex:     {"~/.nvm/versions/node/*/bin/codex", "/opt/homebrew/bin/codex"},
 	toolOsaScript: {"/usr/bin/osascript"},
+	toolAgy:       {"~/.local/bin/agy", "/opt/homebrew/bin/agy"},
 }
 
 // toolResolver caches tool paths for the lifetime of a process. It is safe for

@@ -26,7 +26,7 @@ const coalesceWindow = 750 * time.Millisecond
 // cannot be matched to a mission is written to the orphan log, and one for a mission that
 // no longer exists is dropped.
 func (s *Service) ApplyHook(req api.HookRequest) {
-	payload, err := mission.ParseHookEventBytes(req.Payload, req.Event)
+	payload, err := mission.ParseToolHookEventBytes(req.Tool, req.Payload, req.Event)
 	if err != nil {
 		s.recordOrphan(req, "unparseable payload: "+err.Error())
 

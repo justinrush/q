@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/justinrush/q/internal/agy"
 	"github.com/justinrush/q/internal/claude"
 	"github.com/justinrush/q/internal/codex"
 	"github.com/justinrush/q/internal/daemon"
@@ -131,6 +132,10 @@ func agentsFor(s settings) []mission.Agent {
 			Profile:   s.Agents.Codex.Profile,
 			ConfigDir: s.Agents.Codex.ConfigDir,
 		}))
+	}
+
+	if bin, err := resolveTool(s, toolAgy); err == nil {
+		agents = append(agents, agy.New(bin, agy.Options{Args: s.Agents.Agy.Args}))
 	}
 
 	return agents

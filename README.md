@@ -5,7 +5,7 @@
 Q runs the mission board. An **operation** is an area of investigation: a high-level
 summary plus the repos it spans. A **mission** is one unit of agent work inside an
 operation. It inherits the operation's repos and can add repos needed only for that
-mission. q gives each mission its own git worktree per repo, starts `claude` or `codex`
+mission. q gives each mission its own git worktree per repo, starts `claude`, `codex`, or `agy`
 in a detached tmux session, and shows every mission on a board that updates itself as the
 agents work.
 
@@ -40,7 +40,7 @@ branched from a freshly fetched default branch. Your own checkouts are never mod
 ## Requirements
 
 - **git** and **tmux**
-- **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** — at least one; q drives both
+- **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** or **[agy](https://antigravity.google/docs/cli/getting-started/)** — at least one
 - **Go 1.26+** to build
 - macOS or Linux. Opening a debrief window natively uses
   [Ghostty](https://ghostty.org) 1.3+ on macOS; everywhere else you name your own
@@ -113,6 +113,7 @@ settings without writing anything.
   "agents": {
     "default": "claude",
     "modelRefresh": "6h",
+    "agy": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
     "claude": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
     "codex": { "bin": "", "args": [], "model": "", "effort": "", "models": [],
                "configDir": "~/.codex", "profile": "q" }
@@ -371,7 +372,7 @@ plan mode, q routes that to **debrief** rather than to *awaiting orders*, and op
 debrief drops you into the live approval dialog. Approving it there switches claude into
 accept-edits and the card returns to *active*. Nothing is killed or restarted.
 
-codex has no plan mode, so the toggle is disabled for codex missions and says why.
+codex has no plan mode, so the toggle is disabled for codex missions and says why. The toggle is also disabled for agy: its CLI has a plan mode, but q does not yet have a verified plan-approval event for it.
 
 ## Operating it
 
@@ -512,3 +513,26 @@ uses.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Google Antigravity CLI (agy)
+
+Select `agy` in the mission form or pass `--tool agy` when creating a mission.
+Set `agents.default` to `agy` to use it by default. Configure `agents.agy.bin`
+and `agents.agy.args` like the other agents; `Q_AGY_BIN` overrides the executable.
+q searches PATH, `~/.local/bin/agy`, and `/opt/homebrew/bin/agy`. `q doctor`
+reports whether it can find the executable. Authenticate with `agy` interactively
+before launching your first mission.
+
+q starts the interactive CLI with the mission prompt and adds each repo worktree
+with `--add-dir`. It records the conversation ID from hooks and uses
+`--conversation` when relaunching. If no ID was reported, relaunch starts a new
+conversation instead of risking continuation of a different mission.
+
+q writes a `q-mission` entry in the mission root's `.agents/hooks.json`, preserving
+other entries. Malformed existing hook files are left untouched; repair the JSON
+and relaunch if hooks are silent. Global agy configuration stays in place.
+
+The [agy hook contract](https://antigravity.google/docs/hooks/) supports activity,
+turn completion, errors, and whether background work remains. Permission waits
+are not reported, so attach to the mission to answer permission prompts even if
+its card still shows active. q's plan-approval toggle is unavailable for agy.
