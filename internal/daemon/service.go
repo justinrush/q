@@ -51,6 +51,9 @@ type Service struct {
 	// sessions. Neither is required: without them the board relies on hooks alone.
 	runtimes map[mission.Tool]mission.Runtime
 	healers  []mission.Healer
+	// meters are the agents that can report what a session has consumed. An
+	// agent without one simply carries no cost on its cards.
+	meters map[mission.Tool]mission.Meter
 
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
@@ -95,6 +98,11 @@ func WithHealer(h mission.Healer) Option {
 	return func(s *Service) { s.healers = append(s.healers, h) }
 }
 
+// WithMeter attaches an agent meter, which reports what its sessions consume.
+func WithMeter(m mission.Meter) Option {
+	return func(s *Service) { s.meters[m.Tool()] = m }
+}
+
 // NewService returns a Service over the given store, publishing changes to hub.
 //
 // Every dependency past the store is optional and supplied as an [Option], so a
@@ -108,6 +116,7 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		logger:    slog.Default(),
 		now:       time.Now,
 		runtimes:  make(map[mission.Tool]mission.Runtime),
+		meters:    make(map[mission.Tool]mission.Meter),
 		approvals: make(map[mission.MissionID]approvalCandidate),
 	}
 
@@ -545,5 +554,11 @@ func (s *Service) publishMission(t mission.Mission) {
 func (s *Service) publishDeleted(kind, id string) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventDeleted, api.Deleted{Kind: kind, ID: id})
+	}
+}
+
+func (s *Service) publishLimits(limits []mission.Limit) {
+	if s.hub != nil {
+		s.hub.Broadcast(api.EventLimits, api.Limits{Limits: limits})
 	}
 }

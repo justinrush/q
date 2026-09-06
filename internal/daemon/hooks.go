@@ -47,6 +47,12 @@ func (s *Service) ApplyHook(req api.HookRequest) {
 	}
 
 	s.applyReduction(ms.ID, payload)
+
+	// After the reduction, so the transcript path the payload carried is on the
+	// mission by the time the meter goes looking for it.
+	if meterEvents[payload.Event] {
+		s.meterMission(ms.ID)
+	}
 }
 
 // resolveMission identifies which mission an event belongs to.

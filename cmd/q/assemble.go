@@ -16,6 +16,7 @@ import (
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/justinrush/q/internal/terminal"
+	"github.com/justinrush/q/internal/usage"
 )
 
 // assembleService builds the daemon's object graph from the resolved settings.
@@ -47,6 +48,13 @@ func assembleService(
 		daemon.WithLogger(logger),
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
+	}
+
+	// Metering runs off files the agent has already written, so it is wired
+	// before the tooling check below: a board that cannot find git or tmux can
+	// still tell you what the missions it is showing have cost.
+	for _, meter := range metersFor(s) {
+		opts = append(opts, daemon.WithMeter(meter))
 	}
 
 	tools, err := requiredTools(s)
@@ -121,6 +129,38 @@ func agentsFor(s settings) []mission.Agent {
 	}
 
 	return agents
+}
+
+// metersFor builds a meter for every agent whose consumption q can read.
+//
+// Both agents write their usage down and both hand q the path on their hooks,
+// so both are metered. What differs is pricing: q ships rates for the claude
+// models and none for the ones codex runs, so a codex card reports its token
+// count until rates for its model are added under "cost" in the config.
+func metersFor(s settings) []mission.Meter {
+	if s.Cost.Disabled {
+		return nil
+	}
+
+	pricing := pricingFor(s)
+
+	return []mission.Meter{usage.NewClaude(pricing), usage.NewCodex(pricing)}
+}
+
+// pricingFor layers the user's rates over the built-in table, so a model q does
+// not ship a price for is one config key rather than one release away.
+func pricingFor(s settings) usage.Pricing {
+	pricing := usage.DefaultPricing()
+
+	for model, price := range s.Cost.Models {
+		pricing.Models[model] = usage.ModelPrice{
+			Input:     price.Input,
+			Output:    price.Output,
+			CacheRead: price.CacheRead,
+		}
+	}
+
+	return pricing
 }
 
 // requiredTools resolves everything the configuration cannot start without.

@@ -87,6 +87,12 @@ func (s *Service) Reconcile(ctx context.Context) {
 		if updated, changed := s.reconcileMission(ctx, ms, readings, now); changed {
 			s.persistReconciled(updated)
 		}
+
+		// A turn that runs for ten minutes should show a total that grows over
+		// those ten minutes, not one that appears when it ends. An unchanged
+		// transcript costs a stat, so this is cheap for a mission sitting idle
+		// in debrief.
+		s.meterMission(ms.ID)
 	}
 }
 

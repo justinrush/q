@@ -11,6 +11,12 @@ const (
 	EventOperation = "operation"
 	// EventDeleted reports that an entity is gone.
 	EventDeleted = "deleted"
+	// EventLimits carries every agent usage window currently exhausted.
+	//
+	// Limits are sent whole rather than one at a time because the set is tiny
+	// and a frame that replaces it needs no reasoning about which entries the
+	// client should have expired on its own.
+	EventLimits = "limits"
 	// EventJob reports progress of a long-running action such as a launch.
 	EventJob = "job"
 	// EventPing is a heartbeat, so a client can notice a socket that has died

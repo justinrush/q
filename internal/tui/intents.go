@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
+	"time"
 )
 
 // handleIntent turns a view's intent into a dialog or a daemon call.
@@ -90,7 +91,9 @@ func (a *App) handleOperationIntent(msg tea.Msg) tea.Cmd {
 
 // showMissionForm opens the mission editor.
 func (a *App) showMissionForm(ms mission.Mission) {
-	a.modal = newMissionForm(ms, a.snapshot.Operations, a.currentOperationID(), a.opts)
+	a.modal = newMissionForm(
+		ms, a.snapshot.Operations, a.currentOperationID(), a.opts, a.snapshot.Limits, time.Now(),
+	)
 }
 
 // showOperationForm opens the operation editor.

@@ -61,6 +61,7 @@ func runDoctor(cmd *cobra.Command, _ []string) error {
 	}
 
 	reportOrphans(cmd.Context(), rep, dirs)
+	reportCost(rep, dirs)
 	reportEnv(rep)
 
 	_, writeErr := io.WriteString(cmd.OutOrStdout(), rep.String())

@@ -116,6 +116,7 @@ settings without writing anything.
   "editor": { "command": ["nvim", "+Neotree"] },
   "terminal": { "mode": "ghostty", "command": [] },
   "paths": { "dataDir": "", "stateDir": "" },
+  "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 1.25, "output": 10 } } },
   "tools": { "tmux": "/usr/bin/tmux" },
   "logLevel": "info"
 }
@@ -137,6 +138,8 @@ settings without writing anything.
 | `terminal.command` | the argv template for `command` mode |
 | `paths.dataDir` | overrides where state and mission worktrees live |
 | `paths.stateDir` | overrides where the daemon handle, hook spool, and logs live |
+| `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
+| `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
 
@@ -238,6 +241,53 @@ misc=$(q operation add "Misc" --summary "Small ad-hoc work")
 q mission add update-readme --operation "$misc" --prompt "Improve the setup docs." \
   --repo ~/dev/q
 ```
+
+### Cost
+
+Each card carries a running total of what its mission has consumed:
+
+```
+◆ claude · $1.23 · 2r · 14m
+```
+
+**It is an estimate of equivalent API spend, not a bill.** A session running under a
+subscription is not charged per token at all. The number exists so that two missions can
+be compared against each other — which one ran away with your afternoon — and so a card
+sitting in *debrief* can tell you what it cost to get there.
+
+q reads it from what the agent already writes down. Both agents log their own usage and
+hand q the path on their hooks, so metering makes no network call, needs no credentials,
+and adds nothing to the bill it reports on. A mission is measured when a turn ends and
+again on the reconciler's tick while it is still running, so the total grows during a long
+turn rather than appearing when it finishes.
+
+Two things the number tells you about itself:
+
+- A trailing `+` (`$1.23+`) means a model in the mission had no rate in the price table,
+  so the figure is a floor rather than a total.
+- A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
+  q ships rates for the claude models and none for the ones codex runs, so codex cards
+  read this way until you add rates under `cost.models`.
+
+`q doctor` reports any model your missions used that the table cannot price, which is how
+a table that has fallen behind announces itself rather than quietly under-reporting.
+
+### Usage limits
+
+When you start a mission, the agent row warns you if that agent's usage window is
+currently used up:
+
+```
+  Agent      ◆ claude
+             ⚠ 5-hour limit hit · resets 4:20pm
+```
+
+It warns; it does not block. q cannot see your account's real quota — it only knows what
+the agents write into their own logs, and the two write different things. codex records
+how much of each window is gone, so q can say a window is exhausted the moment it is.
+claude records nothing until a request is actually refused, so for claude the warning is
+retrospective: it appears once something has been turned away, and lasts until the window
+it named reopens.
 
 ### Naming repos
 
@@ -406,6 +456,7 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 | `internal/runner` | the single seam through which q executes external programs |
 | `internal/paths` | the on-disk layout |
 | `internal/spool` | hook events buffered while the daemon is down |
+| `internal/usage` | reading what a session consumed out of the agents' own logs, and pricing it |
 | `internal/tui` | the board |
 
 **Adding an agent** is three edits: an entry in the `known` table in
@@ -413,8 +464,9 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 what files it needs written, which hook events it reports — and a line in
 `cmd/q/assemble.go` that builds it from config. If it can report on its own live sessions
 it also implements `mission.Runtime` (authoritative, polled) or `mission.Healer`
-(advisory, used only to correct a card a dropped hook left wrong). Nothing else branches
-on which agent a mission uses.
+(advisory, used only to correct a card a dropped hook left wrong), and if it writes down
+what its sessions consume, `mission.Meter`. Nothing else branches on which agent a mission
+uses.
 
 ## License
 

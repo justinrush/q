@@ -101,6 +101,8 @@ var (
 	FieldLabelFocused = lipgloss.NewStyle().Foreground(Accent).Bold(true)
 	// Disabled marks an option that cannot be chosen.
 	Disabled = lipgloss.NewStyle().Foreground(Faint).Strikethrough(true)
+	// FieldWarning qualifies a form choice that is allowed but probably unwise.
+	FieldWarning = lipgloss.NewStyle().Foreground(Warn)
 )
 
 // Stripe renders a card's operation stripe: a solid bar of the operation's color carrying

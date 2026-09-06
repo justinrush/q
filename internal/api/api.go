@@ -154,6 +154,13 @@ type HookRequest struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// Limits carries the agent usage windows currently exhausted, for the limits
+// event. It is a wrapper rather than a bare slice so the frame stays a JSON
+// object like every other one.
+type Limits struct {
+	Limits []mission.Limit `json:"limits"`
+}
+
 // Deleted identifies an entity that no longer exists, for the deleted event.
 type Deleted struct {
 	Kind string `json:"kind"`

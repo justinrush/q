@@ -18,6 +18,7 @@ type settings struct {
 	Editor   editorSettings
 	Terminal terminalSettings
 	Paths    pathsSettings
+	Cost     costSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
 	Tools map[string]string
@@ -68,6 +69,29 @@ type codexSettings struct {
 	ConfigDir string
 	// Profile is the codex profile name q writes and selects.
 	Profile string
+}
+
+// costSettings configures the running total shown on a mission card.
+//
+// The rates are carried as plain numbers rather than as the usage package's own
+// type so that settings stays free of internal imports, and are converted where
+// the meter is built.
+type costSettings struct {
+	// Disabled turns metering off entirely: no transcripts are read and no card
+	// carries a cost.
+	Disabled bool
+	// Models overrides or extends the built-in price table, keyed by model id,
+	// in dollars per million tokens.
+	Models map[string]modelPriceSettings
+}
+
+// modelPriceSettings is one model's rates, in dollars per million tokens.
+type modelPriceSettings struct {
+	Input  float64
+	Output float64
+	// CacheRead overrides the usual fraction-of-input read rate, for a model
+	// priced differently. Zero means use the default.
+	CacheRead float64
 }
 
 // editorSettings configures the command opened on each changed worktree in a debrief.
