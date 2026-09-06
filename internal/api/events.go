@@ -65,12 +65,14 @@ func (c *Client) Stream(ctx context.Context, out chan<- Event) error {
 // newStreamRequest builds the long-lived event-stream request. It deliberately
 // does not apply the ordinary request timeout.
 func (c *Client) newStreamRequest(ctx context.Context) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.handle.BaseURL()+"/v1/events", nil)
+	handle := c.Handle()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, handle.BaseURL()+"/v1/events", nil)
 	if err != nil {
 		return nil, fmt.Errorf("building event stream request: %w", err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.handle.Token)
+	req.Header.Set("Authorization", "Bearer "+handle.Token)
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set(ClientHeader, ClientHeaderValue)
 

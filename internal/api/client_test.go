@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +24,21 @@ import (
 func startDaemon(t *testing.T) (*api.Client, paths.Dirs) {
 	t.Helper()
 
+	dirs := newDirs(t)
+	runDaemon(t, dirs)
+
+	c, err := api.OpenClient(dirs)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	return c, dirs
+}
+
+// newDirs returns an empty set of q directories under t.TempDir().
+func newDirs(t *testing.T) paths.Dirs {
+	t.Helper()
+
 	root := t.TempDir()
 	dirs := paths.Dirs{
 		Data:   filepath.Join(root, "data"),
@@ -32,6 +49,18 @@ func startDaemon(t *testing.T) (*api.Client, paths.Dirs) {
 	if err := dirs.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
+
+	return dirs
+}
+
+// runDaemon starts a daemon on dirs and returns a function that stops it and
+// waits for it to be gone.
+//
+// Stopping is separated from t.Cleanup so a test can restart a daemon on the same
+// directories: the handle file is exclusively locked for a daemon's lifetime, so
+// the second one cannot come up until the first has finished going down.
+func runDaemon(t *testing.T, dirs paths.Dirs) func() {
+	t.Helper()
 
 	store, err := mission.Open(dirs)
 	if err != nil {
@@ -68,22 +97,22 @@ func startDaemon(t *testing.T) (*api.Client, paths.Dirs) {
 		t.Fatal("daemon did not become ready")
 	}
 
-	t.Cleanup(func() {
-		cancel()
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
 
-		select {
-		case <-errCh:
-		case <-time.After(5 * time.Second):
-			t.Error("daemon did not shut down")
-		}
-	})
-
-	c, err := api.OpenClient(dirs)
-	if err != nil {
-		t.Fatalf("Open: %v", err)
+			select {
+			case <-errCh:
+			case <-time.After(5 * time.Second):
+				t.Error("daemon did not shut down")
+			}
+		})
 	}
 
-	return c, dirs
+	t.Cleanup(stop)
+
+	return stop
 }
 
 func TestClientRoundTrip(t *testing.T) {
@@ -308,5 +337,176 @@ func TestSecondDaemonRefusesToStart(t *testing.T) {
 	})
 	if !errors.Is(err, daemon.ErrAlreadyRunning) {
 		t.Errorf("err = %v, want daemon.ErrAlreadyRunning", err)
+	}
+}
+
+// A client must survive the daemon restarting under it. The daemon binds an
+// ephemeral port and mints a fresh token every start, so a client that kept the
+// handle it opened with would go on dialing an address nobody is listening on —
+// which is what left a board rendering a frozen snapshot for as long as it stayed
+// open.
+func TestClientRefreshFollowsARestartedDaemon(t *testing.T) {
+	dirs := newDirs(t)
+	stop := runDaemon(t, dirs)
+
+	c, err := api.OpenClient(dirs)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	before := c.Handle()
+
+	if _, err := c.Health(t.Context()); err != nil {
+		t.Fatalf("Health before restart: %v", err)
+	}
+
+	stop()
+	runDaemon(t, dirs)
+
+	// The old handle is now a dead address, and no amount of retrying it helps.
+	if _, err := c.Health(t.Context()); err == nil {
+		t.Fatal("Health should fail while the client holds the old daemon's handle")
+	}
+
+	moved, err := c.Refresh()
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+
+	if !moved {
+		t.Fatal("Refresh should report that the daemon moved")
+	}
+
+	if after := c.Handle(); after.Addr == before.Addr && after.Token == before.Token {
+		t.Errorf("handle did not change: %s", after.Addr)
+	}
+
+	if _, err := c.Health(t.Context()); err != nil {
+		t.Fatalf("Health after Refresh: %v", err)
+	}
+}
+
+func TestClientRefresh(t *testing.T) {
+	cases := []struct {
+		name string
+		// mutate rewrites the handle file before Refresh is called.
+		mutate func(t *testing.T, dirs paths.Dirs, current api.Handle)
+		// opener builds the client under test.
+		opener    func(t *testing.T, dirs paths.Dirs) *api.Client
+		wantMoved bool
+		wantErr   bool
+	}{
+		{
+			name:      "unchanged handle reports no move",
+			mutate:    func(*testing.T, paths.Dirs, api.Handle) {},
+			wantMoved: false,
+		},
+		{
+			name: "a rewritten handle with the same values is still the same daemon",
+			mutate: func(t *testing.T, dirs paths.Dirs, current api.Handle) {
+				current.Version = "rewritten"
+				writeHandle(t, dirs, current)
+			},
+			wantMoved: false,
+		},
+		{
+			name: "a new address is a move",
+			mutate: func(t *testing.T, dirs paths.Dirs, current api.Handle) {
+				current.Addr = "127.0.0.1:1"
+				writeHandle(t, dirs, current)
+			},
+			wantMoved: true,
+		},
+		{
+			name: "a new token is a move",
+			mutate: func(t *testing.T, dirs paths.Dirs, current api.Handle) {
+				current.Token = "a-freshly-minted-token"
+				writeHandle(t, dirs, current)
+			},
+			wantMoved: true,
+		},
+		{
+			name: "a removed handle is an error, not a silent success",
+			mutate: func(t *testing.T, dirs paths.Dirs, _ api.Handle) {
+				if err := api.RemoveHandle(dirs.DaemonFile()); err != nil {
+					t.Fatalf("RemoveHandle: %v", err)
+				}
+			},
+			wantErr: true,
+		},
+		{
+			name: "a client built from a caller's handle has nothing to re-read",
+			mutate: func(t *testing.T, dirs paths.Dirs, current api.Handle) {
+				current.Addr = "127.0.0.1:1"
+				writeHandle(t, dirs, current)
+			},
+			opener: func(t *testing.T, dirs paths.Dirs) *api.Client {
+				t.Helper()
+
+				handle, err := api.ReadHandle(dirs.DaemonFile())
+				if err != nil {
+					t.Fatalf("ReadHandle: %v", err)
+				}
+
+				return api.NewClient(handle)
+			},
+			wantMoved: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dirs := newDirs(t)
+			writeHandle(t, dirs, api.Handle{
+				PID:     os.Getpid(),
+				Addr:    "127.0.0.1:9",
+				Token:   "the-original-token",
+				Version: "test",
+			})
+
+			open := tc.opener
+			if open == nil {
+				open = func(t *testing.T, dirs paths.Dirs) *api.Client {
+					t.Helper()
+
+					c, err := api.OpenClient(dirs)
+					if err != nil {
+						t.Fatalf("OpenClient: %v", err)
+					}
+
+					return c
+				}
+			}
+
+			c := open(t, dirs)
+			tc.mutate(t, dirs, c.Handle())
+
+			moved, err := c.Refresh()
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("Refresh should have failed")
+				}
+
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Refresh: %v", err)
+			}
+
+			if moved != tc.wantMoved {
+				t.Errorf("moved = %v, want %v", moved, tc.wantMoved)
+			}
+		})
+	}
+}
+
+// writeHandle stores a daemon handle for the refresh tests.
+func writeHandle(t *testing.T, dirs paths.Dirs, h api.Handle) {
+	t.Helper()
+
+	if err := api.WriteHandle(dirs.DaemonFile(), h); err != nil {
+		t.Fatalf("WriteHandle: %v", err)
 	}
 }
