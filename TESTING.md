@@ -197,3 +197,24 @@ opened with it, because those values are only used at that moment. A change to `
 
 Remember that the daemon reads the configuration when it starts. After editing the file,
 `q daemon restart`.
+
+### Antigravity CLI
+
+`internal/agy` tests interactive argv, exact conversation resume, worktree quoting,
+workspace hook structure, explicit mission routing, and preservation of custom
+hooks. `internal/mission` tests agy payload translation and background-work handling.
+The integration was checked against the installed `agy --help` and Google's
+[hook documentation](https://antigravity.google/docs/hooks/).
+
+Live validation still requires an authenticated CLI: launch an agy mission, confirm
+its prompt and worktrees, finish a turn, and check that the card reaches debrief.
+Relaunch and verify the same conversation resumes. Check a permission prompt in
+the terminal: agy does not expose a permission-wait event to q. Verify custom hooks
+continue running alongside the generated workspace hooks.
+
+After rebasing onto the model-selection and cost merges, `internal/agy` also tests
+catalog parsing, failed probes and configured fallbacks, and model/effort flags
+on fresh launches and resumes. Verified with agy 1.1.27: `agy models` returns
+ID/tab/label rows; `agy models --json` is rejected. Local transcript schemas were
+inspected without displaying conversation content: neither transcript.jsonl nor
+transcript_full.jsonl contained usage or quota fields. No agy meter is registered.

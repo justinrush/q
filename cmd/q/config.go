@@ -41,6 +41,7 @@ const (
 	EnvDefaultTool = "Q_DEFAULT_AGENT"
 	EnvClaudeModel = "Q_CLAUDE_MODEL"
 	EnvCodexModel  = "Q_CODEX_MODEL"
+	EnvAgyModel    = "Q_AGY_MODEL"
 	EnvLogLevel    = "Q_LOG_LEVEL"
 )
 
@@ -74,6 +75,7 @@ type gitConfig struct {
 
 type agentsConfig struct {
 	Default string       `json:"default,omitempty"`
+	Agy     *agentConfig `json:"agy,omitempty"`
 	Claude  *agentConfig `json:"claude,omitempty"`
 	Codex   *codexConfig `json:"codex,omitempty"`
 	// ModelRefresh is a duration string, e.g. "6h", bounding how stale the model
@@ -294,6 +296,14 @@ func applyAgents(out *settings, agents *agentsConfig) {
 		out.Agents.ModelRefresh = d
 	}
 
+	if c := agents.Agy; c != nil {
+		out.Agents.Agy.Bin = firstNonEmpty(c.Bin, out.Agents.Agy.Bin)
+		applyAgentModels(&out.Agents.Agy, c.Model, c.Effort, c.Models)
+		if c.Args != nil {
+			out.Agents.Agy.Args = c.Args
+		}
+	}
+
 	if c := agents.Claude; c != nil {
 		out.Agents.Claude.Bin = firstNonEmpty(c.Bin, out.Agents.Claude.Bin)
 		applyAgentModels(&out.Agents.Claude, c.Model, c.Effort, c.Models)
@@ -376,6 +386,10 @@ func applyEnv(out *settings) {
 		out.Agents.Claude.Model = v
 	}
 
+	if v := strings.TrimSpace(os.Getenv(EnvAgyModel)); v != "" {
+		out.Agents.Agy.Model = v
+	}
+
 	if v := strings.TrimSpace(os.Getenv(EnvCodexModel)); v != "" {
 		out.Agents.Codex.Model = v
 	}
@@ -394,6 +408,7 @@ func expandSettings(out *settings) {
 
 	out.Paths.Data = expandHome(out.Paths.Data)
 	out.Paths.State = expandHome(out.Paths.State)
+	out.Agents.Agy.Bin = expandHome(out.Agents.Agy.Bin)
 	out.Agents.Claude.Bin = expandHome(out.Agents.Claude.Bin)
 	out.Agents.Codex.Bin = expandHome(out.Agents.Codex.Bin)
 	out.Agents.Codex.ConfigDir = expandHome(out.Agents.Codex.ConfigDir)
@@ -462,6 +477,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Git:   &gitConfig{BranchPrefix: branchPrefixOrUser(s)},
 		Agents: &agentsConfig{
 			Default: s.Agents.Default,
+			Agy:     &agentConfig{Bin: s.Agents.Agy.Bin, Args: s.Agents.Agy.Args, Model: s.Agents.Agy.Model, Effort: s.Agents.Agy.Effort, Models: s.Agents.Agy.Models},
 			Claude: &agentConfig{
 				Bin:    s.Agents.Claude.Bin,
 				Args:   s.Agents.Claude.Args,

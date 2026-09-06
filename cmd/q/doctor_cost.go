@@ -29,6 +29,7 @@ func reportCost(rep *report, dirs paths.Dirs) {
 
 	pricing := pricingFor(cfg)
 	rep.row("  metering\tenabled")
+	rep.row("  agy\tunavailable: transcripts do not expose token usage or quota resets")
 	rep.row("  priced models\t%d", len(pricing.Models))
 
 	unpriced, err := unpricedModels(dirs)
@@ -40,7 +41,7 @@ func reportCost(rep *report, dirs paths.Dirs) {
 	}
 
 	if len(unpriced) == 0 {
-		rep.row("  coverage\tevery model these missions used has a rate")
+		rep.row("  coverage\tevery metered model has a rate")
 		rep.line("")
 
 		return

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/justinrush/q/internal/agy"
 	"github.com/justinrush/q/internal/claude"
 	"github.com/justinrush/q/internal/codex"
 	"github.com/justinrush/q/internal/daemon"
@@ -133,12 +134,16 @@ func agentsFor(s settings) []mission.Agent {
 		}))
 	}
 
+	if bin, err := resolveTool(s, toolAgy); err == nil {
+		agents = append(agents, agy.New(bin, agy.Options{Args: s.Agents.Agy.Args}))
+	}
+
 	return agents
 }
 
 // metersFor builds a meter for every agent whose consumption q can read.
 //
-// Both agents write their usage down and both hand q the path on their hooks,
+// Claude and codex write their usage down and both hand q the path on their hooks,
 // so both are metered. What differs is pricing: q ships rates for the claude
 // models and none for the ones codex runs, so a codex card reports its token
 // count until rates for its model are added under "cost" in the config.
@@ -149,6 +154,8 @@ func metersFor(s settings) []mission.Meter {
 
 	pricing := pricingFor(s)
 
+	// Agy 1.1.27 transcripts contain steps and text, but no usage or quota
+	// records. Do not reuse another agent's parser and report fictional totals.
 	return []mission.Meter{usage.NewClaude(pricing), usage.NewCodex(pricing)}
 }
 
@@ -194,6 +201,13 @@ func probersFor(s settings, run runner.OS, version string) []mission.ModelProber
 		}), s.Agents.Codex.agentSettings))
 	}
 
+	if bin, err := resolveTool(s, toolAgy); err == nil {
+		fallback := append([]string(nil), s.Agents.Agy.Models...)
+		if s.Agents.Agy.Model != "" {
+			fallback = append(fallback, s.Agents.Agy.Model)
+		}
+		probers = append(probers, withOverrides(agy.NewProber(bin, run, fallback), s.Agents.Agy))
+	}
 	return probers
 }
 
