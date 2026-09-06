@@ -98,6 +98,7 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 		var snap struct {
 			Operations []mission.Operation `json:"operations"`
 			Missions   []mission.Mission   `json:"missions"`
+			Limits     []mission.Limit     `json:"limits"`
 		}
 
 		if err := event.Decode(&snap); err != nil {
@@ -106,6 +107,14 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 
 		a.snapshot.Operations = snap.Operations
 		a.snapshot.Missions = snap.Missions
+		a.snapshot.Limits = snap.Limits
+	case api.EventLimits:
+		var limits api.Limits
+		if err := event.Decode(&limits); err != nil {
+			return nil
+		}
+
+		a.snapshot.Limits = limits.Limits
 	case api.EventMission:
 		var ms mission.Mission
 		if err := event.Decode(&ms); err != nil {

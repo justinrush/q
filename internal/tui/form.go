@@ -3,6 +3,7 @@ package tui
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -59,6 +60,14 @@ type missionForm struct {
 	// launched is true when editing an already-started mission, which fixes the tool
 	// and plan mode because both are baked into the running agent's arguments.
 	launched bool
+	// limits are the agent usage windows currently exhausted, and openedAt is
+	// when they were judged.
+	//
+	// The time is captured once rather than read per render because a form is
+	// open for seconds: re-deciding on every keystroke would buy nothing, and a
+	// fixed instant is what makes the rendering assertable.
+	limits   []mission.Limit
+	openedAt time.Time
 	// reposLocked covers the launch-in-progress interval before StartedAt is set.
 	reposLocked bool
 }
@@ -77,10 +86,19 @@ const (
 )
 
 // newMissionForm builds a mission form. Pass the zero mission to create.
-func newMissionForm(ms mission.Mission, operations []mission.Operation, defaultOperation mission.OperationID, opts Options) *missionForm {
+func newMissionForm(
+	ms mission.Mission,
+	operations []mission.Operation,
+	defaultOperation mission.OperationID,
+	opts Options,
+	limits []mission.Limit,
+	now time.Time,
+) *missionForm {
 	form := &missionForm{
 		id:          ms.ID,
 		operations:  operations,
+		limits:      limits,
+		openedAt:    now,
 		name:        newTextArea(ms.Name, false),
 		prompt:      newTextArea(ms.Prompt, true),
 		repos:       newRepoField(ms.ExtraRepos, opts.Repos),
@@ -378,7 +396,7 @@ func (f *missionForm) View(width, height int) string {
 		f.name.View(inner),
 		"",
 		f.label("Operation", fieldMissionOperation) + "  " + f.operationValue(),
-		f.label("Agent", fieldMissionTool) + "   " + f.toolValue(),
+		f.label("Agent", fieldMissionTool) + "   " + f.toolValue() + f.toolWarning(),
 		f.label("Model", fieldMissionModel) + "   " + f.modelValue(),
 		f.label("Effort", fieldMissionEffort) + "  " + f.effortValue(),
 		f.label("Plan mode", fieldMissionPlan) + " " + f.planValue(),
@@ -441,6 +459,37 @@ func (f *missionForm) toolValue() string {
 	}
 
 	return value
+}
+
+// toolWarningIndent aligns a warning under the agent value rather than under
+// its label: "  Agent" plus the three spaces the row separates them with.
+const toolWarningIndent = "          "
+
+// toolWarning renders a second line under the agent when that agent's usage
+// window is currently exhausted, or "" when it is not.
+//
+// It warns rather than blocks. q cannot see the account's real quota — all it
+// knows is that a request was refused and when the window it named reopens —
+// and refusing to start work on the strength of a reading that indirect would
+// be worse than being wrong about it out loud.
+func (f *missionForm) toolWarning() string {
+	limit, ok := f.limit()
+	if !ok {
+		return ""
+	}
+
+	return "\n" + toolWarningIndent + styles.FieldWarning.Render("⚠ "+limit.Describe())
+}
+
+// limit returns the exhausted window for the selected agent, if it has one.
+func (f *missionForm) limit() (mission.Limit, bool) {
+	for _, l := range f.limits {
+		if l.Tool == f.tool && l.Live(f.openedAt) {
+			return l, true
+		}
+	}
+
+	return mission.Limit{}, false
 }
 
 // modelValue renders the model choice, with the agent's own description beside it.

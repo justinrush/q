@@ -161,6 +161,13 @@ type HookRequest struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
+// Limits carries the agent usage windows currently exhausted, for the limits
+// event. It is a wrapper rather than a bare slice so the frame stays a JSON
+// object like every other one.
+type Limits struct {
+	Limits []mission.Limit `json:"limits"`
+}
+
 // ModelsResponse is what each agent says it can run.
 //
 // It is a separate endpoint rather than part of the state snapshot because it

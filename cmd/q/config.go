@@ -56,6 +56,7 @@ type fileConfig struct {
 	Editor   *editorConfig   `json:"editor,omitempty"`
 	Terminal *terminalConfig `json:"terminal,omitempty"`
 	Paths    *pathsConfig    `json:"paths,omitempty"`
+	Cost     *costConfig     `json:"cost,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
 	LogLevel string            `json:"logLevel,omitempty"`
@@ -110,6 +111,23 @@ type terminalConfig struct {
 type pathsConfig struct {
 	Data  string `json:"dataDir,omitempty"`
 	State string `json:"stateDir,omitempty"`
+}
+
+// costConfig configures the running total on a mission card.
+//
+// Prices are in dollars per million tokens, matching how they are published, so
+// a rate can be copied from the pricing page without arithmetic:
+//
+//	"cost": {"models": {"claude-opus-5": {"input": 5, "output": 25}}}
+type costConfig struct {
+	Disabled bool                   `json:"disabled,omitempty"`
+	Models   map[string]priceConfig `json:"models,omitempty"`
+}
+
+type priceConfig struct {
+	Input     float64 `json:"input"`
+	Output    float64 `json:"output"`
+	CacheRead float64 `json:"cacheRead,omitempty"`
 }
 
 // loadConfig resolves the effective settings: built-in defaults, then the config
@@ -235,6 +253,22 @@ func applyFile(out *settings, file fileConfig) {
 	if p := file.Paths; p != nil {
 		out.Paths.Data = firstNonEmpty(p.Data, out.Paths.Data)
 		out.Paths.State = firstNonEmpty(p.State, out.Paths.State)
+	}
+
+	if c := file.Cost; c != nil {
+		out.Cost.Disabled = c.Disabled
+
+		for model, price := range c.Models {
+			if out.Cost.Models == nil {
+				out.Cost.Models = map[string]modelPriceSettings{}
+			}
+
+			out.Cost.Models[model] = modelPriceSettings{
+				Input:     price.Input,
+				Output:    price.Output,
+				CacheRead: price.CacheRead,
+			}
+		}
 	}
 
 	for name, path := range file.Tools {

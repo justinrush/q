@@ -134,3 +134,27 @@ type Runtime interface {
 type Healer interface {
 	Heal(ctx context.Context, missions []Mission) (map[MissionID]Reading, error)
 }
+
+// Metering is one measurement of what a mission's agent session has consumed.
+type Metering struct {
+	// Usage is the running total for the session.
+	Usage Usage
+	// Limit is the most recent refusal the session recorded, zero when the agent
+	// has never been turned away.
+	Limit Limit
+}
+
+// Meter reports what an agent session has consumed.
+//
+// Like [Runtime] and [Healer] it is optional: without one a mission simply
+// carries no cost, and every other part of the board behaves as before. An
+// implementation reads whatever the agent already writes down — for claude, the
+// transcript q is handed the path to on every hook — rather than calling any
+// billing API, so metering costs nothing and needs no credentials.
+type Meter interface {
+	// Tool reports which agent this meters.
+	Tool() Tool
+	// Meter measures one mission, reporting false when the session has left
+	// nothing to measure yet.
+	Meter(ms Mission) (Metering, bool, error)
+}

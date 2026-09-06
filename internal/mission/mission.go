@@ -123,6 +123,16 @@ type Mission struct {
 	Badges []Badge `json:"badges,omitempty"`
 	// LaunchError records why the last launch attempt failed.
 	LaunchError string `json:"launchError,omitempty"`
+	// TranscriptPath is the agent's own conversation log, learned from any hook
+	// event that carries one.
+	//
+	// It is stored rather than used and discarded because metering runs on a
+	// timer as well as on a hook: a turn that takes ten minutes should show a
+	// growing total, and the reconciler has no hook payload to read the path out
+	// of. Empty for an agent that keeps no transcript.
+	TranscriptPath string `json:"transcriptPath,omitempty"`
+	// Usage is what the session has consumed, as last measured by a [Meter].
+	Usage Usage `json:"usage,omitzero"`
 
 	CreatedAt  time.Time  `json:"createdAt"`
 	UpdatedAt  time.Time  `json:"updatedAt"`

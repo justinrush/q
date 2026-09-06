@@ -83,6 +83,12 @@ func Reduce(ms Mission, ev HookEvent, now time.Time) Reduction {
 	ms.LastEventAt = now
 	ms.UpdatedAt = now
 
+	// Recorded rather than used and discarded: metering also runs on a timer,
+	// and the reconciler has no hook payload to read the path out of.
+	if ev.TranscriptPath != "" {
+		ms.TranscriptPath = ev.TranscriptPath
+	}
+
 	proposed := apply(&ms, ev, now)
 
 	return Reduction{
@@ -403,6 +409,7 @@ func equivalent(a, b Mission) bool {
 		a.WaitingFor != b.WaitingFor ||
 		a.PlanPending != b.PlanPending ||
 		a.AgentSessionID != b.AgentSessionID ||
+		a.TranscriptPath != b.TranscriptPath ||
 		a.LastMessage != b.LastMessage ||
 		a.LaunchError != b.LaunchError ||
 		len(a.Badges) != len(b.Badges) {

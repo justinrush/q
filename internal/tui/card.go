@@ -103,9 +103,20 @@ func detailLine(ms mission.Mission, width int) string {
 	return styles.CardDetail.Render(styles.Truncate(firstLine(ms.Prompt), width))
 }
 
-// metaLine is the card's third line: tool, mode, repo count, age, and badges.
+// metaLine is the card's third line: tool, cost, model, mode, repo count, age,
+// and badges.
+//
+// Cost sits second, ahead of the model that explains it, because the line is
+// truncated to the card's width and a lane can be narrow enough that only one
+// of them survives. Everything after it — the model, the repo count, the age,
+// the badges — is a property you chose or can recover by opening the mission. A
+// running total is the one thing on this line that exists only here.
 func metaLine(ms mission.Mission, width int) string {
 	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
+
+	if cost := missionCost(ms); cost != "" {
+		parts = append(parts, cost)
+	}
 
 	// The effort rides on the model rather than taking a slot of its own, because
 	// a card is narrow and the two only ever mean anything together.
@@ -135,6 +146,66 @@ func metaLine(ms mission.Mission, width int) string {
 	}
 
 	return styles.CardDetail.Render(styles.Truncate(strings.Join(parts, " · "), width))
+}
+
+// missionCost renders what a mission has consumed, or "" when nothing has been
+// measured — an unlaunched mission, or an agent q cannot meter.
+//
+// The trailing "+" on a partial total is not decoration. It appears when a
+// model in the breakdown has no published rate, which makes the figure a floor
+// rather than a sum, and a floor that does not say so is a wrong number.
+//
+// When nothing in the breakdown has a rate — an agent running models q ships no
+// prices for — the count itself is shown instead. "$0.00+" would be true and
+// useless; the token count is the honest thing left to say, and adding the
+// rates under "cost" in the config turns it back into money.
+func missionCost(ms mission.Mission) string {
+	if ms.Usage.Empty() {
+		return ""
+	}
+
+	if ms.Usage.Unpriced && ms.Usage.USD == 0 {
+		return formatTokens(ms.Usage.Tokens())
+	}
+
+	out := formatUSD(ms.Usage.USD)
+	if ms.Usage.Unpriced {
+		out += "+"
+	}
+
+	return out
+}
+
+// formatTokens renders a token count in at most five columns.
+func formatTokens(tokens int64) string {
+	switch {
+	case tokens >= 10_000_000:
+		return fmt.Sprintf("%dM", tokens/1_000_000)
+	case tokens >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(tokens)/1_000_000)
+	case tokens >= 10_000:
+		return fmt.Sprintf("%dk", tokens/1_000)
+	case tokens >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(tokens)/1_000)
+	default:
+		return fmt.Sprintf("%d", tokens)
+	}
+}
+
+// formatUSD renders a dollar figure in at most five columns, spending its
+// precision where the reader can use it: cents matter at a dollar and are noise
+// at a hundred.
+func formatUSD(usd float64) string {
+	switch {
+	case usd < 0.01:
+		return "<$0.01"
+	case usd < 10:
+		return fmt.Sprintf("$%.2f", usd)
+	case usd < 100:
+		return fmt.Sprintf("$%.1f", usd)
+	default:
+		return fmt.Sprintf("$%.0f", usd)
+	}
 }
 
 // renderBadge formats one badge compactly.

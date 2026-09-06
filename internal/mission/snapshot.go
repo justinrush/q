@@ -9,14 +9,21 @@ import (
 
 // SchemaVersion is the current on-disk format version. Bump it when a change
 // requires migrating existing state, and add a case to migrate.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Snapshot is the complete persisted state of q.
 type Snapshot struct {
 	SchemaVersion int         `json:"schemaVersion"`
 	Operations    []Operation `json:"operations"`
 	Missions      []Mission   `json:"missions"`
-	UpdatedAt     time.Time   `json:"updatedAt"`
+	// Limits are the usage windows each agent has most recently been refused on.
+	//
+	// They belong to the snapshot rather than to a mission because they are a
+	// property of the account, not of the work: a limit one mission ran into
+	// applies to the next mission the human is about to start, which is the
+	// whole point of recording it.
+	Limits    []Limit   `json:"limits,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // Clone returns a deep copy.
@@ -29,6 +36,7 @@ func (s Snapshot) Clone() Snapshot {
 	out := s
 	out.Operations = make([]Operation, len(s.Operations))
 	out.Missions = make([]Mission, len(s.Missions))
+	out.Limits = slices.Clone(s.Limits)
 
 	for i, t := range s.Operations {
 		t.Repos = slices.Clone(t.Repos)
@@ -45,6 +53,7 @@ func (s Snapshot) Clone() Snapshot {
 // cloneMission deep copies a mission's reference types.
 func cloneMission(t Mission) Mission {
 	t.Badges = slices.Clone(t.Badges)
+	t.Usage = t.Usage.Clone()
 	t.ExtraRepos = slices.Clone(t.ExtraRepos)
 	t.LaunchRepos = slices.Clone(t.LaunchRepos)
 
@@ -125,6 +134,41 @@ func (s Snapshot) MissionByDir(dir string) (Mission, bool) {
 	}
 
 	return Mission{}, false
+}
+
+// Limit returns the agent's recorded limit, reporting false when it has none
+// or when the window it names has already reopened.
+//
+// Expiry is applied on read rather than by a sweep, so a limit that lapses
+// while nothing is happening still stops being shown the moment anyone looks.
+func (s Snapshot) Limit(tool Tool, now time.Time) (Limit, bool) {
+	for _, l := range s.Limits {
+		if l.Tool == tool && l.Live(now) {
+			return l, true
+		}
+	}
+
+	return Limit{}, false
+}
+
+// PutLimit records an agent's limit, replacing any earlier one for that agent.
+//
+// A limit is dropped rather than stored when its window has already reopened,
+// which is what keeps the list from growing one entry per refusal forever.
+func (s *Snapshot) PutLimit(l Limit, now time.Time) {
+	kept := make([]Limit, 0, len(s.Limits)+1)
+
+	for _, existing := range s.Limits {
+		if existing.Tool != l.Tool && existing.Live(now) {
+			kept = append(kept, existing)
+		}
+	}
+
+	if l.Live(now) {
+		kept = append(kept, l)
+	}
+
+	s.Limits = kept
 }
 
 // MissionsInLane returns the missions in a lane, ordered for display.

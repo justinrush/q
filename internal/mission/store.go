@@ -180,6 +180,14 @@ func migrate(snap Snapshot) Snapshot {
 		snap.SchemaVersion = SchemaVersion
 	}
 
+	// Version 2 added per-mission usage and per-agent limits. Both are additive
+	// and zero-value correct — an unmeasured mission carries no cost, which is
+	// exactly what a version 1 snapshot means — so the bump only has to be
+	// recorded, and the next meter run fills the values in.
+	if snap.SchemaVersion < 2 {
+		snap.SchemaVersion = 2
+	}
+
 	return snap
 }
 

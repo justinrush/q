@@ -861,7 +861,7 @@ func TestOperationFormCompletesTheLineUnderTheCursor(t *testing.T) {
 func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
 	operations := []mission.Operation{testOperation("op_1", "T", 0)}
 
-	form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true}, operations, "op_1", Options{})
+	form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true}, operations, "op_1", Options{}, nil, time.Time{})
 	form.name.SetValue("mission")
 	form.prompt.SetValue("do it")
 
@@ -884,7 +884,7 @@ func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
 
 func TestMissionFormRequiresNameAndPrompt(t *testing.T) {
 	operations := []mission.Operation{testOperation("op_1", "T", 0)}
-	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{})
+	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{}, nil, time.Time{})
 
 	if _, cmd := form.submit(false); cmd != nil {
 		t.Error("a nameless mission should not submit")
@@ -905,7 +905,7 @@ func TestMissionFormRequiresNameAndPrompt(t *testing.T) {
 
 func TestMissionFormCompletesAndSubmitsAdditionalRepos(t *testing.T) {
 	operations := []mission.Operation{testOperation("op_1", "Misc", 0)}
-	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{})
+	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{}, nil, time.Time{})
 	form.name.SetValue("small mission")
 	form.prompt.SetValue("do it")
 	form.repos.repoRoots = []string{"/dev"}
@@ -938,7 +938,7 @@ func TestMissionFormCompletesAndSubmitsAdditionalRepos(t *testing.T) {
 func TestMissionFormLocksAdditionalReposWhileLaunching(t *testing.T) {
 	ms := testMission("ms_1", "running", "op_1", mission.StatusActive)
 	ms.ExtraRepos = []mission.Repo{{Name: "mac", Path: "/dev/mac"}}
-	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
+	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{}, nil, time.Time{})
 	form.focusField(fieldMissionRepos)
 
 	form.Update(keyMsg("x"))
@@ -960,7 +960,7 @@ func TestMissionFormFixesToolAfterLaunch(t *testing.T) {
 	ms := testMission("ms_1", "running", "op_1", mission.StatusActive)
 	ms.StartedAt = &started
 
-	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{})
+	form := newMissionForm(ms, []mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{}, nil, time.Time{})
 	before := form.tool
 
 	form.cycleTool(keySpace)
@@ -1203,7 +1203,7 @@ func TestMissionFormStartsOnTheAgentDefault(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-				"op_1", Options{DefaultTool: tc.tool, Models: testModels()})
+				"op_1", Options{DefaultTool: tc.tool, Models: testModels()}, nil, time.Time{})
 
 			if form.model != tc.wantModel {
 				t.Errorf("model = %q, want %q", form.model, tc.wantModel)
@@ -1222,7 +1222,7 @@ func TestMissionFormKeepsAnExistingModel(t *testing.T) {
 	form := newMissionForm(
 		mission.Mission{ID: "ms_1", Tool: mission.ToolClaude, Model: "retired-model", Effort: "high"},
 		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
-		Options{Models: testModels()},
+		Options{Models: testModels()}, nil, time.Time{},
 	)
 
 	if form.model != "retired-model" {
@@ -1272,7 +1272,7 @@ func TestMissionFormCyclesModelAndEffort(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-				"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+				"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
 
 			for _, field := range tc.steps {
 				form.focusField(field)
@@ -1294,7 +1294,7 @@ func TestMissionFormCyclesModelAndEffort(t *testing.T) {
 // mission would be rejected at launch, in a detached pane.
 func TestMissionFormResetsModelWhenAgentChanges(t *testing.T) {
 	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
 
 	if form.model != "opus" {
 		t.Fatalf("model = %q, want opus to start", form.model)
@@ -1324,7 +1324,7 @@ func TestMissionFormFreezesModelAfterLaunch(t *testing.T) {
 			StartedAt: &started,
 		},
 		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
-		Options{Models: testModels()},
+		Options{Models: testModels()}, nil, time.Time{},
 	)
 
 	form.cycleModel(keySpace)
@@ -1339,7 +1339,7 @@ func TestMissionFormFreezesModelAfterLaunch(t *testing.T) {
 // fetch must take the default once it lands rather than staying blank.
 func TestMissionFormAdoptsModelsWhenTheyArrive(t *testing.T) {
 	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-		"op_1", Options{DefaultTool: mission.ToolClaude})
+		"op_1", Options{DefaultTool: mission.ToolClaude}, nil, time.Time{})
 
 	if form.model != "" {
 		t.Fatalf("model = %q, want it empty before any fetch", form.model)
@@ -1355,7 +1355,7 @@ func TestMissionFormAdoptsModelsWhenTheyArrive(t *testing.T) {
 // A model the human already chose must survive a later fetch.
 func TestMissionFormKeepsChoiceWhenModelsRefresh(t *testing.T) {
 	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
 
 	form.focusField(fieldMissionModel)
 	form.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(" ")})
@@ -1373,7 +1373,7 @@ func TestMissionFormKeepsChoiceWhenModelsRefresh(t *testing.T) {
 
 func TestMissionFormSubmitsModelAndEffort(t *testing.T) {
 	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
-		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()})
+		"op_1", Options{DefaultTool: mission.ToolClaude, Models: testModels()}, nil, time.Time{})
 	form.name.SetValue("mission")
 	form.prompt.SetValue("do it")
 	form.effort = "high"
@@ -1539,6 +1539,277 @@ func TestHeaderReportsHowLongTheStreamHasBeenDown(t *testing.T) {
 
 			if !strings.Contains(status, tc.want) {
 				t.Errorf("status = %q, want it to contain %q", status, tc.want)
+			}
+		})
+	}
+}
+
+func TestFormatUSD(t *testing.T) {
+	cases := []struct {
+		name string
+		usd  float64
+		want string
+	}{
+		{name: "cents", usd: 0.42, want: "$0.42"},
+		{name: "dollars keep their cents", usd: 1.234, want: "$1.23"},
+		{name: "tens drop to one decimal", usd: 12.44, want: "$12.4"},
+		{name: "hundreds drop the decimals", usd: 134.6, want: "$135"},
+		{name: "a fraction of a cent is not rounded away to nothing", usd: 0.004, want: "<$0.01"},
+		{name: "zero", usd: 0, want: "<$0.01"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatUSD(tc.usd); got != tc.want {
+				t.Fatalf("formatUSD(%v) = %q, want %q", tc.usd, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderCardShowsCost(t *testing.T) {
+	cases := []struct {
+		name  string
+		usage mission.Usage
+		want  string
+		// absent, when set, must not appear.
+		absent string
+	}{
+		{
+			name: "a measured mission carries its total",
+			usage: mission.Usage{
+				PerModel: map[string]mission.ModelTokens{"claude-opus-5": {Output: 1000}},
+				USD:      1.23,
+			},
+			want: "$1.23",
+		},
+		{
+			name: "an incomplete total says so",
+			usage: mission.Usage{
+				PerModel: map[string]mission.ModelTokens{"claude-opus-5": {Output: 1000}},
+				USD:      1.23,
+				Unpriced: true,
+			},
+			want: "$1.23+",
+		},
+		{
+			name:   "an unmeasured mission carries no cost segment at all",
+			usage:  mission.Usage{},
+			absent: "$",
+		},
+		{
+			name: "a measured mission with no tokens yet carries none either",
+			usage: mission.Usage{
+				PerModel: map[string]mission.ModelTokens{"claude-opus-5": {}},
+			},
+			absent: "$",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+			ms.Usage = tc.usage
+
+			out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
+
+			if tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Errorf("card should show %q:\n%s", tc.want, out)
+			}
+
+			if tc.absent != "" && strings.Contains(out, tc.absent) {
+				t.Errorf("card should not contain %q:\n%s", tc.absent, out)
+			}
+		})
+	}
+}
+
+// The meta line is truncated to the card's width, so cost is placed ahead of
+// the model that explains it and the details that can be recovered by opening
+// the mission.
+//
+// The width tested is the narrowest a lane is ever actually dealt: a board
+// below focusModeBelow shows a single lane spanning the whole terminal, so the
+// tightest a card gets in practice is one of five lanes sharing that threshold.
+// MinCardWidth is a floor for a terminal narrower than the card, where the meta
+// line has room for the agent and nothing else, and the assertion there is only
+// that the card stays inside its column.
+func TestRenderCardKeepsCostOnANarrowCard(t *testing.T) {
+	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+	ms.PlanMode = true
+	ms.Badges = []mission.Badge{{Kind: mission.BadgeStale, Detail: "idle"}}
+	// The model shares this line and is the segment cost has to outrank, so it
+	// is set here rather than left out of the case that tests the ordering.
+	ms.Model, ms.Effort = "opus", "high"
+	ms.Usage = mission.Usage{
+		PerModel: map[string]mission.ModelTokens{"claude-opus-5": {Output: 1000}},
+		USD:      1.23,
+	}
+
+	var narrowest int
+
+	for _, w := range computeLayout(focusModeBelow, 40, true, 0).Widths {
+		if w > 0 && (narrowest == 0 || w < narrowest) {
+			narrowest = w
+		}
+	}
+
+	out := renderCard(ms, testOperation("op_1", "T", 0), narrowest, false)
+	if !strings.Contains(out, "$1.23") {
+		t.Errorf("cost should survive truncation at %d columns:\n%s", narrowest, out)
+	}
+
+	for _, width := range []int{MinCardWidth, narrowest} {
+		out := renderCard(ms, testOperation("op_1", "T", 0), width, false)
+
+		for i, line := range strings.Split(out, "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("width %d: line %d is %d wide: %q", width, i, got, line)
+			}
+		}
+	}
+}
+
+func TestMissionFormWarnsAboutAnExhaustedAgent(t *testing.T) {
+	now := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+
+	cases := []struct {
+		name   string
+		tool   mission.Tool
+		limits []mission.Limit
+		want   bool
+	}{
+		{
+			name: "the selected agent is out of window",
+			tool: mission.ToolClaude,
+			limits: []mission.Limit{{
+				Tool:     mission.ToolClaude,
+				Kind:     "five_hour",
+				ResetsAt: now.Add(time.Hour),
+			}},
+			want: true,
+		},
+		{
+			name: "a window that has already reopened is not worth mentioning",
+			tool: mission.ToolClaude,
+			limits: []mission.Limit{{
+				Tool:     mission.ToolClaude,
+				Kind:     "five_hour",
+				ResetsAt: now.Add(-time.Hour),
+			}},
+		},
+		{
+			name: "another agent's limit says nothing about this one",
+			tool: mission.ToolCodex,
+			limits: []mission.Limit{{
+				Tool:     mission.ToolClaude,
+				Kind:     "five_hour",
+				ResetsAt: now.Add(time.Hour),
+			}},
+		},
+		{name: "no limits at all", tool: mission.ToolClaude},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(
+				mission.Mission{Tool: tc.tool}, operations, "op_1", Options{}, tc.limits, now,
+			)
+
+			out := form.View(90, 40)
+			if got := strings.Contains(out, "limit hit"); got != tc.want {
+				t.Fatalf("warning shown = %v, want %v:\n%s", got, tc.want, out)
+			}
+		})
+	}
+}
+
+// Cycling the agent must re-decide the warning, since the point of it is to
+// help the human pick a different one.
+func TestMissionFormWarningFollowsTheSelectedAgent(t *testing.T) {
+	now := time.Date(2026, 9, 5, 16, 0, 0, 0, time.UTC)
+	limits := []mission.Limit{
+		{Tool: mission.ToolClaude, Kind: "five_hour", ResetsAt: now.Add(time.Hour)},
+	}
+
+	form := newMissionForm(
+		mission.Mission{Tool: mission.ToolClaude},
+		[]mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{}, limits, now,
+	)
+
+	if !strings.Contains(form.View(90, 40), "limit hit") {
+		t.Fatal("claude should start out warned about")
+	}
+
+	form.tool = form.tool.Next()
+
+	if strings.Contains(form.View(90, 40), "limit hit") {
+		t.Fatal("cycling to an unaffected agent should clear the warning")
+	}
+}
+
+func TestFormatTokens(t *testing.T) {
+	cases := []struct {
+		name   string
+		tokens int64
+		want   string
+	}{
+		{name: "a handful", tokens: 512, want: "512"},
+		{name: "thousands", tokens: 1500, want: "1.5k"},
+		{name: "tens of thousands", tokens: 42_000, want: "42k"},
+		{name: "millions", tokens: 1_250_000, want: "1.2M"},
+		{name: "tens of millions", tokens: 14_500_000, want: "14M"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatTokens(tc.tokens); got != tc.want {
+				t.Fatalf("formatTokens(%d) = %q, want %q", tc.tokens, got, tc.want)
+			}
+		})
+	}
+}
+
+// A card for an agent q ships no rates for reports the count rather than a
+// dollar floor of zero, which would be true and useless.
+func TestRenderCardFallsBackToTokensWhenNothingIsPriced(t *testing.T) {
+	cases := []struct {
+		name  string
+		usage mission.Usage
+		want  string
+	}{
+		{
+			name: "nothing priced",
+			usage: mission.Usage{
+				PerModel: map[string]mission.ModelTokens{"gpt-whatever": {Input: 1_000_000, Output: 250_000}},
+				Unpriced: true,
+			},
+			want: "1.2M",
+		},
+		{
+			name: "partly priced still reads as money",
+			usage: mission.Usage{
+				PerModel: map[string]mission.ModelTokens{
+					"claude-opus-5": {Output: 1_000_000},
+					"gpt-whatever":  {Output: 1_000_000},
+				},
+				USD:      25,
+				Unpriced: true,
+			},
+			want: "$25.0+",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+			ms.Usage = tc.usage
+
+			out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("card should show %q:\n%s", tc.want, out)
 			}
 		})
 	}
