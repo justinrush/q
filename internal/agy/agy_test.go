@@ -72,3 +72,19 @@ func TestWorkspaceHooks(t *testing.T) {
 		t.Fatal("invalid user hooks overwritten")
 	}
 }
+
+func TestModelEffortOnLaunchAndResume(t *testing.T) {
+	a := New("agy", Options{})
+	if got := strings.Join(a.Args(mission.Invocation{}), " "); strings.Contains(got, "--model") || strings.Contains(got, "--effort") {
+		t.Fatal(got)
+	}
+	for _, resume := range []bool{false, true} {
+		inv := mission.Invocation{Model: "gemini-3.8-flash-high", Effort: "high", Resume: resume, SessionID: "conv-one"}
+		args := strings.Join(a.Args(inv), " ")
+		for _, want := range []string{"--model 'gemini-3.8-flash-high'", "--effort 'high'"} {
+			if !strings.Contains(args, want) {
+				t.Fatalf("resume=%v: %s", resume, args)
+			}
+		}
+	}
+}

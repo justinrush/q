@@ -192,7 +192,7 @@ one-off run can point q somewhere else without editing the file:
 | `Q_TERMINAL` | `terminal.mode` |
 | `Q_BRANCH_PREFIX` | `git.branchPrefix` |
 | `Q_DEFAULT_AGENT` | `agents.default` |
-| `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL` | `agents.<agent>.model` |
+| `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL`, `Q_AGY_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
@@ -536,3 +536,14 @@ The [agy hook contract](https://antigravity.google/docs/hooks/) supports activit
 turn completion, errors, and whether background work remains. Permission waits
 are not reported, so attach to the mission to answer permission prompts even if
 its card still shows active. q's plan-approval toggle is unavailable for agy.
+
+Agy participates in `q models`, automatic catalog refresh, and the board's model
+and effort pickers. q reads `agy models` and passes mission selections through
+`--model` and `--effort`, including on resume. Set `agents.agy.model` (or
+`Q_AGY_MODEL`) and `agents.agy.effort` for defaults. `agents.agy.models` supplies
+fallback choices when discovery fails. The CLI catalog does not identify its
+default, so q leaves the model unset unless configured or selected.
+
+Agy cost and limit metering is unavailable: the local 1.1.27 transcripts contain
+no token-usage or quota-reset records. Its missions display no cost, and `q doctor`
+reports this limitation. Configuring prices alone cannot supply missing usage.

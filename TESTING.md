@@ -211,3 +211,10 @@ its prompt and worktrees, finish a turn, and check that the card reaches debrief
 Relaunch and verify the same conversation resumes. Check a permission prompt in
 the terminal: agy does not expose a permission-wait event to q. Verify custom hooks
 continue running alongside the generated workspace hooks.
+
+After rebasing onto the model-selection and cost merges, `internal/agy` also tests
+catalog parsing, failed probes and configured fallbacks, and model/effort flags
+on fresh launches and resumes. Verified with agy 1.1.27: `agy models` returns
+ID/tab/label rows; `agy models --json` is rejected. Local transcript schemas were
+inspected without displaying conversation content: neither transcript.jsonl nor
+transcript_full.jsonl contained usage or quota fields. No agy meter is registered.

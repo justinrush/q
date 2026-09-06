@@ -41,6 +41,7 @@ const (
 	EnvDefaultTool = "Q_DEFAULT_AGENT"
 	EnvClaudeModel = "Q_CLAUDE_MODEL"
 	EnvCodexModel  = "Q_CODEX_MODEL"
+	EnvAgyModel    = "Q_AGY_MODEL"
 	EnvLogLevel    = "Q_LOG_LEVEL"
 )
 
@@ -383,6 +384,10 @@ func applyEnv(out *settings) {
 
 	if v := strings.TrimSpace(os.Getenv(EnvClaudeModel)); v != "" {
 		out.Agents.Claude.Model = v
+	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvAgyModel)); v != "" {
+		out.Agents.Agy.Model = v
 	}
 
 	if v := strings.TrimSpace(os.Getenv(EnvCodexModel)); v != "" {

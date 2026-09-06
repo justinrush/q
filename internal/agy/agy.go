@@ -41,6 +41,13 @@ func (a *Agent) Args(inv mission.Invocation) []string {
 		args = append(args, "--add-dir", mission.ShellQuote(path))
 	}
 	args = append(args, mission.ShellQuoteAll(a.args)...)
+	// Mission selections win over legacy model flags in agents.agy.args.
+	if inv.Model != "" {
+		args = append(args, "--model", mission.ShellQuote(inv.Model))
+	}
+	if inv.Effort != "" {
+		args = append(args, "--effort", mission.ShellQuote(inv.Effort))
+	}
 	return append(args, "--prompt-interactive", mission.PromptArg)
 }
 
