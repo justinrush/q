@@ -125,7 +125,7 @@ settings without writing anything.
   "editor": { "command": ["nvim", "+Neotree"] },
   "terminal": { "mode": "ghostty", "command": [] },
   "paths": { "dataDir": "", "stateDir": "" },
-  "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 1.25, "output": 10 } } },
+  "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 4, "output": 20, "cacheRead": 0.4 } } },
   "tools": { "tmux": "/usr/bin/tmux" },
   "logLevel": "info"
 }
@@ -337,8 +337,14 @@ Two things the number tells you about itself:
 - A trailing `+` (`$1.23+`) means a model in the mission had no rate in the price table,
   so the figure is a floor rather than a total.
 - A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
-  q ships rates for the claude models and none for the ones codex runs, so codex cards
-  read this way until you add rates under `cost.models`.
+  Unknown models can be priced under `cost.models`.
+
+q ships Claude rates and OpenAI rates for GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, GPT-5.4, and GPT-5/5.1/5.3 Codex.
+Codex usage is priced per response using the recorded turn model, including discounted
+cached input. Rates use [standard short-context API pricing](https://developers.openai.com/api/docs/pricing)
+verified September 9, 2026; they exclude service-tier, long-context, regional, and tool
+surcharges. This is a comparison estimate, not a subscription charge. Override rates
+with `cost.models` as needed; metering does not fetch prices at runtime.
 
 `q doctor` reports any model your missions used that the table cannot price, which is how
 a table that has fallen behind announces itself rather than quietly under-reporting.

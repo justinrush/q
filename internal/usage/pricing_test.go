@@ -188,3 +188,15 @@ func TestDefaultPricingCoversTheModelsQRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAISnapshotDoesNotPriceUnknownVariants(t *testing.T) {
+	pricing := DefaultPricing()
+	for _, model := range []string{"gpt-5.4-pro", "gpt-5.4-mini", "gpt-5.6-sol-unknown", "gpt-5.40"} {
+		if _, ok := pricing.Price(model); ok {
+			t.Errorf("unexpected rate for %s", model)
+		}
+	}
+	if price, ok := pricing.Price("gpt-5.6-sol-2026-09-01"); !ok || price.Input != 4 {
+		t.Fatalf("snapshot price = %+v, %v", price, ok)
+	}
+}

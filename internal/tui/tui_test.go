@@ -17,6 +17,7 @@ import (
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/tui/keys"
+	"github.com/justinrush/q/internal/usage"
 	"github.com/muesli/termenv"
 )
 
@@ -2050,5 +2051,14 @@ func TestBranchPickerHighlightsTheChoiceWhenBranchesArriveLate(t *testing.T) {
 
 	if branches.chosen["q"] != "main" {
 		t.Errorf("chosen = %q, want main highlighted when the list landed", branches.chosen["q"])
+	}
+}
+
+func TestCodexCostDisplaysDollarsWithDefaultPricing(t *testing.T) {
+	ms := mission.Mission{Tool: mission.ToolCodex, Usage: usage.DefaultPricing().Value(
+		map[string]mission.ModelTokens{"gpt-5.6-sol": {Input: 500000, CacheRead: 500000, Output: 100000}},
+	)}
+	if got := missionCost(ms); got != "$4.20" {
+		t.Fatalf("cost = %q, want $4.20", got)
 	}
 }

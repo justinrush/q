@@ -79,7 +79,7 @@ type codexEntry struct {
 type codexCounts struct {
 	// byResponse is keyed by response id, so a record replayed into a subagent
 	// rollout or repeated by a rate-limit refresh is counted once.
-	byResponse map[string]mission.ModelTokens
+	byResponse map[string]requestUsage
 	model      string
 	limit      mission.Limit
 }
@@ -116,25 +116,17 @@ func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 		return mission.Metering{Limit: counts.limit}, false, nil
 	}
 
-	// The rollout names the model per turn, but an ephemeral or truncated one
-	// may never have. The mission's own choice is the next best answer — it is
-	// what q put on the command line — and only when there is neither does the
-	// usage get a name no price can match.
-	model := counts.model
-	if model == "" {
-		model = ms.Model
+	perModel := map[string]mission.ModelTokens{}
+	for _, response := range counts.byResponse {
+		model := response.model
+		if model == "" {
+			model = ms.Model
+		}
+		if model == "" {
+			model = unknownCodexModel
+		}
+		perModel[model] = perModel[model].Add(response.tokens)
 	}
-
-	if model == "" {
-		model = unknownCodexModel
-	}
-
-	var total mission.ModelTokens
-	for _, tokens := range counts.byResponse {
-		total = total.Add(tokens)
-	}
-
-	perModel := map[string]mission.ModelTokens{model: total}
 
 	return mission.Metering{
 		Usage: c.pricing.Value(perModel),
@@ -185,7 +177,7 @@ func parseRollout(path string) (codexCounts, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	counts := codexCounts{byResponse: map[string]mission.ModelTokens{}}
+	counts := codexCounts{byResponse: map[string]requestUsage{}}
 
 	// A subagent rollout replays its parent's records before recording any of
 	// its own, and the replay is indistinguishable from real work except by the
@@ -227,7 +219,11 @@ func parseRollout(path string) (codexCounts, error) {
 			}
 
 			if tokens := record.Usage.tokens(); !tokens.Zero() {
-				counts.byResponse[record.ResponseID] = tokens
+				model := counts.model
+				if previous, ok := counts.byResponse[record.ResponseID]; ok {
+					model = previous.model
+				}
+				counts.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens}
 			}
 		}
 	}
@@ -276,6 +272,7 @@ type rolloutPayload struct {
 	RateLimits *codexRateLimits `json:"rate_limits"`
 
 	// turn_context.
+	Model             string `json:"model"`
 	CollaborationMode *struct {
 		Model    string `json:"model"`
 		Settings *struct {
@@ -287,6 +284,9 @@ type rolloutPayload struct {
 // model returns the model a turn ran under, preferring the current nesting over
 // the flatter one older rollouts used.
 func (p rolloutPayload) model() string {
+	if p.Model != "" {
+		return p.Model
+	}
 	if p.CollaborationMode == nil {
 		return ""
 	}
