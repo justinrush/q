@@ -19,6 +19,7 @@ package usage
 import (
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/justinrush/q/internal/mission"
 )
@@ -63,6 +64,16 @@ type Pricing struct {
 // add it to the table without waiting for a release.
 func DefaultPricing() Pricing {
 	return Pricing{Models: map[string]ModelPrice{
+		// OpenAI standard, short-context API rates, verified 2026-09-09.
+		// https://developers.openai.com/api/docs/pricing
+		"gpt-5-codex":       {Input: 1.25, Output: 10, CacheRead: 0.125},
+		"gpt-5.1-codex":     {Input: 1.25, Output: 10, CacheRead: 0.125},
+		"gpt-5.3-codex":     {Input: 1.75, Output: 14, CacheRead: 0.175},
+		"gpt-5.4":           {Input: 2.5, Output: 15, CacheRead: 0.25},
+		"gpt-6-astra":       {Input: 10, Output: 50, CacheRead: 1},
+		"gpt-5.6-sol":       {Input: 4, Output: 20, CacheRead: 0.4},
+		"gpt-5.6-terra":     {Input: 2, Output: 12, CacheRead: 0.2},
+		"gpt-5.6-luna":      {Input: 0.2, Output: 1.2, CacheRead: 0.02},
 		"claude-fable-5-1":  {Input: 10, Output: 50, CacheRead: 0.25},
 		"claude-mythos-5-1": {Input: 10, Output: 50},
 		"claude-fable-5":    {Input: 10, Output: 50},
@@ -81,7 +92,7 @@ func DefaultPricing() Pricing {
 //
 // A model id may carry a dated snapshot suffix that the table does not list —
 // "claude-haiku-4-5-20251001" for "claude-haiku-4-5" — so an exact miss falls
-// back to the longest listed id the model starts with. Longest wins so that
+// back to a listed id followed by a dated snapshot suffix. Longest wins so that
 // adding a "claude-opus-5-1" entry later cannot be shadowed by "claude-opus-5".
 func (p Pricing) Price(model string) (ModelPrice, bool) {
 	if price, ok := p.Models[model]; ok {
@@ -94,12 +105,23 @@ func (p Pricing) Price(model string) (ModelPrice, bool) {
 	)
 
 	for id, price := range p.Models {
-		if len(id) > len(match) && strings.HasPrefix(model, id) {
+		if len(id) > len(match) && strings.HasPrefix(model, id+"-") && datedSnapshot(strings.TrimPrefix(model, id+"-")) {
 			best, match = price, id
 		}
 	}
 
 	return best, match != ""
+}
+
+// datedSnapshot permits snapshot aliases without assigning a base model's price
+// to a differently priced variant such as a mini or pro model.
+func datedSnapshot(suffix string) bool {
+	for _, layout := range []string{"20060102", "2006-01-02"} {
+		if _, err := time.Parse(layout, suffix); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // Cost estimates what one model's tokens would have cost, reporting false when

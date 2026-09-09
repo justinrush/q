@@ -2,6 +2,7 @@ package usage
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,7 +59,7 @@ func writeRollout(t *testing.T, lines ...string) string {
 }
 
 // codexPricing prices the model the fixtures name, so the dollar path is
-// exercised even though q ships no rate for a real codex model.
+// exercised independently of changes to published model rates.
 var codexPricing = Pricing{Models: map[string]ModelPrice{"gpt-test": {Input: 10, Output: 100}}}
 
 func TestCodexMeterTokens(t *testing.T) {
@@ -322,5 +323,29 @@ func TestCodexMeterWithoutARollout(t *testing.T) {
 
 	if measured {
 		t.Fatal("Meter() measured = true, want false")
+	}
+}
+
+func TestCodexPricesEachTurnModel(t *testing.T) {
+	path := writeRollout(t,
+		turnContext("gpt-5.6-sol"),
+		tokenRecord("t1", "r1", 1000000, 500000, 0, 100000),
+		`{"type":"turn_context","payload":{"model":"gpt-5.6-luna"}}`,
+		tokenRecord("t1", "r2", 1000000, 500000, 0, 100000),
+		tokenRecord("t1", "r1", 1000000, 500000, 0, 100000),
+	)
+	meter := NewCodex(DefaultPricing())
+	for range 2 { // Also exercise the cached scan.
+		got, measured, err := meter.Meter(mission.Mission{TranscriptPath: path})
+		if err != nil || !measured {
+			t.Fatalf("Meter: %v, %v", measured, err)
+		}
+		// Sol: 2 + .2 + 2; Luna: .1 + .01 + .12.
+		if math.Abs(got.Usage.USD-4.43) > 1e-9 || got.Usage.Unpriced {
+			t.Fatalf("usage = %+v, want $4.43", got.Usage)
+		}
+		if len(got.Usage.PerModel) != 2 {
+			t.Fatalf("models = %v", got.Usage.PerModel)
+		}
 	}
 }
