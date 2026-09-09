@@ -261,6 +261,31 @@ func parseRepoFlags(values []string) ([]mission.Repo, error) {
 	return out, nil
 }
 
+// parseBaseFlags turns --base values into a repo-name-to-branch map.
+//
+// The repo is named rather than pathed because a mission's base branches are
+// keyed by name, which is also how the operation and the board refer to it.
+func parseBaseFlags(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string]string, len(values))
+
+	for _, v := range values {
+		repo, branch, ok := strings.Cut(v, "=")
+
+		repo, branch = strings.TrimSpace(repo), strings.TrimSpace(branch)
+		if !ok || repo == "" || branch == "" {
+			return nil, fmt.Errorf("--base %q is not repo=branch", v)
+		}
+
+		out[repo] = branch
+	}
+
+	return out, nil
+}
+
 // renderOperationTable prints operations as an aligned table.
 func renderOperationTable(out io.Writer, operations []mission.Operation) error {
 	if len(operations) == 0 {

@@ -61,6 +61,11 @@ type Service struct {
 	probers      []mission.ModelProber
 	models       *catalog
 	modelRefresh time.Duration
+	// brancher answers which branches a repo could be based on. It is nil
+	// without git, in which case the briefing form offers no list and a base
+	// branch can still be typed.
+	brancher Brancher
+	branches *branchCache
 
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
@@ -125,6 +130,7 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		runtimes:  make(map[mission.Tool]mission.Runtime),
 		meters:    make(map[mission.Tool]mission.Meter),
 		models:    newCatalog(),
+		branches:  newBranchCache(),
 		approvals: make(map[mission.MissionID]approvalCandidate),
 	}
 
@@ -306,20 +312,21 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 
 	now := s.now()
 	ms := mission.Mission{
-		ID:          id,
-		OperationID: req.OperationID,
-		Name:        name,
-		Slug:        mission.Slug(name),
-		Tool:        tool,
-		Prompt:      req.Prompt,
-		PlanMode:    req.PlanMode,
-		Model:       req.Model,
-		Effort:      req.Effort,
-		ExtraRepos:  normalizeRepos(req.ExtraRepos),
-		Status:      mission.StatusBriefing,
-		AgentState:  mission.AgentUnknown,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:           id,
+		OperationID:  req.OperationID,
+		Name:         name,
+		Slug:         mission.Slug(name),
+		Tool:         tool,
+		Prompt:       req.Prompt,
+		PlanMode:     req.PlanMode,
+		Model:        req.Model,
+		Effort:       req.Effort,
+		ExtraRepos:   normalizeRepos(req.ExtraRepos),
+		BaseBranches: normalizeBaseBranches(req.BaseBranches),
+		Status:       mission.StatusBriefing,
+		AgentState:   mission.AgentUnknown,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	err = s.store.Mutate("mission.create", func(snap *mission.Snapshot) error {
@@ -405,12 +412,8 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		ms.Order = *req.Order
 	}
 
-	if req.ExtraRepos != nil {
-		if ms.Status != mission.StatusBriefing {
-			return fmt.Errorf("%w: cannot change repositories after launch", ErrConflict)
-		}
-
-		ms.ExtraRepos = normalizeRepos(*req.ExtraRepos)
+	if err := applyWorktreePatch(ms, req); err != nil {
+		return err
 	}
 
 	// Tool, plan mode, model, and effort are only meaningful before launch: they
@@ -564,6 +567,56 @@ func normalizeRepos(repos []mission.Repo) []mission.Repo {
 		}
 
 		out = append(out, r)
+	}
+
+	return out
+}
+
+// applyWorktreePatch applies the fields that describe a mission's worktrees.
+//
+// Both are fixed the moment provisioning runs — the repositories decide which
+// worktrees exist and the base branches decide what is in them — so both are
+// editable only while the mission is still in briefing.
+func applyWorktreePatch(ms *mission.Mission, req api.UpdateMissionRequest) error {
+	if req.ExtraRepos == nil && req.BaseBranches == nil {
+		return nil
+	}
+
+	if ms.Status != mission.StatusBriefing {
+		return fmt.Errorf("%w: cannot change repositories or base branches after launch", ErrConflict)
+	}
+
+	if req.ExtraRepos != nil {
+		ms.ExtraRepos = normalizeRepos(*req.ExtraRepos)
+	}
+
+	if req.BaseBranches != nil {
+		ms.BaseBranches = normalizeBaseBranches(*req.BaseBranches)
+	}
+
+	return nil
+}
+
+// normalizeBaseBranches trims entries and drops those naming no branch, so that
+// clearing an override in a form arrives as an absent key rather than an empty
+// string the provisioner would have to interpret.
+//
+// It returns nil for an empty result, which is what keeps the field out of the
+// state file for the missions that never used it.
+func normalizeBaseBranches(branches map[string]string) map[string]string {
+	out := make(map[string]string, len(branches))
+
+	for repo, branch := range branches {
+		repo, branch = strings.TrimSpace(repo), strings.TrimSpace(branch)
+		if repo == "" || branch == "" {
+			continue
+		}
+
+		out[repo] = branch
+	}
+
+	if len(out) == 0 {
+		return nil
 	}
 
 	return out

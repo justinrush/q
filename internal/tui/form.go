@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,9 @@ type submitMissionMsg struct {
 	PlanMode    bool
 	OperationID mission.OperationID
 	ExtraRepos  []mission.Repo
+	// BaseBranches names the branch each repo's worktree is based on, keyed by
+	// repo name. Repos it does not mention use their own default branch.
+	BaseBranches map[string]string
 	// Launch requests that the mission be started immediately after saving.
 	Launch bool
 }
@@ -45,6 +49,9 @@ type missionForm struct {
 	name   *textArea
 	prompt *textArea
 	repos  *repoField
+	// baseBranches is the branch each repo's worktree is cut from, keyed by repo
+	// name. The branch modal edits this map in place.
+	baseBranches map[string]string
 
 	tool         mission.Tool
 	model        string
@@ -95,20 +102,27 @@ func newMissionForm(
 	now time.Time,
 ) *missionForm {
 	form := &missionForm{
-		id:          ms.ID,
-		operations:  operations,
-		limits:      limits,
-		openedAt:    now,
-		name:        newTextArea(ms.Name, false),
-		prompt:      newTextArea(ms.Prompt, true),
-		repos:       newRepoField(ms.ExtraRepos, opts.Repos),
-		tool:        ms.Tool,
-		model:       ms.Model,
-		effort:      ms.Effort,
-		planMode:    ms.PlanMode,
-		launched:    ms.Launched(),
-		reposLocked: ms.Status != "" && ms.Status != mission.StatusBriefing,
-		models:      opts.Models,
+		id:           ms.ID,
+		operations:   operations,
+		limits:       limits,
+		openedAt:     now,
+		name:         newTextArea(ms.Name, false),
+		prompt:       newTextArea(ms.Prompt, true),
+		repos:        newRepoField(ms.ExtraRepos, opts.Repos),
+		baseBranches: maps.Clone(ms.BaseBranches),
+		tool:         ms.Tool,
+		model:        ms.Model,
+		effort:       ms.Effort,
+		planMode:     ms.PlanMode,
+		launched:     ms.Launched(),
+		reposLocked:  ms.Status != "" && ms.Status != mission.StatusBriefing,
+		models:       opts.Models,
+	}
+
+	// The branch modal writes into this map directly, so it must exist even for a
+	// mission that names no base branches.
+	if form.baseBranches == nil {
+		form.baseBranches = map[string]string{}
 	}
 
 	if form.tool == "" {
@@ -158,6 +172,8 @@ func (f *missionForm) Update(msg tea.KeyMsg) (modal, tea.Cmd) {
 		// Saving and launching in one step, since creating a mission in order to leave
 		// it in briefing is the less common intent.
 		return f.submit(true)
+	case keyBranches:
+		return f.showBranches()
 	case keyEnter:
 		if f.field == fieldMissionRepos && !f.reposLocked {
 			next, err := f.repos.complete(f, msg)
@@ -333,6 +349,74 @@ func (f *missionForm) togglePlan(keyName string) {
 	}
 }
 
+// showBranches opens the base branch modal over the form.
+//
+// The repo list is computed here rather than kept on the form because it moves:
+// cycling the operation changes the inherited repos, and the extra repos are
+// whatever has been typed so far.
+func (f *missionForm) showBranches() (modal, tea.Cmd) {
+	if f.reposLocked {
+		f.err = "a mission's base branches are fixed once it launches"
+
+		return f, nil
+	}
+
+	repos, err := f.repoSet()
+	if err != nil {
+		f.err = err.Error()
+
+		return f, nil
+	}
+
+	if len(repos) == 0 {
+		f.err = "this mission has no repositories to base"
+
+		return f, nil
+	}
+
+	f.err = ""
+	branches := newBranchModal(repos, f.baseBranches, f)
+
+	// Warm every repo's list from local refs, so drilling into one shows
+	// something immediately rather than an empty box that fills a moment later.
+	cmds := make([]tea.Cmd, 0, len(repos))
+	for _, repo := range repos {
+		cmds = append(cmds, emit(wantBranchesMsg{Repo: repo}))
+	}
+
+	return branches, tea.Batch(cmds...)
+}
+
+// repoSet is the mission's effective repositories: its operation's plus its own.
+func (f *missionForm) repoSet() ([]mission.Repo, error) {
+	if len(f.operations) == 0 {
+		return parseRepoLines(f.repos.Value()), nil
+	}
+
+	return mission.CombineRepos(f.operations[f.operationIdx].Repos, parseRepoLines(f.repos.Value()))
+}
+
+// branchSummaryRow renders the chosen base branches, or nothing when every repo
+// is on its default.
+//
+// It is a display row rather than a focusable field: the picker is a modal, so a
+// field would have nothing to do with the keyboard once tabbed to, and adding one
+// would mean editing the field enum, the focus switch, and the update routing to
+// no benefit.
+func (f *missionForm) branchSummaryRow() string {
+	repos, err := f.repoSet()
+	if err != nil {
+		return ""
+	}
+
+	summary := branchSummary(repos, f.baseBranches)
+	if summary == "" {
+		return ""
+	}
+
+	return styles.FieldLabel.Render("Base branches") + "  " + summary
+}
+
 // submit validates and emits the form.
 func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 	name := strings.TrimSpace(f.name.Value())
@@ -367,16 +451,17 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 	}
 
 	return nil, emit(submitMissionMsg{
-		ID:          f.id,
-		Name:        name,
-		Prompt:      f.prompt.Value(),
-		Tool:        f.tool,
-		Model:       f.model,
-		Effort:      f.effort,
-		PlanMode:    f.planMode && f.tool.SupportsPlanMode(),
-		OperationID: f.operations[f.operationIdx].ID,
-		ExtraRepos:  parseRepoLines(f.repos.Value()),
-		Launch:      launch,
+		ID:           f.id,
+		Name:         name,
+		Prompt:       f.prompt.Value(),
+		Tool:         f.tool,
+		Model:        f.model,
+		Effort:       f.effort,
+		PlanMode:     f.planMode && f.tool.SupportsPlanMode(),
+		OperationID:  f.operations[f.operationIdx].ID,
+		ExtraRepos:   parseRepoLines(f.repos.Value()),
+		BaseBranches: f.baseBranches,
+		Launch:       launch,
 	})
 }
 
@@ -404,16 +489,26 @@ func (f *missionForm) View(width, height int) string {
 		f.label("Additional repos", fieldMissionRepos),
 		f.repoHelp(),
 		f.repos.View(inner),
+	}
+
+	// The summary sits with the repos it qualifies rather than at the end of the
+	// form, since a base branch only means anything against a repository.
+	if summary := f.branchSummaryRow(); summary != "" {
+		rows = append(rows, summary)
+	}
+
+	rows = append(rows,
 		"",
 		f.label("Prompt", fieldMissionPrompt),
 		f.prompt.View(inner),
-	}
+	)
 
 	if f.err != "" {
 		rows = append(rows, "", styles.CardError.Render(f.err))
 	}
 
-	footer := "tab field   space change   ctrl+s save   ctrl+r save and launch   esc cancel"
+	footer := "tab field   space change   ctrl+g branches   " +
+		"ctrl+s save   ctrl+r save and launch   esc cancel"
 	if f.field == fieldMissionRepos && !f.reposLocked {
 		footer = "enter complete path   " + footer
 	}

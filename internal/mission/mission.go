@@ -79,6 +79,14 @@ type Mission struct {
 	// ExtraRepos are repositories this mission adds to the repositories inherited
 	// from its operation. They are editable until the mission starts.
 	ExtraRepos []Repo `json:"extraRepos,omitempty"`
+	// BaseBranches overrides the branch a repo's worktree is based on, keyed by
+	// repo name. It covers the operation's repos as well as this mission's own,
+	// which is why it lives here rather than on Repo: the operation owns its
+	// repositories and a mission must not edit them to choose its own base.
+	//
+	// An absent or empty entry means the repo's default branch, so a mission that
+	// never touched it provisions exactly as it did before this existed.
+	BaseBranches map[string]string `json:"baseBranches,omitempty"`
 	// LaunchRepos freezes the complete repository set used for a launch.
 	LaunchRepos []Repo `json:"launchRepos,omitempty"`
 	// LaunchReposFrozen distinguishes a repo-less launch from a draft whose
@@ -254,6 +262,16 @@ func (t Mission) Launched() bool { return t.StartedAt != nil }
 // Resumable reports whether q knows enough to resume the agent session
 // after its tmux session has gone away.
 func (t Mission) Resumable() bool { return t.AgentSessionID != "" }
+
+// BaseBranch returns the branch repoName's worktree should be based on, falling
+// back to the repository's own default branch when the mission names none.
+func (t Mission) BaseBranch(repoName, defaultBranch string) string {
+	if override := strings.TrimSpace(t.BaseBranches[repoName]); override != "" {
+		return override
+	}
+
+	return defaultBranch
+}
 
 // Worktrees returns the mission's per-repo work, sorted by repo name.
 //

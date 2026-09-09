@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1812,5 +1813,242 @@ func TestRenderCardFallsBackToTokensWhenNothingIsPriced(t *testing.T) {
 				t.Errorf("card should show %q:\n%s", tc.want, out)
 			}
 		})
+	}
+}
+
+// ctrlG is the key message bubbletea delivers for the base branch popup.
+func ctrlG() tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyCtrlG} }
+
+// branchFormWith returns a mission form whose operation owns opRepos and whose
+// additional repo field has already completed to /dev/mac.
+func branchFormWith(opRepos []mission.Repo) *missionForm {
+	operation := testOperation("op_1", "Misc", 0)
+	operation.Repos = opRepos
+
+	form := newMissionForm(mission.Mission{}, []mission.Operation{operation}, "op_1", Options{}, nil, time.Time{})
+	form.name.SetValue("small mission")
+	form.prompt.SetValue("do it")
+	form.repos.repoRoots = []string{"/dev"}
+	form.repos.findRepos = func(fragment string) []git.Candidate {
+		return git.Match([]git.Candidate{{Path: "/dev/mac", Name: "mac", Rel: "mac"}}, fragment)
+	}
+
+	return form
+}
+
+// The popup has to offer the repos the mission inherits from its operation as
+// well as the ones it adds itself, since a base branch is just as meaningful for
+// either.
+func TestBranchModalListsInheritedAndAdditionalRepos(t *testing.T) {
+	form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+	form.repos.SetValue("/dev/mac")
+
+	next, cmd := form.Update(ctrlG())
+
+	branches, ok := next.(*branchModal)
+	if !ok {
+		t.Fatalf("ctrl+g opened %T, want the branch modal", next)
+	}
+
+	var names []string
+	for _, repo := range branches.repos {
+		names = append(names, repo.Name)
+	}
+
+	if !slices.Equal(names, []string{"q", "mac"}) {
+		t.Fatalf("repos = %q, want the operation's q and the mission's mac", names)
+	}
+
+	if cmd == nil {
+		t.Error("opening the modal should warm the branch lists")
+	}
+}
+
+// Typing filters, enter takes the highlighted branch, and the choice has to
+// survive the two modals closing and reach the daemon.
+func TestBranchPickerChoiceReachesSubmit(t *testing.T) {
+	form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+
+	next, _ := form.Update(ctrlG())
+	branches := next.(*branchModal)
+	branches.setBranches("q", []string{"main", "feat/login", "feat/logout"})
+
+	next, _ = branches.Update(enterKey())
+
+	picker, ok := next.(*branchPicker)
+	if !ok {
+		t.Fatalf("enter opened %T, want the branch picker", next)
+	}
+
+	for _, key := range []tea.KeyMsg{keyMsg("l"), keyMsg("o"), keyMsg("g")} {
+		next, _ = picker.Update(key)
+	}
+
+	if got := picker.matches(); !slices.Equal(got, []string{"feat/login", "feat/logout"}) {
+		t.Fatalf("matches = %q, want the two feat branches", got)
+	}
+
+	next, _ = picker.Update(tea.KeyMsg{Type: tea.KeyDown})
+	next, _ = picker.Update(enterKey())
+
+	if next != modal(branches) {
+		t.Fatalf("picking returned %T, want the branch modal", next)
+	}
+
+	back, _ := branches.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if back != modal(form) {
+		t.Fatalf("esc returned %T, want the mission form", back)
+	}
+
+	_, cmd := form.submit(false)
+	if cmd == nil {
+		t.Fatal("expected the form to submit")
+	}
+
+	msg, ok := cmd().(submitMissionMsg)
+	if !ok {
+		t.Fatalf("got %T, want submitMissionMsg", cmd())
+	}
+
+	if msg.BaseBranches["q"] != "feat/logout" {
+		t.Fatalf("BaseBranches = %v, want q on feat/logout", msg.BaseBranches)
+	}
+
+	if !strings.Contains(form.branchSummaryRow(), "q=feat/logout") {
+		t.Errorf("form does not show the choice: %q", form.branchSummaryRow())
+	}
+}
+
+// The list is only as complete as what origin has been asked for, so a branch
+// pushed a moment ago must still be usable by typing its name.
+func TestBranchPickerAcceptsATypedBranch(t *testing.T) {
+	cases := []struct {
+		name  string
+		typed string
+		want  string
+		// gone is true when the repo should end up with no override at all.
+		gone bool
+	}{
+		{name: "a branch the picker has never heard of", typed: "brand/new", want: "brand/new"},
+		{name: "surrounding space is trimmed", typed: " brand/new ", want: "brand/new"},
+		{name: "an empty box clears the override", typed: "", gone: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+
+			next, _ := form.Update(ctrlG())
+			branches := next.(*branchModal)
+			branches.chosen["q"] = "stale"
+
+			picker := newBranchPicker(branches.repos[0], "", nil, branches)
+			picker.query.SetValue(tc.typed)
+			picker.Update(enterKey())
+
+			got, ok := branches.chosen["q"]
+			switch {
+			case tc.gone && ok:
+				t.Fatalf("chosen = %q, want the override cleared", got)
+			case !tc.gone && got != tc.want:
+				t.Fatalf("chosen = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A mission's worktrees exist by the time it launches, so the popup must refuse
+// rather than collect a choice that could never be applied.
+func TestBranchModalRefusedAfterLaunch(t *testing.T) {
+	ms := testMission("ms_1", "running", "op_1", mission.StatusActive)
+
+	operation := testOperation("op_1", "Misc", 0)
+	operation.Repos = []mission.Repo{{Name: "q", Path: "/dev/q"}}
+
+	form := newMissionForm(ms, []mission.Operation{operation}, "op_1", Options{}, nil, time.Time{})
+
+	next, _ := form.Update(ctrlG())
+	if next != modal(form) {
+		t.Fatalf("ctrl+g opened %T on a launched mission", next)
+	}
+
+	if !strings.Contains(form.err, "fixed once it launches") {
+		t.Errorf("form does not explain the refusal: %q", form.err)
+	}
+}
+
+// An answer that arrives while someone is already typing has to land in the box
+// in front of them, not only in the list they will come back to.
+func TestApplyBranchesReachesTheOpenPicker(t *testing.T) {
+	form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+
+	next, _ := form.Update(ctrlG())
+	branches := next.(*branchModal)
+
+	next, _ = branches.Update(enterKey())
+	picker := next.(*branchPicker)
+
+	app := &App{modal: picker}
+	app.applyBranches(branchesMsg{Repo: "q", Branches: []string{"main", "feat/x"}})
+
+	if got := picker.matches(); !slices.Equal(got, []string{"feat/x", "main"}) {
+		t.Errorf("picker matches = %q, want both branches", got)
+	}
+
+	if got := branches.branches["q"]; !slices.Equal(got, []string{"main", "feat/x"}) {
+		t.Errorf("modal behind the picker = %q, want both branches", got)
+	}
+}
+
+// Opening the picker for a repo that already has a base branch must show every
+// branch with that one highlighted, not filter the list down to it: the box is a
+// query, so seeding it would hide the alternatives behind a fragment the user
+// then has to delete before they can type.
+func TestBranchPickerOpensUnfilteredOnTheCurrentChoice(t *testing.T) {
+	form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+
+	next, _ := form.Update(ctrlG())
+	branches := next.(*branchModal)
+	branches.chosen["q"] = "feat/logout"
+	branches.setBranches("q", []string{"main", "feat/login", "feat/logout"})
+
+	next, _ = branches.Update(enterKey())
+	picker := next.(*branchPicker)
+
+	if picker.query.Value() != "" {
+		t.Errorf("picker opened with query %q, want an empty box", picker.query.Value())
+	}
+
+	if got := picker.matches(); !slices.Equal(got, []string{"feat/login", "feat/logout", "main"}) {
+		t.Fatalf("matches = %q, want every branch", got)
+	}
+
+	// Enter without typing keeps what was already chosen.
+	picker.Update(enterKey())
+
+	if branches.chosen["q"] != "feat/logout" {
+		t.Errorf("chosen = %q, want the existing choice kept", branches.chosen["q"])
+	}
+}
+
+// The list arrives after the box opens, so the highlight has to find the existing
+// choice then rather than only at construction.
+func TestBranchPickerHighlightsTheChoiceWhenBranchesArriveLate(t *testing.T) {
+	form := branchFormWith([]mission.Repo{{Name: "q", Path: "/dev/q"}})
+
+	next, _ := form.Update(ctrlG())
+	branches := next.(*branchModal)
+	branches.chosen["q"] = "main"
+
+	next, _ = branches.Update(enterKey())
+	picker := next.(*branchPicker)
+
+	app := &App{modal: picker}
+	app.applyBranches(branchesMsg{Repo: "q", Branches: []string{"feat/login", "main"}})
+
+	picker.Update(enterKey())
+
+	if branches.chosen["q"] != "main" {
+		t.Errorf("chosen = %q, want main highlighted when the list landed", branches.chosen["q"])
 	}
 }

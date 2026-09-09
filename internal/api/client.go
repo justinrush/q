@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -174,6 +175,22 @@ func (c *Client) Models(ctx context.Context) (map[mission.Tool]mission.ModelSet,
 	res, err := get[ModelsResponse](ctx, c, "/v1/models")
 
 	return res.Models, err
+}
+
+// Branches lists the branches a repository's origin offers.
+//
+// With refresh false this answers from the remote-tracking refs already on disk,
+// which is instant; with it true the daemon asks origin as well, which is a
+// network round trip and belongs behind an explicit request.
+func (c *Client) Branches(ctx context.Context, repoPath string, refresh bool) ([]string, error) {
+	query := url.Values{"repo": {repoPath}}
+	if refresh {
+		query.Set("refresh", "true")
+	}
+
+	res, err := get[BranchesResponse](ctx, c, "/v1/branches?"+query.Encode())
+
+	return res.Branches, err
 }
 
 // RefreshModels re-asks every agent before answering.

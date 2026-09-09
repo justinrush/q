@@ -81,6 +81,9 @@ type CreateMissionRequest struct {
 	Model      string         `json:"model,omitempty"`
 	Effort     string         `json:"effort,omitempty"`
 	ExtraRepos []mission.Repo `json:"extraRepos,omitempty"`
+	// BaseBranches names the branch each repo's worktree is based on, keyed by
+	// repo name. Repos it does not mention use their own default branch.
+	BaseBranches map[string]string `json:"baseBranches,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
@@ -93,7 +96,10 @@ type UpdateMissionRequest struct {
 	Effort      *string              `json:"effort,omitempty"`
 	OperationID *mission.OperationID `json:"operationId,omitempty"`
 	ExtraRepos  *[]mission.Repo      `json:"extraRepos,omitempty"`
-	Order       *int                 `json:"order,omitempty"`
+	// BaseBranches replaces the whole map rather than merging into it, so that
+	// clearing a repo's override is expressible.
+	BaseBranches *map[string]string `json:"baseBranches,omitempty"`
+	Order        *int               `json:"order,omitempty"`
 }
 
 // SetStatusRequest moves a mission between lanes.
@@ -131,6 +137,11 @@ const (
 	DebriefRaise   = "raise"
 	DebriefPrepare = "prepare"
 )
+
+// BranchesResponse lists the branches one repository's origin offers.
+type BranchesResponse struct {
+	Branches []string `json:"branches"`
+}
 
 // DiscoverReposRequest searches for candidate git repositories.
 type DiscoverReposRequest struct {

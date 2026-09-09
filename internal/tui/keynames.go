@@ -13,6 +13,7 @@ const (
 	keyShiftTab = "shift+tab"
 	keySave     = "ctrl+s"
 	keyLaunch   = "ctrl+r"
+	keyBranches = "ctrl+g"
 	keyUp       = "up"
 	keyDown     = "down"
 	keyLeft     = "left"

@@ -37,6 +37,23 @@ func (a *App) fetchModels() tea.Cmd {
 	}
 }
 
+// fetchBranches asks the daemon what branches a repo could be based on.
+//
+// A failure yields an empty list rather than a toast: the picker still accepts a
+// typed branch name, and a dialog about git being unreachable would interrupt
+// someone in the middle of writing a mission to tell them something the box in
+// front of them already shows.
+func (a *App) fetchBranches(repo mission.Repo, refresh bool) tea.Cmd {
+	return func() tea.Msg {
+		branches, err := a.client.Branches(a.ctx(), repo.Path, refresh)
+		if err != nil {
+			return branchesMsg{Repo: repo.Name}
+		}
+
+		return branchesMsg{Repo: repo.Name, Branches: branches}
+	}
+}
+
 // startStream opens the event stream in a goroutine that forwards frames onto the
 // model's channel.
 //
@@ -206,14 +223,15 @@ func (a *App) messageAgentCmd(id mission.MissionID, text string) tea.Cmd {
 func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 	return func() tea.Msg {
 		ms, err := a.client.CreateMission(a.ctx(), api.CreateMissionRequest{
-			OperationID: msg.OperationID,
-			Name:        msg.Name,
-			Prompt:      msg.Prompt,
-			Tool:        msg.Tool,
-			Model:       msg.Model,
-			Effort:      msg.Effort,
-			PlanMode:    msg.PlanMode,
-			ExtraRepos:  msg.ExtraRepos,
+			OperationID:  msg.OperationID,
+			Name:         msg.Name,
+			Prompt:       msg.Prompt,
+			Tool:         msg.Tool,
+			Model:        msg.Model,
+			Effort:       msg.Effort,
+			PlanMode:     msg.PlanMode,
+			ExtraRepos:   msg.ExtraRepos,
+			BaseBranches: msg.BaseBranches,
 		})
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
@@ -252,6 +270,7 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 
 		if ms, ok := a.snapshot.Mission(msg.ID); ok && ms.Status == mission.StatusBriefing {
 			req.ExtraRepos = &msg.ExtraRepos
+			req.BaseBranches = &msg.BaseBranches
 		}
 
 		ms, err := a.client.UpdateMission(a.ctx(), msg.ID, req)

@@ -145,6 +145,14 @@ func (s *Server) Serve(ctx context.Context) error {
 // Addr returns the bound address.
 func (s *Server) Addr() string { return s.addr }
 
+// queryFlag reads a boolean query parameter.
+//
+// Only the literal "true" enables it, so a caller that means yes has to say so
+// rather than having any non-empty value read as consent.
+func queryFlag(r *http.Request, name string) bool {
+	return r.URL.Query().Get(name) == "true"
+}
+
 // routes builds the request multiplexer.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
@@ -168,6 +176,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/missions/{id}/message", s.handleMessage)
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
 	mux.HandleFunc("GET /v1/missions/{id}/delete-plan", s.handleDeletePlan)
+
+	mux.HandleFunc("GET /v1/branches", s.handleBranches)
 
 	mux.HandleFunc("GET /v1/models", s.handleModels)
 	mux.HandleFunc("POST /v1/models/refresh", s.handleRefreshModels)
@@ -478,7 +488,7 @@ func (s *Server) handleUpdateOperation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteOperation(w http.ResponseWriter, r *http.Request) {
-	force := r.URL.Query().Get("force") == "true"
+	force := queryFlag(r, "force")
 
 	if err := s.svc.DeleteOperation(mission.OperationID(r.PathValue("id")), force); err != nil {
 		writeServiceError(w, err)
@@ -527,6 +537,17 @@ func (s *Server) handleUpdateMission(w http.ResponseWriter, r *http.Request) {
 
 // handleModels serves the catalog as it stands, without probing. A board opening
 // a form must not wait on an agent starting up.
+// handleBranches lists the branches a repository could be based on.
+//
+// refresh=true asks origin as well as reading local refs, which is a network
+// round trip; without it the answer comes from refs already on disk.
+func (s *Server) handleBranches(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	refresh := queryFlag(r, "refresh")
+
+	writeJSON(w, http.StatusOK, api.BranchesResponse{Branches: s.svc.Branches(r.Context(), repo, refresh)})
+}
+
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, api.ModelsResponse{Models: s.svc.Models()})
 }
@@ -542,7 +563,7 @@ func (s *Server) handleRefreshModels(w http.ResponseWriter, r *http.Request) {
 // Without force, a worktree holding uncommitted work makes this a conflict rather than a
 // silent discard, so the caller has to decide.
 func (s *Server) handleDeleteMission(w http.ResponseWriter, r *http.Request) {
-	force := r.URL.Query().Get("force") == "true"
+	force := queryFlag(r, "force")
 
 	report, err := s.svc.DeleteMissionAndReclaim(r.Context(), mission.MissionID(r.PathValue("id")), force)
 	if err != nil {

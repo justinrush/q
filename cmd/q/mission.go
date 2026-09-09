@@ -87,6 +87,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 		effort    string
 		planMode  bool
 		repos     []string
+		bases     []string
 	)
 
 	cmd := &cobra.Command{
@@ -109,6 +110,11 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
+			parsedBases, err := parseBaseFlags(bases)
+			if err != nil {
+				return err
+			}
+
 			// An unnamed model resolves to whatever the agent itself reports, so a
 			// scripted mission gets the same default the board would have offered
 			// rather than silently differing from it.
@@ -117,14 +123,15 @@ func buildMissionAddSubcommand() *cobra.Command {
 			}
 
 			ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
-				OperationID: mission.OperationID(operation),
-				Name:        args[0],
-				Prompt:      prompt,
-				Tool:        parsedTool,
-				Model:       model,
-				Effort:      effort,
-				PlanMode:    planMode,
-				ExtraRepos:  parsedRepos,
+				OperationID:  mission.OperationID(operation),
+				Name:         args[0],
+				Prompt:       prompt,
+				Tool:         parsedTool,
+				Model:        model,
+				Effort:       effort,
+				PlanMode:     planMode,
+				ExtraRepos:   parsedRepos,
+				BaseBranches: parsedBases,
 			})
 			if err != nil {
 				return err
@@ -145,6 +152,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 		"Reasoning effort, for a model that takes one (see q models)")
 	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude only)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
+	cmd.Flags().StringArrayVar(&bases, "base", nil,
+		"Base a repo's worktree on a branch instead of its default; repeatable, accepts repo=branch")
 
 	if err := cmd.MarkFlagRequired("operation"); err != nil {
 		panic(err)

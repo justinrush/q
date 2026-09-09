@@ -186,6 +186,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.applySnapshot(m.Snapshot)
 	case modelsMsg:
 		return a, a.applyModels(m.Models)
+	case wantBranchesMsg:
+		return a, a.fetchBranches(m.Repo, m.Refresh)
+	case branchesMsg:
+		a.applyBranches(m)
+
+		return a, nil
 	case streamEventMsg:
 		return a, a.handleStreamEvent(m)
 	case streamDownMsg:
@@ -576,6 +582,24 @@ func (a *App) currentOperationID() mission.OperationID {
 // Requests are short-lived and the client applies its own timeout, so a background
 // context is the right scope here.
 func (a *App) ctx() context.Context { return context.Background() }
+
+// applyBranches hands a repo's branches to whichever branch modal is open.
+//
+// The picker and the list behind it both hold a copy, so an answer that arrives
+// while the user is already typing lands in the box in front of them as well as
+// in the one they will come back to.
+func (a *App) applyBranches(msg branchesMsg) {
+	switch open := a.modal.(type) {
+	case *branchModal:
+		open.setBranches(msg.Repo, msg.Branches)
+	case *branchPicker:
+		open.parent.setBranches(msg.Repo, msg.Branches)
+
+		if open.repo.Name == msg.Repo {
+			open.setBranches(msg.Branches)
+		}
+	}
+}
 
 // applyModels records the catalog and hands it to an open mission form.
 //
