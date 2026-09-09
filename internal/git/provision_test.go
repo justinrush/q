@@ -156,3 +156,102 @@ func TestDefaultBranchPrefixFallsBackToUser(t *testing.T) {
 		t.Errorf("DefaultBranchPrefix() = %q, want q", got)
 	}
 }
+
+// A mission may name the branch each of its repos is cut from. Everything else
+// about the worktree — its path and its own branch — is unchanged, so the only
+// observable difference is where the base SHA came from.
+func TestProvisionBasesWorktreeOnTheMissionsBranch(t *testing.T) {
+	cases := []struct {
+		name    string
+		bases   map[string]string
+		wantRef string
+	}{
+		{
+			name:    "no override uses the default branch",
+			wantRef: "refs/remotes/origin/main",
+		},
+		{
+			name:    "override bases on the named branch",
+			bases:   map[string]string{"weave": "feat/x"},
+			wantRef: "refs/remotes/origin/feat/x",
+		},
+		{
+			name:    "an empty override falls back to the default branch",
+			bases:   map[string]string{"weave": "  "},
+			wantRef: "refs/remotes/origin/main",
+		},
+		{
+			name:    "an override for another repo is ignored",
+			bases:   map[string]string{"other": "feat/x"},
+			wantRef: "refs/remotes/origin/main",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			provisioner, fake, _ := newTestProvisioner(t)
+			operation := provisionOperation("/dev/weave")
+
+			ms := provisionMission()
+			ms.BaseBranches = tc.bases
+
+			seedRepo(fake, "/dev/weave", "/dev/weave/.git")
+			fake.Expect(provisionGitBin+" -C /dev/weave/.git rev-parse "+tc.wantRef, "basesha1234567")
+
+			provisioned, err := provisioner.Prepare(t.Context(), operation, &ms)
+			if err != nil {
+				t.Fatalf("Prepare: %v", err)
+			}
+
+			work := provisioned.Work["weave"]
+			if work.BaseRef != tc.wantRef {
+				t.Errorf("BaseRef = %q, want %q", work.BaseRef, tc.wantRef)
+			}
+
+			if work.Branch != "jarush/add-endpoint" {
+				t.Errorf("Branch = %q, want the mission's own branch", work.Branch)
+			}
+
+			branch := strings.TrimPrefix(tc.wantRef, "refs/remotes/origin/")
+			wantFetch := provisionGitBin + " -C /dev/weave/.git fetch --no-tags origin " +
+				"+refs/heads/" + branch + ":refs/remotes/origin/" + branch
+
+			if !strings.Contains(fake.Transcript(), wantFetch) {
+				t.Errorf("did not fetch the base branch; wanted\n%s\ngot\n%s", wantFetch, fake.Transcript())
+			}
+
+			wantAdd := "worktree add -b jarush/add-endpoint " +
+				filepath.Join(ms.MissionDir, "weave") + " " + work.BaseSHA
+
+			if !strings.Contains(fake.Transcript(), wantAdd) {
+				t.Errorf("did not cut the worktree from the base; wanted\n%s\ngot\n%s", wantAdd, fake.Transcript())
+			}
+		})
+	}
+}
+
+// A base branch that origin does not have fails in the fetch. The message has to
+// name the branch, or it is indistinguishable from the network being down.
+func TestProvisionReportsAMissingBaseBranch(t *testing.T) {
+	provisioner, fake, _ := newTestProvisioner(t)
+	operation := provisionOperation("/dev/weave")
+
+	ms := provisionMission()
+	ms.BaseBranches = map[string]string{"weave": "gone"}
+
+	seedRepo(fake, "/dev/weave", "/dev/weave/.git")
+	fake.ExpectExit(provisionGitBin+" -C /dev/weave/.git fetch --no-tags origin "+
+		"+refs/heads/gone:refs/remotes/origin/gone", 128,
+		"fatal: couldn't find remote ref refs/heads/gone")
+
+	_, err := provisioner.Prepare(t.Context(), operation, &ms)
+	if err == nil {
+		t.Fatal("Prepare succeeded on a base branch origin does not have")
+	}
+
+	for _, want := range []string{"gone", "weave"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}

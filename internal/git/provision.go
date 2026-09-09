@@ -157,14 +157,20 @@ func (p *Provisioner) provisionRepo(
 	unlock := p.git.Lock(commonDir)
 	defer unlock()
 
-	err = p.git.FetchBranch(ctx, commonDir, defaultBranch)
+	base := ms.BaseBranch(repo.Name, defaultBranch)
+
+	err = p.git.FetchBranch(ctx, commonDir, base)
 	if err != nil {
+		// A mission may name any branch as its base, so a typo or a branch that
+		// has since been deleted arrives here as a fetch failure. Naming the
+		// branch is what tells the two apart from a network problem.
+		err = fmt.Errorf("fetching base branch %s for %s: %w", base, repo.Name, err)
 		result.Error = err.Error()
 
 		return result, false, err
 	}
 
-	baseRef := "refs/remotes/origin/" + defaultBranch
+	baseRef := "refs/remotes/origin/" + base
 
 	baseSHA, err := p.git.RevParse(ctx, commonDir, baseRef)
 	if err != nil {

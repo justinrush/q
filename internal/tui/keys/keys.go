@@ -149,9 +149,15 @@ type Form struct {
 	Next    key.Binding
 	Prev    key.Binding
 	Submit  key.Binding
+	Launch  key.Binding
 	Cancel  key.Binding
 	Toggle  key.Binding
 	Newline key.Binding
+	// Branches opens the per-repo base branch picker.
+	//
+	// ctrl+g rather than the ctrl+b the shape of this control suggests: ctrl+b is
+	// the tmux prefix and appears in Forbidden below.
+	Branches key.Binding
 }
 
 // NewForm returns the form bindings.
@@ -160,9 +166,12 @@ func NewForm() Form {
 		Next:    key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		Prev:    key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "previous")),
 		Submit:  key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "save")),
+		Launch:  key.NewBinding(key.WithKeys("ctrl+r"), key.WithHelp("ctrl+r", "save and launch")),
 		Cancel:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "cancel")),
 		Toggle:  key.NewBinding(key.WithKeys(" "), key.WithHelp("space", "toggle")),
 		Newline: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "newline")),
+		Branches: key.NewBinding(
+			key.WithKeys("ctrl+g"), key.WithHelp("ctrl+g", "base branches")),
 	}
 }
 
@@ -173,7 +182,7 @@ func (f Form) ShortHelp() []key.Binding {
 
 // FullHelp implements help.KeyMap.
 func (f Form) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{f.Next, f.Prev, f.Toggle}, {f.Submit, f.Cancel}}
+	return [][]key.Binding{{f.Next, f.Prev, f.Toggle}, {f.Branches}, {f.Submit, f.Launch, f.Cancel}}
 }
 
 // Reasons a key is off limits. q runs inside tmux, which sees every keystroke

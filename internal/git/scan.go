@@ -159,6 +159,82 @@ func rankOf(candidate Candidate, fragment string) int {
 	return -1
 }
 
+// MatchBranches ranks, best first, the branches a fragment could mean.
+//
+// It follows [Match]'s shape, with a branch's last path segment standing in for a
+// checkout's leaf name: "x" should find "feat/x" the way "weave" finds
+// ~/dev/weave. An empty fragment returns everything, because a picker shows the
+// whole list before anything is typed rather than nothing at all.
+func MatchBranches(names []string, fragment string) []string {
+	fragment = strings.ToLower(strings.TrimSpace(fragment))
+	if fragment == "" {
+		out := slices.Clone(names)
+		slices.Sort(out)
+
+		return out
+	}
+
+	type hit struct {
+		name string
+		rank int
+	}
+
+	hits := make([]hit, 0, len(names))
+
+	for _, name := range names {
+		rank := rankOfBranch(name, fragment)
+		if rank < 0 {
+			continue
+		}
+
+		hits = append(hits, hit{name: name, rank: rank})
+	}
+
+	slices.SortStableFunc(hits, func(a, b hit) int {
+		if a.rank != b.rank {
+			return a.rank - b.rank
+		}
+
+		// A shallower branch first, on the same reasoning as Match: "fix" is a
+		// likelier "fix" than "wip/someone/fix".
+		if depthA, depthB := strings.Count(a.name, "/"), strings.Count(b.name, "/"); depthA != depthB {
+			return depthA - depthB
+		}
+
+		return strings.Compare(a.name, b.name)
+	})
+
+	out := make([]string, 0, len(hits))
+	for _, scored := range hits {
+		out = append(out, scored.name)
+	}
+
+	return out
+}
+
+// rankOfBranch scores a branch against a lowercased fragment, returning -1 for
+// no match. The ranks are Match's, read against the branch's last segment.
+func rankOfBranch(branch, fragment string) int {
+	name := strings.ToLower(branch)
+	leaf := name
+	if i := strings.LastIndex(leaf, "/"); i >= 0 {
+		leaf = leaf[i+1:]
+	}
+
+	switch {
+	case name == fragment || leaf == fragment:
+		return rankExact
+	case strings.HasPrefix(leaf, fragment):
+		return rankNamePrefix
+	case strings.Contains(leaf, fragment):
+		return rankNameSubstring
+	case strings.Contains(name, fragment):
+		return rankPathSubstring
+	}
+
+	return -1
+}
+
 // Roots returns the configured directories as absolute, deduplicated paths,
 // falling back to DefaultRoots when nothing is configured.
 func ScanRoots(configured []string) []string {

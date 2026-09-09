@@ -75,6 +75,8 @@ func assembleService(
 		return nil, nil, err
 	}
 
+	opts = append(opts, daemon.WithBrancher(gitc))
+
 	workspace := git.NewProvisioner(dirs, gitc, tmux,
 		git.WithLogger(logger),
 		git.WithBranchPrefix(s.Git.BranchPrefix),

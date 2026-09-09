@@ -1,6 +1,7 @@
 package git
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -411,4 +412,94 @@ func TestLockIsPerRepository(t *testing.T) {
 	}()
 
 	<-done
+}
+
+// The branch listing feeds a picker, so an entry that is not a branch — origin's
+// HEAD alias, a blank line — has to be dropped rather than offered.
+func TestListingBranches(t *testing.T) {
+	cases := []struct {
+		name   string
+		remote bool
+		out    string
+		want   []string
+	}{
+		{
+			name: "local refs drop the ref prefix",
+			out:  "refs/remotes/origin/main\nrefs/remotes/origin/feat/x\n",
+			want: []string{"main", "feat/x"},
+		},
+		{
+			// git renders this ref as bare "origin" under %(refname:short),
+			// which is why the full refname is asked for: "origin" alone is
+			// indistinguishable from a branch of that name.
+			name: "local refs drop origin's HEAD alias",
+			out:  "refs/remotes/origin/HEAD\nrefs/remotes/origin/main\n",
+			want: []string{"main"},
+		},
+		{
+			name: "local refs ignore anything outside the remote",
+			out:  "refs/heads/main\nrefs/remotes/origin/feat/x\n",
+			want: []string{"feat/x"},
+		},
+		{
+			name: "local refs tolerate no branches at all",
+			out:  "",
+			want: nil,
+		},
+		{
+			name:   "ls-remote keeps the ref name only",
+			remote: true,
+			out:    "aaaa\trefs/heads/main\nbbbb\trefs/heads/feat/x\n",
+			want:   []string{"main", "feat/x"},
+		},
+		{
+			name:   "ls-remote ignores lines that are not heads",
+			remote: true,
+			out:    "aaaa\trefs/heads/main\nbbbb\trefs/tags/v1\ngarbage\n",
+			want:   []string{"main"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			git, fake := newTestGit()
+
+			var (
+				got []string
+				err error
+			)
+
+			if tc.remote {
+				fake.Expect(gitBin+" -C /repo/.git ls-remote --heads origin", tc.out)
+				got, err = git.RemoteBranches(t.Context(), "/repo/.git")
+			} else {
+				fake.Expect(gitBin+" -C /repo/.git for-each-ref --format=%(refname) refs/remotes/origin/", tc.out)
+				got, err = git.LocalBranches(t.Context(), "/repo/.git")
+			}
+
+			if err != nil {
+				t.Fatalf("listing branches: %v", err)
+			}
+
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("branches = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Asking origin what it has must not move any ref, or it would be a fetch wearing
+// another name and the config the package doc warns about would apply to it.
+func TestRemoteBranchesWritesNothing(t *testing.T) {
+	git, fake := newTestGit()
+
+	if _, err := git.RemoteBranches(t.Context(), "/repo/.git"); err != nil {
+		t.Fatalf("RemoteBranches: %v", err)
+	}
+
+	for _, argv := range fake.Argv() {
+		if strings.Contains(argv, "fetch") {
+			t.Errorf("listing branches fetched: %q", argv)
+		}
+	}
 }

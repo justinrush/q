@@ -37,6 +37,9 @@ orders* the moment one blocks, and to *debrief* when one finishes.
 missions touching the same repo collide. q gives every mission its own worktree per repo,
 branched from a freshly fetched default branch. Your own checkouts are never modified.
 
+A mission that is about work already in progress can name a different starting point per
+repo, so its worktree contains the branch you want to read. See [Base branches](#base-branches).
+
 ## Requirements
 
 - **git** and **tmux**
@@ -75,7 +78,7 @@ Press `?` for the full keymap. The essentials:
 |---|---|
 | `tab` | switch between Board and Operations |
 | `a` (Operations) | add an operation: a summary plus the repos it spans, named by fragment |
-| `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+s` saves, `ctrl+r` launches |
+| `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+g` sets base branches, `ctrl+s` saves, `ctrl+r` launches |
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
 | `m` | send a message to a running agent |
@@ -88,6 +91,7 @@ Everything is also scriptable, which is the quickest way to see what the board i
 op=$(q operation add "Discussions API" --summary "…" --repo ~/dev/weave --repo ~/dev/azure-tf)
 q mission add discussions-endpoint --operation "$op" --prompt "Add the endpoint." --plan
 q mission add tidy-imports --operation "$op" --prompt "Tidy them." --model haiku
+q mission add review-login --operation "$op" --prompt "Review it." --base weave=feat/login
 q models                       # what each agent offers, and the default a mission gets
 q mission move ms_… active     # launches the agent
 q mission list                 # the board, as text
@@ -250,6 +254,31 @@ claude, `ANTHROPIC_MODEL`, then managed settings, then `model` in `~/.claude/set
 for codex, `model` under the profile q launches with, then the top-level one. `q doctor`
 reports what each resolves to. Nothing validates a mission's model against the catalog —
 a stale probe should not stop you launching a model the agent would have accepted.
+
+### Base branches
+
+By default every worktree is cut from a freshly fetched default branch. A mission that
+exists to review or build on work already pushed can say otherwise, per repo: `ctrl+g` in
+the briefing form lists every repo the mission spans — the ones inherited from its
+operation as well as the ones it adds — and picking one opens a type-to-filter box over
+that repo's branches.
+
+```sh
+q mission add review-login --operation "$op" --prompt "Review it." --base weave=feat/login
+```
+
+Only the starting point changes. The worktree still gets the mission's own
+`<prefix>/<slug>` branch, so two missions can be based on the same branch and neither can
+commit onto a branch you own. The generated prompt names what each repo was based on:
+
+```
+- weave: ./weave (branch jane/review-login, from origin/feat/login at 1a2b3c4)
+```
+
+The picker fills from the remote-tracking refs already on disk, then merges in whatever
+origin reports a moment later, so a branch pushed since your last fetch still appears. A
+branch it has never heard of can be typed anyway; if it turns out not to exist, the launch
+fails saying so. Base branches are fixed once a mission launches, like its repositories.
 
 ### Lanes
 

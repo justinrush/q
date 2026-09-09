@@ -261,3 +261,63 @@ func TestDisplayCollapsesHome(t *testing.T) {
 		t.Errorf("Display = %q, want the path unchanged", got)
 	}
 }
+
+// The picker leans on this ordering: the branch someone means by a few characters
+// has to be the one under the cursor when they press enter.
+func TestMatchBranches(t *testing.T) {
+	branches := []string{
+		"main",
+		"feat/login",
+		"wip/jarush/login",
+		"release/2.1",
+		"logging-cleanup",
+	}
+
+	cases := []struct {
+		name     string
+		fragment string
+		want     []string
+	}{
+		{
+			name:     "an empty fragment offers everything, sorted",
+			fragment: "",
+			want: []string{
+				"feat/login", "logging-cleanup", "main", "release/2.1", "wip/jarush/login",
+			},
+		},
+		{
+			name:     "an exact last segment ties are broken by depth",
+			fragment: "login",
+			want:     []string{"feat/login", "wip/jarush/login"},
+		},
+		{
+			name:     "a prefix of the last segment ranks above a substring",
+			fragment: "log",
+			want:     []string{"logging-cleanup", "feat/login", "wip/jarush/login"},
+		},
+		{
+			name:     "a fragment matching only the leading path still matches",
+			fragment: "jarush",
+			want:     []string{"wip/jarush/login"},
+		},
+		{
+			name:     "matching is case-insensitive",
+			fragment: "MAIN",
+			want:     []string{"main"},
+		},
+		{
+			name:     "no match yields nothing rather than everything",
+			fragment: "nothinghere",
+			want:     nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MatchBranches(branches, tc.fragment)
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("MatchBranches(%q) = %q, want %q", tc.fragment, got, tc.want)
+			}
+		})
+	}
+}

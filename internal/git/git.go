@@ -149,6 +149,82 @@ func parseSymrefHead(out string) string {
 	return ""
 }
 
+// LocalBranches lists the branches origin is known to have, from the
+// remote-tracking refs already on disk.
+//
+// It reads only local refs, so it answers instantly and works offline. The
+// answer is as fresh as the last fetch, which is why [Client.RemoteBranches]
+// exists to catch up with anything pushed since.
+func (g *Client) LocalBranches(ctx context.Context, dir string) ([]string, error) {
+	res, err := g.exec(ctx, dir, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")
+	if err != nil {
+		return nil, fmt.Errorf("listing branches in %s: %w", dir, err)
+	}
+
+	return parseTrackingRefs(res.Out()), nil
+}
+
+// parseTrackingRefs turns `for-each-ref --format=%(refname)` output over
+// refs/remotes/origin into plain branch names.
+//
+// The full refname is asked for rather than the short one because %(refname:short)
+// renders refs/remotes/origin/HEAD as bare "origin", which is indistinguishable
+// from a branch and cannot be filtered out by name.
+//
+// HEAD is dropped: it is a symbolic alias for another entry in the same list, so
+// offering it would put one branch in the picker twice under two names.
+func parseTrackingRefs(out string) []string {
+	var branches []string
+
+	for line := range strings.SplitSeq(out, "\n") {
+		name, ok := strings.CutPrefix(strings.TrimSpace(line), "refs/remotes/origin/")
+		if !ok || name == "" || name == "HEAD" {
+			continue
+		}
+
+		branches = append(branches, name)
+	}
+
+	return branches
+}
+
+// RemoteBranches asks origin what branches it has.
+//
+// This is a network round trip, so it belongs behind an explicit refresh rather
+// than on the path of opening a picker. It writes nothing: unlike a fetch it
+// moves no refs, which is what keeps it clear of the user's fetch.all and
+// fetch.force settings.
+func (g *Client) RemoteBranches(ctx context.Context, dir string) ([]string, error) {
+	res, err := g.exec(ctx, dir, "ls-remote", "--heads", "origin")
+	if err != nil {
+		return nil, fmt.Errorf("listing branches on origin for %s: %w", dir, err)
+	}
+
+	return parseLsRemoteHeads(res.Out()), nil
+}
+
+// parseLsRemoteHeads extracts branch names from `ls-remote --heads` output,
+// whose lines are "<sha>\trefs/heads/<name>".
+func parseLsRemoteHeads(out string) []string {
+	var branches []string
+
+	for line := range strings.SplitSeq(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		name, ok := strings.CutPrefix(fields[1], "refs/heads/")
+		if !ok || name == "" {
+			continue
+		}
+
+		branches = append(branches, name)
+	}
+
+	return branches
+}
+
 // FetchBranch updates one remote-tracking ref from origin.
 //
 // The refspec is explicit and the remote is named, so this cannot be widened by
