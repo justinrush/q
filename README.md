@@ -269,11 +269,22 @@ q mission add review-login --operation "$op" --prompt "Review it." --base weave=
 
 Only the starting point changes. The worktree still gets the mission's own
 `<prefix>/<slug>` branch, so two missions can be based on the same branch and neither can
-commit onto a branch you own. The generated prompt names what each repo was based on:
+move the other's working branch by committing. The generated prompt distinguishes
+the working branch from the selected existing branch:
 
 ```
 - weave: ./weave (branch jane/review-login, from origin/feat/login at 1a2b3c4)
+  User-selected existing branch: feat/login on origin. jane/review-login is this mission's isolated working branch.
 ```
+
+Selecting a base does not authorize publishing. For a task that updates the selected
+branch, the prompt tells agents to commit on the mission branch and use the selected
+branch as the destination when a push is authorized, or as the target of a requested
+PR/MR. Before a direct push, agents should fetch, integrate concurrent changes, and
+rerun relevant checks, then use an explicit destination such as
+`git push origin HEAD:refs/heads/feat/login`. If another mission pushes first, fetch
+and integrate again instead of force-pushing. These are agent instructions; q does
+not automatically synchronize or publish mission branches.
 
 The picker fills from the remote-tracking refs already on disk, then merges in whatever
 origin reports a moment later, so a branch pushed since your last fetch still appears. A
