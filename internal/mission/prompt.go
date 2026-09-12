@@ -20,12 +20,27 @@ var promptTemplate = template.Must(template.New("prompt").Parse(
 ## Repositories
 
 Your working directory is the mission root. Each repository below is a git worktree
-of the user's own checkout, on a branch created for this  They contain
+of the user's own checkout, on a separate branch created for this mission. They contain
 tracked files only, so run any install or initialization step yourself if you
 need one.
 {{range .Repos}}
 - {{.Name}}: ./{{.Name}} (branch {{.Branch}}, from {{.BaseRef}} at {{.ShortSHA}})
+{{- if .SelectedBase}}
+  User-selected existing branch: {{.SelectedBase}} on origin. {{.Branch}} is this mission's isolated working branch.
 {{- end}}
+{{- end}}
+
+Commit on the mission branches listed above; keep other checkouts untouched.
+A base branch is the starting point, not by itself an instruction to publish.
+When the task is to update a user-selected existing branch, that existing branch
+is the destination for an authorized push or the base for a requested PR/MR.
+For that workflow, do not substitute the mission branch as the push destination or open a PR/MR
+against the repository's default branch unless the user asks for that workflow.
+Before pushing to an existing branch, fetch its latest state, integrate any
+concurrent changes into the mission branch, and rerun relevant checks. Push with
+an explicit destination (git push origin HEAD:refs/heads/<existing-branch>).
+If the push is rejected because the branch advanced, fetch and integrate again;
+do not force-push over other missions' work. Report which branch received the work.
 {{end}}
 ## Mission: {{.MissionName}}
 
@@ -43,10 +58,11 @@ type promptData struct {
 
 // promptRepo describes one worktree to the agent.
 type promptRepo struct {
-	Name     string
-	Branch   string
-	BaseRef  string
-	ShortSHA string
+	Name         string
+	Branch       string
+	BaseRef      string
+	ShortSHA     string
+	SelectedBase string
 }
 
 // ComposePrompt builds the prompt for a
@@ -68,10 +84,11 @@ func ComposePrompt(operation Operation, ms Mission) (string, error) {
 		}
 
 		data.Repos = append(data.Repos, promptRepo{
-			Name:     work.RepoName,
-			Branch:   work.Branch,
-			BaseRef:  shortRef(work.BaseRef),
-			ShortSHA: shortSHA(work.BaseSHA),
+			Name:         work.RepoName,
+			Branch:       work.Branch,
+			BaseRef:      shortRef(work.BaseRef),
+			ShortSHA:     shortSHA(work.BaseSHA),
+			SelectedBase: strings.TrimSpace(ms.BaseBranches[work.RepoName]),
 		})
 	}
 
