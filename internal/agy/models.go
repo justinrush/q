@@ -3,6 +3,7 @@ package agy
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -46,11 +47,40 @@ func (p *Prober) Probe(ctx context.Context) (mission.ModelSet, error) {
 		if len(options) == 0 {
 			return mission.ModelSet{}, fmt.Errorf("asking agy for models: %w", err)
 		}
-		return mission.ModelSet{Options: options, ProbedAt: time.Now(), Err: "using configured models: " + err.Error()}, nil
+		var def, defEffort string
+		if len(options) > 0 {
+			def = options[0].Value
+			defEffort = defaultEffort(options[0])
+		}
+		return mission.ModelSet{
+			Options:       options,
+			Default:       def,
+			DefaultEffort: defEffort,
+			ProbedAt:      time.Now(),
+			Err:           "using configured models: " + err.Error(),
+		}, nil
 	}
-	// The catalog does not mark a default. Leaving it empty preserves agy's own
-	// choice; withOverrides applies any explicit preference in q's config.
-	return mission.ModelSet{Options: options, ProbedAt: time.Now()}, nil
+	var def, defEffort string
+	if len(options) > 0 {
+		def = options[0].Value
+		defEffort = defaultEffort(options[0])
+	}
+	return mission.ModelSet{
+		Options:       options,
+		Default:       def,
+		DefaultEffort: defEffort,
+		ProbedAt:      time.Now(),
+	}, nil
+}
+
+func defaultEffort(opt mission.ModelOption) string {
+	if slices.Contains(opt.Efforts, "high") {
+		return "high"
+	}
+	if len(opt.Efforts) > 0 {
+		return opt.Efforts[0]
+	}
+	return ""
 }
 
 func parseModels(output string) ([]mission.ModelOption, error) {

@@ -16,7 +16,7 @@ func TestModelProbe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(set.Options) != 2 || set.Default != "" || set.ProbedAt.IsZero() || !set.ValidEffort("gemini-3.8-flash-high", "high") {
+	if len(set.Options) != 2 || set.Default != "gemini-3.8-flash-high" || set.DefaultEffort != "high" || set.ProbedAt.IsZero() || !set.ValidEffort("gemini-3.8-flash-high", "high") {
 		t.Fatalf("%+v", set)
 	}
 	if set.Options[1].Label != "Claude Sonnet 4.6 (Thinking)" {
@@ -33,7 +33,7 @@ func TestProbeFailuresAndFallback(t *testing.T) {
 	}
 	run := runner.NewFake().ExpectError("/bin/agy models", errors.New("offline"))
 	set, err := NewProber("/bin/agy", run, []string{"custom-model", "custom-model"}).Probe(context.Background())
-	if err != nil || set.Err == "" || len(set.Options) != 1 || set.Options[0].Value != "custom-model" {
+	if err != nil || set.Err == "" || len(set.Options) != 1 || set.Options[0].Value != "custom-model" || set.Default != "custom-model" || set.DefaultEffort != "high" {
 		t.Fatalf("%+v, %v", set, err)
 	}
 	if _, err := NewProber("/bin/agy", run, nil).Probe(context.Background()); err == nil {

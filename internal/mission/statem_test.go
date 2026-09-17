@@ -40,6 +40,11 @@ func TestReduceTransitionTable(t *testing.T) {
 			from:    StatusBriefing,
 			payload: HookEvent{Event: EventSessionStart, SessionID: "sess-1", Source: SourceStartup},
 			want:    StatusActive,
+			wantMore: func(t *testing.T, ms Mission) {
+				if ms.WaitingFor != "" {
+					t.Errorf("WaitingFor = %q, want cleared", ms.WaitingFor)
+				}
+			},
 		},
 		{
 			name:    "session start on resume also reports active",

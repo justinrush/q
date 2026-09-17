@@ -37,7 +37,7 @@ func TestWorkspaceHooks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(artifacts) != 1 || artifacts[0].Path != filepath.Join(inv.MissionDir, ".agents", "hooks.json") {
+	if len(artifacts) != 2 || artifacts[0].Path != filepath.Join(inv.MissionDir, ".agents", "hooks.json") {
 		t.Fatalf("%+v", artifacts)
 	}
 	var doc map[string]map[string]json.RawMessage
@@ -70,6 +70,73 @@ func TestWorkspaceHooks(t *testing.T) {
 	invalid := []byte(`{invalid`)
 	if got, changed := artifacts[0].Merge(artifacts[0].Data, invalid); changed || string(got) != string(invalid) {
 		t.Fatal("invalid user hooks overwritten")
+	}
+}
+
+func TestSettingsArtifact(t *testing.T) {
+	settingsFile := filepath.Join(t.TempDir(), "settings.json")
+	a := New("agy", Options{SettingsPath: settingsFile})
+	inv := mission.Invocation{
+		MissionDir:  "/missions/one",
+		MissionDirs: []string{"/missions/one", "/missions/two"},
+		Worktrees:   []string{"/missions/one/wt"},
+	}
+	artifacts, err := a.Artifacts(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 2 || artifacts[1].Path != settingsFile {
+		t.Fatalf("%+v", artifacts)
+	}
+	settingsArt := artifacts[1]
+
+	// Merging into non-existent (empty) file
+	initMerged, changed := settingsArt.Merge(settingsArt.Data, nil)
+	if !changed || !strings.Contains(string(initMerged), "/missions/one") {
+		t.Fatalf("initial merge failed: %s", initMerged)
+	}
+
+	// Merging into existing file with user settings and stale mission
+	existing := []byte(`{
+  "agentMode": "accept-edits",
+  "trustedWorkspaces": [
+    "/user/personal/repo",
+    "/missions/stale-mission"
+  ],
+  "colorScheme": "dark"
+}`)
+	merged, changed := settingsArt.Merge(settingsArt.Data, existing)
+	if !changed {
+		t.Fatal("expected changed to be true")
+	}
+	mergedStr := string(merged)
+	if !strings.Contains(mergedStr, `"/user/personal/repo"`) {
+		t.Errorf("user workspace lost: %s", mergedStr)
+	}
+	if strings.Contains(mergedStr, `"/missions/stale-mission"`) {
+		t.Errorf("stale mission was not pruned: %s", mergedStr)
+	}
+	if !strings.Contains(mergedStr, `"/missions/one"`) || !strings.Contains(mergedStr, `"/missions/one/wt"`) || !strings.Contains(mergedStr, `"/missions/two"`) {
+		t.Errorf("live missions missing: %s", mergedStr)
+	}
+	// Verify key order: agentMode should appear before trustedWorkspaces, colorScheme after
+	agentModeIdx := strings.Index(mergedStr, `"agentMode"`)
+	trustedIdx := strings.Index(mergedStr, `"trustedWorkspaces"`)
+	colorIdx := strings.Index(mergedStr, `"colorScheme"`)
+	if agentModeIdx > trustedIdx || trustedIdx > colorIdx {
+		t.Errorf("key order corrupted: %s", mergedStr)
+	}
+
+	// Idempotent merge: second merge with same output should report changed = false
+	secondMerged, secondChanged := settingsArt.Merge(settingsArt.Data, merged)
+	if secondChanged || string(secondMerged) != mergedStr {
+		t.Errorf("expected idempotent merge to report changed = false")
+	}
+
+	// Malformed existing file should not be modified
+	invalid := []byte(`{not-json`)
+	if out, ch := settingsArt.Merge(settingsArt.Data, invalid); ch || string(out) != string(invalid) {
+		t.Error("malformed json was overwritten")
 	}
 }
 

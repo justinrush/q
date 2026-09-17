@@ -250,17 +250,20 @@ func (f *missionForm) cycleOperation(keyName string) {
 
 // cycleTool changes the agent.
 //
-// Plan mode is dropped when switching to codex, because codex has no equivalent flag
-// and leaving it set would promise a behavior that cannot happen.
+// Plan mode is dropped when switching to an agent that does not support it, because
+// leaving it set would promise a behavior that cannot happen.
 func (f *missionForm) cycleTool(keyName string) {
 	if f.launched {
 		return
 	}
 
-	// The direction is discarded: with two agents, forward and backward are the
-	// same move, and Tool.Next is the rotation the board already uses.
+	// The direction is discarded: Tool.Next is the rotation the board already uses.
 	if _, ok := cycleDelta(keyName); ok {
 		f.tool = f.tool.Next()
+
+		if !f.tool.SupportsPlanMode() {
+			f.planMode = false
+		}
 
 		// The models one agent offers mean nothing to another, so the choice is
 		// re-made from the new agent's own list rather than carried across.
@@ -678,7 +681,7 @@ func (f *missionForm) effortHint(set mission.ModelSet) string {
 func (f *missionForm) planValue() string {
 	if !f.tool.SupportsPlanMode() {
 		return styles.Disabled.Render("unavailable") +
-			styles.CardDetail.Render("  codex has no plan mode")
+			styles.CardDetail.Render("  "+f.planUnavailableReason())
 	}
 
 	if f.planMode {
@@ -686,6 +689,17 @@ func (f *missionForm) planValue() string {
 	}
 
 	return "[ ] off"
+}
+
+func (f *missionForm) planUnavailableReason() string {
+	switch f.tool {
+	case mission.ToolCodex:
+		return "codex has no plan mode"
+	case mission.ToolAgy:
+		return "agy plan mode is not supported in q"
+	default:
+		return string(f.tool) + " has no plan mode"
+	}
 }
 
 // operationForm creates or edits an operation.
