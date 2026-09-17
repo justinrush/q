@@ -165,6 +165,7 @@ func applySessionStart(ms *Mission, ev HookEvent) Status {
 
 	ms.AgentState = AgentBusy
 	ms.LaunchError = ""
+	ms.WaitingFor = ""
 	ms.Badges = ms.WithoutBadge(BadgeHooksSilent)
 	ms.Badges = ms.WithoutBadge(BadgeEnded)
 

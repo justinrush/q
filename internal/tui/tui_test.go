@@ -884,6 +884,37 @@ func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
 	}
 }
 
+func TestMissionFormPlanModeUnavailabilityReason(t *testing.T) {
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+
+	form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true}, operations, "op_1", Options{}, nil, time.Time{})
+	if !strings.Contains(form.planValue(), "plan first") {
+		t.Fatalf("claude plan mode should be available: %s", form.planValue())
+	}
+
+	form.cycleTool(keyRight)
+	if form.tool != mission.ToolCodex {
+		t.Fatalf("tool = %s, want codex", form.tool)
+	}
+	if form.planMode {
+		t.Error("cycling to codex must drop plan mode")
+	}
+	if !strings.Contains(form.planValue(), "codex has no plan mode") {
+		t.Errorf("planValue() = %q, want mention of codex", form.planValue())
+	}
+
+	form.cycleTool(keyRight)
+	if form.tool != mission.ToolAgy {
+		t.Fatalf("tool = %s, want agy", form.tool)
+	}
+	if form.planMode {
+		t.Error("cycling to agy must drop plan mode")
+	}
+	if !strings.Contains(form.planValue(), "agy plan mode is not supported in q") {
+		t.Errorf("planValue() = %q, want mention of agy", form.planValue())
+	}
+}
+
 func TestMissionFormRequiresNameAndPrompt(t *testing.T) {
 	operations := []mission.Operation{testOperation("op_1", "T", 0)}
 	form := newMissionForm(mission.Mission{}, operations, "op_1", Options{}, nil, time.Time{})
