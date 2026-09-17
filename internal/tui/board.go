@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -37,14 +38,21 @@ type Board struct {
 	// cursor already held. Without this, stepping a card across two lanes would move
 	// it once and then move whatever else happened to be under the cursor.
 	follow mission.MissionID
+
+	// Mouse click tracking for double clicks.
+	lastClickTime   time.Time
+	lastClickLane   int
+	lastClickCursor int
 }
 
 // NewBoard returns an empty board.
 func NewBoard() *Board {
 	return &Board{
-		keys:   keys.NewBoard(),
-		cursor: make([]int, len(mission.Lanes)),
-		scroll: make([]int, len(mission.Lanes)),
+		keys:            keys.NewBoard(),
+		cursor:          make([]int, len(mission.Lanes)),
+		scroll:          make([]int, len(mission.Lanes)),
+		lastClickLane:   -1,
+		lastClickCursor: -1,
 	}
 }
 
@@ -142,6 +150,180 @@ func (b *Board) Update(msg tea.KeyMsg) tea.Cmd {
 			b.clampSelection()
 		}
 	}
+
+	return nil
+}
+
+// laneAt returns the column index for an X coordinate on the board.
+func (b *Board) laneAt(layout Layout, x int) int {
+	if layout.Focus {
+		return b.lane
+	}
+	if x < 0 {
+		return 0
+	}
+
+	curX := 0
+	for lane := 0; lane < len(mission.Lanes); lane++ {
+		w := layout.Widths[lane]
+		if x >= curX && x < curX+w {
+			return lane
+		}
+		if x == curX+w && lane < len(mission.Lanes)-1 {
+			return lane
+		}
+		curX += w + laneGap
+	}
+
+	return len(mission.Lanes) - 1
+}
+
+// HandleMouse processes mouse clicks and scrolling on the board.
+func (b *Board) HandleMouse(msg tea.MouseMsg, x, y int) tea.Cmd {
+	if y < 0 {
+		return nil
+	}
+
+	layout := computeLayout(b.width, b.height, b.doneExpanded, b.lane)
+
+	if msg.Button == tea.MouseButtonWheelUp {
+		lane := b.laneAt(layout, x)
+		b.lane = lane
+		if !b.doneExpanded && lane == len(mission.Lanes)-1 {
+			b.doneExpanded = true
+		}
+
+		return b.selectPrev()
+	}
+
+	if msg.Button == tea.MouseButtonWheelDown {
+		lane := b.laneAt(layout, x)
+		b.lane = lane
+		if !b.doneExpanded && lane == len(mission.Lanes)-1 {
+			b.doneExpanded = true
+		}
+
+		return b.selectNext()
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return nil
+	}
+
+	if layout.Focus {
+		if y == 0 {
+			if x < 4 {
+				return b.focusPrevLane()
+			}
+			if x >= b.width-4 {
+				return b.focusNextLane()
+			}
+
+			return nil
+		}
+
+		missions := b.missionsIn(b.lane)
+		if len(missions) == 0 {
+			return nil
+		}
+
+		cardOffset := y - 1
+		visibleIdx := cardOffset / layout.CardHeight
+		cardIdx := b.scroll[b.lane] + visibleIdx
+
+		if cardIdx >= 0 && cardIdx < len(missions) && visibleIdx < layout.VisibleCards {
+			b.cursor[b.lane] = cardIdx
+			b.ensureVisible()
+
+			return b.registerClick(b.lane, cardIdx)
+		}
+
+		start := clamp(b.scroll[b.lane], max(0, len(missions)-1))
+		end := min(len(missions), start+layout.VisibleCards)
+		if visibleIdx == layout.VisibleCards && end < len(missions) {
+			return b.selectNext()
+		}
+
+		return nil
+	}
+
+	lane := b.laneAt(layout, x)
+
+	if y == 0 {
+		b.lane = lane
+		b.clampSelection()
+		b.ensureVisible()
+
+		return nil
+	}
+
+	// Collapsed done column expands on click.
+	if !b.doneExpanded && lane == len(mission.Lanes)-1 {
+		b.lane = lane
+		missions := b.missionsIn(lane)
+		if len(missions) > 0 && y >= 1 && y <= min(3, len(missions)) {
+			b.cursor[lane] = y - 1
+		}
+		b.doneExpanded = true
+		b.clampSelection()
+		b.ensureVisible()
+
+		return nil
+	}
+
+	missions := b.missionsIn(lane)
+	if len(missions) == 0 {
+		b.lane = lane
+		b.clampSelection()
+		b.ensureVisible()
+
+		return nil
+	}
+
+	cardOffset := y - 1
+	visibleIdx := cardOffset / layout.CardHeight
+	cardIdx := b.scroll[lane] + visibleIdx
+
+	if cardIdx >= 0 && cardIdx < len(missions) && visibleIdx < layout.VisibleCards {
+		b.lane = lane
+		b.cursor[lane] = cardIdx
+		b.ensureVisible()
+
+		return b.registerClick(lane, cardIdx)
+	}
+
+	start := clamp(b.scroll[lane], max(0, len(missions)-1))
+	end := min(len(missions), start+layout.VisibleCards)
+	if visibleIdx == layout.VisibleCards && end < len(missions) {
+		b.lane = lane
+
+		return b.selectNext()
+	}
+
+	b.lane = lane
+	b.clampSelection()
+	b.ensureVisible()
+
+	return nil
+}
+
+// registerClick records a card click and triggers openDebrief on double-click.
+func (b *Board) registerClick(lane, cursor int) tea.Cmd {
+	now := time.Now()
+	if !b.lastClickTime.IsZero() &&
+		now.Sub(b.lastClickTime) < 400*time.Millisecond &&
+		b.lastClickLane == lane &&
+		b.lastClickCursor == cursor {
+		b.lastClickTime = time.Time{}
+		b.lastClickLane = -1
+		b.lastClickCursor = -1
+
+		return b.openDebrief()
+	}
+
+	b.lastClickTime = now
+	b.lastClickLane = lane
+	b.lastClickCursor = cursor
 
 	return nil
 }

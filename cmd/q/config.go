@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,7 @@ const (
 	EnvCodexModel  = "Q_CODEX_MODEL"
 	EnvAgyModel    = "Q_AGY_MODEL"
 	EnvLogLevel    = "Q_LOG_LEVEL"
+	EnvMouse       = "Q_MOUSE"
 )
 
 // fileConfig is the JSON shape of ~/.q-config.json.
@@ -58,9 +60,14 @@ type fileConfig struct {
 	Terminal *terminalConfig `json:"terminal,omitempty"`
 	Paths    *pathsConfig    `json:"paths,omitempty"`
 	Cost     *costConfig     `json:"cost,omitempty"`
+	TUI      *tuiConfig      `json:"tui,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
 	LogLevel string            `json:"logLevel,omitempty"`
+}
+
+type tuiConfig struct {
+	Mouse *bool `json:"mouse,omitempty"`
 }
 
 type reposConfig struct {
@@ -273,6 +280,10 @@ func applyFile(out *settings, file fileConfig) {
 		}
 	}
 
+	if t := file.TUI; t != nil && t.Mouse != nil {
+		out.TUI.Mouse = *t.Mouse
+	}
+
 	for name, path := range file.Tools {
 		out.Tools[name] = path
 	}
@@ -397,6 +408,12 @@ func applyEnv(out *settings) {
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
 		out.LogLevel = v
 	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvMouse)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			out.TUI.Mouse = b
+		}
+	}
 }
 
 // expandSettings resolves ~ in every path-shaped value, so the rest of q never
@@ -499,6 +516,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Editor:   &editorConfig{Command: s.Editor.Command},
 		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
+		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse},
 		Tools:    s.Tools,
 		LogLevel: s.LogLevel,
 	}

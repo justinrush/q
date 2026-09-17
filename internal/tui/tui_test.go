@@ -2093,3 +2093,299 @@ func TestCodexCostDisplaysDollarsWithDefaultPricing(t *testing.T) {
 		t.Fatalf("cost = %q, want $4.20", got)
 	}
 }
+
+func mouseClickMsg(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{
+		X:      x,
+		Y:      y,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	}
+}
+
+func mouseWheelMsg(x, y int, up bool) tea.MouseMsg {
+	btn := tea.MouseButtonWheelDown
+	if up {
+		btn = tea.MouseButtonWheelUp
+	}
+
+	return tea.MouseMsg{
+		X:      x,
+		Y:      y,
+		Action: tea.MouseActionPress,
+		Button: btn,
+	}
+}
+
+func TestBoardClickCardShiftsFocus(t *testing.T) {
+	ops := []mission.Operation{testOperation("op_1", "API", 0)}
+	missions := []mission.Mission{
+		testMission("ms_0_0", "briefing 1", "op_1", mission.StatusBriefing),
+		testMission("ms_1_0", "active 1", "op_1", mission.StatusActive),
+		testMission("ms_1_1", "active 2", "op_1", mission.StatusActive),
+		testMission("ms_3_0", "debrief 1", "op_1", mission.StatusDebrief),
+	}
+	board := boardWith(ops, missions)
+
+	// Board starts on lane 0
+	if board.lane != 0 {
+		t.Fatalf("initial lane = %d, want 0", board.lane)
+	}
+
+	// Click on active lane (lane 1), second card (y=7)
+	// Active lane spans [47, 93) at width 200
+	board.HandleMouse(mouseClickMsg(60, 7), 60, 7)
+	if board.lane != 1 {
+		t.Errorf("lane = %d, want 1", board.lane)
+	}
+	if board.cursor[1] != 1 {
+		t.Errorf("cursor[1] = %d, want 1", board.cursor[1])
+	}
+
+	// Click on active lane (lane 1), first card (y=1)
+	board.HandleMouse(mouseClickMsg(60, 1), 60, 1)
+	if board.lane != 1 {
+		t.Errorf("lane = %d, want 1", board.lane)
+	}
+	if board.cursor[1] != 0 {
+		t.Errorf("cursor[1] = %d, want 0", board.cursor[1])
+	}
+
+	// Click on debrief lane (lane 3), first card (y=1)
+	// Debrief lane spans [140, 185)
+	board.HandleMouse(mouseClickMsg(150, 1), 150, 1)
+	if board.lane != 3 {
+		t.Errorf("lane = %d, want 3", board.lane)
+	}
+	if board.cursor[3] != 0 {
+		t.Errorf("cursor[3] = %d, want 0", board.cursor[3])
+	}
+
+	// Click on briefing lane (lane 0), first card (y=1)
+	board.HandleMouse(mouseClickMsg(10, 1), 10, 1)
+	if board.lane != 0 {
+		t.Errorf("lane = %d, want 0", board.lane)
+	}
+	if board.cursor[0] != 0 {
+		t.Errorf("cursor[0] = %d, want 0", board.cursor[0])
+	}
+}
+
+func TestBoardClickLaneHeaderShiftsFocus(t *testing.T) {
+	board := boardWith(nil, nil)
+
+	// Lane 2 (Awaiting Orders) header is at x=100, y=0
+	board.HandleMouse(mouseClickMsg(100, 0), 100, 0)
+	if board.lane != 2 {
+		t.Errorf("lane = %d, want 2", board.lane)
+	}
+
+	// Lane 1 header at x=60, y=0
+	board.HandleMouse(mouseClickMsg(60, 0), 60, 0)
+	if board.lane != 1 {
+		t.Errorf("lane = %d, want 1", board.lane)
+	}
+}
+
+func TestBoardClickCollapsedDoneExpandsAndFocuses(t *testing.T) {
+	ops := []mission.Operation{testOperation("op_1", "API", 0)}
+	missions := []mission.Mission{
+		testMission("ms_done_1", "done 1", "op_1", mission.StatusClosed),
+		testMission("ms_done_2", "done 2", "op_1", mission.StatusClosed),
+	}
+	board := boardWith(ops, missions)
+
+	if board.doneExpanded {
+		t.Fatal("doneExpanded should start false")
+	}
+
+	// Click on collapsed done lane (x=190, y=2 for second item)
+	board.HandleMouse(mouseClickMsg(190, 2), 190, 2)
+	if board.lane != 4 {
+		t.Errorf("lane = %d, want 4 (Done)", board.lane)
+	}
+	if !board.doneExpanded {
+		t.Errorf("doneExpanded = false, want true after click")
+	}
+	if board.cursor[4] != 1 {
+		t.Errorf("cursor[4] = %d, want 1 (second item)", board.cursor[4])
+	}
+}
+
+func TestBoardClickScrolledLaneCalculatesIndex(t *testing.T) {
+	ops := []mission.Operation{testOperation("op_1", "API", 0)}
+	missions := []mission.Mission{
+		testMission("ms_0", "card 0", "op_1", mission.StatusBriefing),
+		testMission("ms_1", "card 1", "op_1", mission.StatusBriefing),
+		testMission("ms_2", "card 2", "op_1", mission.StatusBriefing),
+		testMission("ms_3", "card 3", "op_1", mission.StatusBriefing),
+		testMission("ms_4", "card 4", "op_1", mission.StatusBriefing),
+	}
+	board := boardWith(ops, missions)
+	board.scroll[0] = 2 // Scrolled so card 2 is at visible index 0
+
+	// Click on card 0 of visible area (y=1)
+	board.HandleMouse(mouseClickMsg(10, 1), 10, 1)
+	if board.cursor[0] != 2 {
+		t.Errorf("cursor[0] = %d, want 2", board.cursor[0])
+	}
+
+	// Click on card 1 of visible area (y=7)
+	board.HandleMouse(mouseClickMsg(10, 7), 10, 7)
+	if board.cursor[0] != 3 {
+		t.Errorf("cursor[0] = %d, want 3", board.cursor[0])
+	}
+}
+
+func TestBoardDoubleClickCardOpensDebrief(t *testing.T) {
+	started := time.Now()
+	ms := testMission("ms_1", "launched", "op_1", mission.StatusDebrief)
+	ms.StartedAt = &started
+
+	board := boardWith([]mission.Operation{testOperation("op_1", "API", 0)}, []mission.Mission{ms})
+
+	// First click: shifts focus
+	cmd1 := board.HandleMouse(mouseClickMsg(150, 1), 150, 1)
+	if cmd1 != nil {
+		t.Errorf("single click produced unexpected command %v", cmd1)
+	}
+	if board.lane != 3 || board.cursor[3] != 0 {
+		t.Fatalf("first click focus: lane=%d cursor=%d, want lane=3 cursor=0", board.lane, board.cursor[3])
+	}
+
+	// Immediate second click on the same card: triggers openDebrief
+	cmd2 := board.HandleMouse(mouseClickMsg(150, 1), 150, 1)
+	if cmd2 == nil {
+		t.Fatal("double click expected a command, got nil")
+	}
+	if _, ok := cmd2().(openDebriefMsg); !ok {
+		t.Errorf("got %T, want openDebriefMsg", cmd2())
+	}
+}
+
+func TestBoardMouseWheelScrolling(t *testing.T) {
+	ops := []mission.Operation{testOperation("op_1", "API", 0)}
+	missions := []mission.Mission{
+		testMission("ms_0", "card 0", "op_1", mission.StatusBriefing),
+		testMission("ms_1", "card 1", "op_1", mission.StatusBriefing),
+		testMission("ms_2", "card 2", "op_1", mission.StatusBriefing),
+	}
+	board := boardWith(ops, missions)
+
+	// Wheel down over lane 0
+	board.HandleMouse(mouseWheelMsg(10, 10, false), 10, 10)
+	if board.cursor[0] != 1 {
+		t.Errorf("after wheel down cursor = %d, want 1", board.cursor[0])
+	}
+
+	board.HandleMouse(mouseWheelMsg(10, 10, false), 10, 10)
+	if board.cursor[0] != 2 {
+		t.Errorf("after second wheel down cursor = %d, want 2", board.cursor[0])
+	}
+
+	// Wheel up
+	board.HandleMouse(mouseWheelMsg(10, 10, true), 10, 10)
+	if board.cursor[0] != 1 {
+		t.Errorf("after wheel up cursor = %d, want 1", board.cursor[0])
+	}
+}
+
+func TestBoardFocusModeMouse(t *testing.T) {
+	ops := []mission.Operation{testOperation("op_1", "API", 0)}
+	missions := []mission.Mission{
+		testMission("ms_0", "b1", "op_1", mission.StatusBriefing),
+		testMission("ms_1", "b2", "op_1", mission.StatusBriefing),
+	}
+	board := NewBoard()
+	board.SetSize(80, 30) // Narrow -> focus mode
+	board.SetSnapshot(mission.Snapshot{Operations: ops, Missions: missions})
+
+	// Click right arrow in header (x=78, y=0)
+	board.HandleMouse(mouseClickMsg(78, 0), 78, 0)
+	if board.lane != 1 {
+		t.Errorf("after clicking next lane arrow, lane = %d, want 1", board.lane)
+	}
+
+	// Click left arrow in header (x=1, y=0)
+	board.HandleMouse(mouseClickMsg(1, 0), 1, 0)
+	if board.lane != 0 {
+		t.Errorf("after clicking prev lane arrow, lane = %d, want 0", board.lane)
+	}
+
+	// Click second card in focus mode (y=7)
+	board.HandleMouse(mouseClickMsg(20, 7), 20, 7)
+	if board.cursor[0] != 1 {
+		t.Errorf("cursor[0] = %d, want 1", board.cursor[0])
+	}
+}
+
+func TestAppHeaderMouseClickSwitchesTabs(t *testing.T) {
+	app := &App{
+		board:      NewBoard(),
+		operations: NewOperations(),
+		active:     tabBoard,
+		width:      100,
+		height:     30,
+	}
+
+	// Click on "Operations" tab at row 0 (x=14)
+	app.handleMouse(mouseClickMsg(14, 0))
+	if app.active != tabOperations {
+		t.Errorf("active = %v, want tabOperations", app.active)
+	}
+
+	// Click on "Board" tab at row 0 (x=4)
+	app.handleMouse(mouseClickMsg(4, 0))
+	if app.active != tabBoard {
+		t.Errorf("active = %v, want tabBoard", app.active)
+	}
+}
+
+func TestAppDismissHelpModalOnMouseClick(t *testing.T) {
+	app := &App{
+		board:      NewBoard(),
+		operations: NewOperations(),
+		modal:      newHelp("help text"),
+		width:      100,
+		height:     30,
+	}
+
+	app.handleMouse(mouseClickMsg(50, 15))
+	if app.modal != nil {
+		t.Errorf("modal = %v, want nil after click", app.modal)
+	}
+}
+
+func TestOperationsMouseClickSelectsOperation(t *testing.T) {
+	ops := []mission.Operation{
+		testOperation("op_1", "Op 1", 0),
+		testOperation("op_2", "Op 2", 1),
+		testOperation("op_3", "Op 3", 2),
+	}
+	operations := NewOperations()
+	operations.SetSize(100, 30)
+	operations.SetSnapshot(mission.Snapshot{Operations: ops})
+
+	if operations.cursor != 0 {
+		t.Fatalf("initial cursor = %d, want 0", operations.cursor)
+	}
+
+	// Click row 2 (y=2 -> operation index 1)
+	operations.HandleMouse(mouseClickMsg(10, 2), 10, 2)
+	if operations.cursor != 1 {
+		t.Errorf("cursor = %d, want 1", operations.cursor)
+	}
+
+	// Wheel down
+	operations.HandleMouse(mouseWheelMsg(10, 10, false), 10, 10)
+	if operations.cursor != 2 {
+		t.Errorf("after wheel down cursor = %d, want 2", operations.cursor)
+	}
+
+	// Wheel up
+	operations.HandleMouse(mouseWheelMsg(10, 10, true), 10, 10)
+	if operations.cursor != 1 {
+		t.Errorf("after wheel up cursor = %d, want 1", operations.cursor)
+	}
+}
+
