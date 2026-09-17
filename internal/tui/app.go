@@ -182,6 +182,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	case tea.KeyMsg:
 		return a, a.handleKey(m)
+	case tea.MouseMsg:
+		return a, a.handleMouse(m)
 	case snapshotMsg:
 		return a, a.applySnapshot(m.Snapshot)
 	case modelsMsg:
@@ -244,6 +246,62 @@ func (a *App) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 
 	return a.operations.Update(msg)
+}
+
+// handleMouse routes mouse events to tabs, modals, and the active view.
+func (a *App) handleMouse(msg tea.MouseMsg) tea.Cmd {
+	if a.modal != nil {
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if _, ok := a.modal.(*helpModal); ok {
+				a.modal = nil
+
+				return emit(modalDismissed{})
+			}
+		}
+
+		return nil
+	}
+
+	// Header click switches tabs.
+	if msg.Y == 0 && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		prefixWidth := 2 // "q "
+		tab0Width := len(a.board.Title()) + 2
+		tab1Width := len(a.operations.Title()) + 2
+		tab0Start := prefixWidth
+		tab0End := tab0Start + tab0Width
+		tab1Start := tab0End + 1
+		tab1End := tab1Start + tab1Width
+
+		if msg.X >= tab0Start && msg.X < tab0End {
+			a.active = tabBoard
+
+			return nil
+		}
+
+		if msg.X >= tab1Start && msg.X < tab1End {
+			a.active = tabOperations
+
+			return nil
+		}
+	}
+
+	if a.height < 3 {
+		return nil
+	}
+
+	// Body area is between the header (2 rows) and footer (1 row).
+	if msg.Y >= 2 && msg.Y < a.height-1 {
+		bodyX := msg.X
+		bodyY := msg.Y - 2
+
+		if a.active == tabBoard {
+			return a.board.HandleMouse(msg, bodyX, bodyY)
+		}
+
+		return a.operations.HandleMouse(msg, bodyX, bodyY)
+	}
+
+	return nil
 }
 
 // handleGlobalKey handles the bindings that work everywhere.

@@ -7,6 +7,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// mouseFlag holds the --mouse value, defaulting to true.
+var mouseFlag bool
+
 // BuildRootCommand assembles the q command tree.
 //
 // Running q with no arguments opens the TUI, which is the primary interface;
@@ -29,6 +32,8 @@ func BuildRootCommand() *cobra.Command {
 
 	cmd.PersistentFlags().StringVar(&configFlag, "config", "",
 		"path to the config file (default ~/.q-config.json)")
+	cmd.PersistentFlags().BoolVar(&mouseFlag, "mouse", true,
+		"enable mouse support in the TUI")
 
 	cmd.AddCommand(
 		buildConfigSubcommand(),
@@ -58,6 +63,9 @@ func applyConfig(cmd *cobra.Command, _ []string) error {
 	}
 
 	cfg = loaded
+	if cmd.Flags().Changed("mouse") {
+		cfg.TUI.Mouse = mouseFlag
+	}
 
 	cmd.SetContext(withLogger(cmd.Context(), newLogger(os.Stderr, cfg.LogLevel)))
 

@@ -20,11 +20,17 @@ type settings struct {
 	Terminal terminalSettings
 	Paths    pathsSettings
 	Cost     costSettings
+	TUI      tuiSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
 	Tools map[string]string
-	// LogLevel is the threshold for q's own logs: debug, info, warn, or error.
 	LogLevel string
+}
+
+// tuiSettings configures the terminal UI.
+type tuiSettings struct {
+	// Mouse enables mouse reporting in the TUI (clicking cards, tabs, and scrolling).
+	Mouse bool
 }
 
 // reposSettings configures where q looks for the git checkouts an operation can span.
@@ -163,6 +169,7 @@ func defaultSettings() settings {
 		},
 		Editor:   editorSettings{Command: defaultEditorCommand()},
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
+		TUI:      tuiSettings{Mouse: true},
 		Tools:    map[string]string{},
 		LogLevel: "info",
 	}

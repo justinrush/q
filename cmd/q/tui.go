@@ -42,13 +42,17 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	program := tea.NewProgram(
-		tui.New(c, tuiOptions()),
+	programOpts := []tea.ProgramOption{
 		tea.WithAltScreen(),
 		tea.WithContext(cmd.Context()),
-		// Mouse reporting is deliberately off. Inside tmux, where the user has mouse
-		// mode enabled, capturing it would break click-to-select-pane and
-		// drag-to-copy for the panes q itself opens.
+	}
+	if cfg.TUI.Mouse {
+		programOpts = append(programOpts, tea.WithMouseCellMotion())
+	}
+
+	program := tea.NewProgram(
+		tui.New(c, tuiOptions()),
+		programOpts...,
 	)
 
 	if _, err := program.Run(); err != nil {

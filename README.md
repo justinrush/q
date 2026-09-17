@@ -85,6 +85,12 @@ Press `?` for the full keymap. The essentials:
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
 
+Mouse is supported out of the box:
+- **Click** a mission card to shift focus to it. Click a lane header or lane column to focus that lane.
+- **Double-click** a card to open its debrief session.
+- **Click tabs** (`Board` / `Operations`) in the header to switch views.
+- **Scroll wheel** steps through cards in the hovered lane.
+
 Everything is also scriptable, which is the quickest way to see what the board is doing:
 
 ```sh
@@ -126,6 +132,7 @@ settings without writing anything.
   "terminal": { "mode": "ghostty", "command": [] },
   "paths": { "dataDir": "", "stateDir": "" },
   "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 4, "output": 20, "cacheRead": 0.4 } } },
+  "tui": { "mouse": true },
   "tools": { "tmux": "/usr/bin/tmux" },
   "logLevel": "info"
 }
@@ -153,6 +160,7 @@ settings without writing anything.
 | `paths.stateDir` | overrides where the daemon handle, hook spool, and logs live |
 | `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
 | `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
+| `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
 
@@ -198,6 +206,7 @@ one-off run can point q somewhere else without editing the file:
 | `Q_DEFAULT_AGENT` | `agents.default` |
 | `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL`, `Q_AGY_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
+| `Q_MOUSE` | `tui.mouse` (enable/disable mouse with `true`/`false`) |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
 The daemon reads the configuration when it starts, so after editing the file run

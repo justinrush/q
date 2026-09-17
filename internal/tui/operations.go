@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
@@ -25,6 +26,9 @@ type Operations struct {
 	width    int
 	height   int
 	cursor   int
+
+	lastClickTime   time.Time
+	lastClickCursor int
 }
 
 // The messages the operation view emits.
@@ -41,7 +45,10 @@ type (
 
 // NewOperations returns an empty operation view.
 func NewOperations() *Operations {
-	return &Operations{keys: keys.NewOperations()}
+	return &Operations{
+		keys:            keys.NewOperations(),
+		lastClickCursor: -1,
+	}
 }
 
 // operationAction is a keypress handler.
@@ -76,6 +83,65 @@ func (t *Operations) Update(msg tea.KeyMsg) tea.Cmd {
 	if handler, ok := operationActions[msg.String()]; ok {
 		return handler(t)
 	}
+
+	return nil
+}
+
+// HandleMouse processes mouse clicks and scrolling in the operations view.
+func (t *Operations) HandleMouse(msg tea.MouseMsg, x, y int) tea.Cmd {
+	if y < 0 {
+		return nil
+	}
+
+	if msg.Button == tea.MouseButtonWheelUp {
+		return t.selectPrev()
+	}
+
+	if msg.Button == tea.MouseButtonWheelDown {
+		return t.selectNext()
+	}
+
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return nil
+	}
+
+	if len(t.snapshot.Operations) == 0 {
+		return nil
+	}
+
+	listWidth := t.width * listPaneRatio / 100
+	if listWidth < 24 {
+		listWidth = 24
+	}
+
+	// Clicks within the list pane
+	if x < listWidth {
+		// Row 0 is "THREADS", Row 1+ is Operation (row - 1)
+		row := y - 1
+		if row >= 0 && row < len(t.snapshot.Operations) {
+			t.cursor = row
+
+			return t.registerClick(row)
+		}
+	}
+
+	return nil
+}
+
+// registerClick records a click on an operation and focuses it on double-click.
+func (t *Operations) registerClick(row int) tea.Cmd {
+	now := time.Now()
+	if !t.lastClickTime.IsZero() &&
+		now.Sub(t.lastClickTime) < 400*time.Millisecond &&
+		t.lastClickCursor == row {
+		t.lastClickTime = time.Time{}
+		t.lastClickCursor = -1
+
+		return t.focusOperation()
+	}
+
+	t.lastClickTime = now
+	t.lastClickCursor = row
 
 	return nil
 }
