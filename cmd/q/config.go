@@ -40,11 +40,12 @@ const (
 	EnvTerminal    = "Q_TERMINAL"
 	EnvBranchPfx   = "Q_BRANCH_PREFIX"
 	EnvDefaultTool = "Q_DEFAULT_AGENT"
-	EnvClaudeModel = "Q_CLAUDE_MODEL"
-	EnvCodexModel  = "Q_CODEX_MODEL"
-	EnvAgyModel    = "Q_AGY_MODEL"
-	EnvLogLevel    = "Q_LOG_LEVEL"
-	EnvMouse       = "Q_MOUSE"
+	EnvClaudeModel   = "Q_CLAUDE_MODEL"
+	EnvCodexModel    = "Q_CODEX_MODEL"
+	EnvAgyModel      = "Q_AGY_MODEL"
+	EnvOpencodeModel = "Q_OPENCODE_MODEL"
+	EnvLogLevel      = "Q_LOG_LEVEL"
+	EnvMouse         = "Q_MOUSE"
 )
 
 // fileConfig is the JSON shape of ~/.q-config.json.
@@ -81,10 +82,11 @@ type gitConfig struct {
 }
 
 type agentsConfig struct {
-	Default string       `json:"default,omitempty"`
-	Agy     *agentConfig `json:"agy,omitempty"`
-	Claude  *agentConfig `json:"claude,omitempty"`
-	Codex   *codexConfig `json:"codex,omitempty"`
+	Default  string       `json:"default,omitempty"`
+	Agy      *agentConfig `json:"agy,omitempty"`
+	Claude   *agentConfig `json:"claude,omitempty"`
+	Codex    *codexConfig `json:"codex,omitempty"`
+	Opencode *agentConfig `json:"opencode,omitempty"`
 	// ModelRefresh is a duration string, e.g. "6h", bounding how stale the model
 	// list on the board may be.
 	ModelRefresh string `json:"modelRefresh,omitempty"`
@@ -334,6 +336,14 @@ func applyAgents(out *settings, agents *agentsConfig) {
 			out.Agents.Codex.Args = c.Args
 		}
 	}
+
+	if c := agents.Opencode; c != nil {
+		out.Agents.Opencode.Bin = firstNonEmpty(c.Bin, out.Agents.Opencode.Bin)
+		applyAgentModels(&out.Agents.Opencode, c.Model, c.Effort, c.Models)
+		if c.Args != nil {
+			out.Agents.Opencode.Args = c.Args
+		}
+	}
 }
 
 // applyAgentModels layers the model keys shared by every agent.
@@ -405,6 +415,10 @@ func applyEnv(out *settings) {
 		out.Agents.Codex.Model = v
 	}
 
+	if v := strings.TrimSpace(os.Getenv(EnvOpencodeModel)); v != "" {
+		out.Agents.Opencode.Model = v
+	}
+
 	if v := strings.TrimSpace(os.Getenv(EnvLogLevel)); v != "" {
 		out.LogLevel = v
 	}
@@ -429,6 +443,7 @@ func expandSettings(out *settings) {
 	out.Agents.Claude.Bin = expandHome(out.Agents.Claude.Bin)
 	out.Agents.Codex.Bin = expandHome(out.Agents.Codex.Bin)
 	out.Agents.Codex.ConfigDir = expandHome(out.Agents.Codex.ConfigDir)
+	out.Agents.Opencode.Bin = expandHome(out.Agents.Opencode.Bin)
 
 	for name, path := range out.Tools {
 		out.Tools[name] = expandHome(path)
@@ -510,6 +525,13 @@ func writeSampleConfig(w io.Writer, s settings) error {
 				Models:    s.Agents.Codex.Models,
 				ConfigDir: s.Agents.Codex.ConfigDir,
 				Profile:   s.Agents.Codex.Profile,
+			},
+			Opencode: &agentConfig{
+				Bin:    s.Agents.Opencode.Bin,
+				Args:   s.Agents.Opencode.Args,
+				Model:  s.Agents.Opencode.Model,
+				Effort: s.Agents.Opencode.Effort,
+				Models: s.Agents.Opencode.Models,
 			},
 			ModelRefresh: refreshString(s.Agents.ModelRefresh),
 		},

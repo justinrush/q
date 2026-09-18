@@ -133,6 +133,10 @@ func TestIsPlanApproval(t *testing.T) {
 		t.Error("ExitPlanMode should be recognized")
 	}
 
+	if !(HookEvent{ToolName: "plan_exit"}).IsPlanApproval() {
+		t.Error("plan_exit should be recognized")
+	}
+
 	if (HookEvent{ToolName: "Bash"}).IsPlanApproval() {
 		t.Error("Bash is not a plan approval")
 	}

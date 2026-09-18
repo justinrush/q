@@ -60,7 +60,7 @@ func TestAgyConfigurationAndDiscovery(t *testing.T) {
 	if got, err := resolveTool(s, toolAgy); err != nil || got != override {
 		t.Fatalf("%s, %v", got, err)
 	}
-	if tool, err := mission.ParseTool("agy"); err != nil || tool != mission.ToolAgy || tool.Next() != mission.ToolClaude || mission.ToolCodex.Next() != tool {
+	if tool, err := mission.ParseTool("agy"); err != nil || tool != mission.ToolAgy || tool.Next() != mission.ToolOpencode || mission.ToolCodex.Next() != tool {
 		t.Fatalf("tool rotation: %s %v", tool, err)
 	}
 }

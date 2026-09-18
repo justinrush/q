@@ -14,6 +14,7 @@ import (
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/launch"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/opencode"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/justinrush/q/internal/terminal"
@@ -140,6 +141,10 @@ func agentsFor(s settings) []mission.Agent {
 		agents = append(agents, agy.New(bin, agy.Options{Args: s.Agents.Agy.Args}))
 	}
 
+	if bin, err := resolveTool(s, toolOpencode); err == nil {
+		agents = append(agents, opencode.New(bin, opencode.Options{Args: s.Agents.Opencode.Args}))
+	}
+
 	return agents
 }
 
@@ -210,6 +215,15 @@ func probersFor(s settings, run runner.OS, version string) []mission.ModelProber
 		}
 		probers = append(probers, withOverrides(agy.NewProber(bin, run, fallback), s.Agents.Agy))
 	}
+
+	if bin, err := resolveTool(s, toolOpencode); err == nil {
+		fallback := append([]string(nil), s.Agents.Opencode.Models...)
+		if s.Agents.Opencode.Model != "" {
+			fallback = append(fallback, s.Agents.Opencode.Model)
+		}
+		probers = append(probers, withOverrides(opencode.NewProber(bin, run, fallback), s.Agents.Opencode))
+	}
+
 	return probers
 }
 
