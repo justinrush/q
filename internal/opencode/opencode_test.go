@@ -56,7 +56,7 @@ func TestOpencodeArgs(t *testing.T) {
 		MissionDir: "/missions/ms1",
 	}
 	args := ag.Args(inv)
-	want := []string{"'--pure'", "--prompt", mission.PromptArg}
+	want := []string{"--auto", "'--pure'", "--prompt", mission.PromptArg}
 	if strings.Join(args, " ") != strings.Join(want, " ") {
 		t.Errorf("Args = %v, want %v", args, want)
 	}
@@ -74,6 +74,7 @@ func TestOpencodeArgs(t *testing.T) {
 	for _, sub := range []string{
 		"--session 'ses-12345'",
 		"--agent plan",
+		"--auto",
 		"--model 'opencode/claude-sonnet-4-5'",
 		"'--pure'",
 		"--prompt " + mission.PromptArg,

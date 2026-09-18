@@ -61,6 +61,8 @@ func (a *Agent) Args(inv mission.Invocation) []string {
 		args = append(args, "--agent", "plan")
 	}
 
+	args = append(args, "--auto")
+
 	if inv.Model != "" {
 		args = append(args, "--model", mission.ShellQuote(inv.Model))
 	}
