@@ -30,6 +30,7 @@ func reportCost(rep *report, dirs paths.Dirs) {
 	pricing := pricingFor(cfg)
 	rep.row("  metering\tenabled")
 	rep.row("  agy\tunavailable: transcripts do not expose token usage or quota resets")
+	rep.row("  opencode\tunavailable: session transcripts do not expose token usage")
 	rep.row("  priced models\t%d", len(pricing.Models))
 
 	unpriced, err := unpricedModels(dirs)

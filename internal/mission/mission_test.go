@@ -119,7 +119,12 @@ func TestParseTool(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
 		want Tool
-	}{{"claude", ToolClaude}, {"codex", ToolCodex}} {
+	}{
+		{"claude", ToolClaude},
+		{"codex", ToolCodex},
+		{"agy", ToolAgy},
+		{"opencode", ToolOpencode},
+	} {
 		got, err := ParseTool(tc.in)
 		if err != nil || got != tc.want {
 			t.Errorf("ParseTool(%q) = %q, %v", tc.in, got, err)
@@ -132,8 +137,16 @@ func TestParseTool(t *testing.T) {
 }
 
 func TestToolGlyphsAreDistinct(t *testing.T) {
-	if ToolClaude.Glyph() == ToolCodex.Glyph() {
-		t.Error("tool glyphs must differ to be useful on a card")
+	seen := map[string]Tool{}
+	for _, tool := range Tools {
+		glyph := tool.Glyph()
+		if glyph == "" {
+			t.Errorf("tool %q has an empty glyph", tool)
+		}
+		if other, ok := seen[glyph]; ok {
+			t.Errorf("tool %q and %q share glyph %q", tool, other, glyph)
+		}
+		seen[glyph] = tool
 	}
 }
 

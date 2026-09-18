@@ -145,12 +145,12 @@ func buildMissionAddSubcommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&operation, "operation", "", "Operation id this mission belongs to (required)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "What the agent should do (required)")
-	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude, codex, or agy")
+	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude, codex, agy, or opencode")
 	cmd.Flags().StringVar(&model, "model", "",
 		"Model to run on; defaults to the agent's own (see q models)")
 	cmd.Flags().StringVar(&effort, "effort", "",
 		"Reasoning effort, for a model that takes one (see q models)")
-	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude only)")
+	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude and opencode)")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
 	cmd.Flags().StringArrayVar(&bases, "base", nil,
 		"Base a repo's worktree on a branch instead of its default; repeatable, accepts repo=branch")

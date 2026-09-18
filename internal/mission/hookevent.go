@@ -185,9 +185,11 @@ func deref(p *string) string {
 }
 
 // IsPlanApproval reports whether the payload concerns claude's exit-from-plan-mode
-// tool, whose permission request means a plan is ready for a human to read rather
+// tool or opencode's plan_exit, whose permission request means a plan is ready for a human to read rather
 // than that the agent is stuck.
-func (p HookEvent) IsPlanApproval() bool { return p.ToolName == ExitPlanModeTool }
+func (p HookEvent) IsPlanApproval() bool {
+	return p.ToolName == ExitPlanModeTool || p.ToolName == "plan_exit"
+}
 
 // CanonicalEvent converts a command-line event slug such as "session-start" to its
 // canonical name.

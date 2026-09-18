@@ -54,11 +54,12 @@ type gitSettings struct {
 
 // agentsSettings configures the coding agents q can dispatch.
 type agentsSettings struct {
-	// Default is the agent a new mission gets: "claude", "codex", or "agy".
-	Default string
-	Claude  agentSettings
-	Codex   codexSettings
-	Agy     agentSettings
+	// Default is the agent a new mission gets: "claude", "codex", "agy", or "opencode".
+	Default  string
+	Claude   agentSettings
+	Codex    codexSettings
+	Agy      agentSettings
+	Opencode agentSettings
 	// ModelRefresh is how often the daemon re-asks each agent which models it
 	// offers. Zero means the daemon's own default.
 	ModelRefresh time.Duration

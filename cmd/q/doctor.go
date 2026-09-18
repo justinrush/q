@@ -21,10 +21,11 @@ const versionFlag = "--version"
 // versionArgs are the arguments used to ask each tool its version. Tools absent
 // from this map are only checked for presence.
 var versionArgs = map[toolName][]string{
-	toolGit:    {versionFlag},
-	toolTmux:   {"-V"},
-	toolClaude: {versionFlag},
-	toolCodex:  {versionFlag},
+	toolGit:      {versionFlag},
+	toolTmux:     {"-V"},
+	toolClaude:   {versionFlag},
+	toolCodex:    {versionFlag},
+	toolOpencode: {versionFlag},
 }
 
 // envWarnings are environment variables that silently degrade q. Each is
