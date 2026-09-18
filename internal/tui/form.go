@@ -175,11 +175,19 @@ func (f *missionForm) Update(msg tea.KeyMsg) (modal, tea.Cmd) {
 	case keyBranches:
 		return f.showBranches()
 	case keyEnter:
-		if f.field == fieldMissionRepos && !f.reposLocked {
+		switch {
+		case f.field == fieldMissionRepos && !f.reposLocked:
 			next, err := f.repos.complete(f, msg)
 			f.err = err
 
 			return next, nil
+		case f.field == fieldMissionModel && !f.launched:
+			// The whole point of the model list is choosing by typing, so enter
+			// opens it rather than cycling. There is nothing to choose until the
+			// catalog has been learned, and the form already says so.
+			if len(f.modelSet().Options) > 0 {
+				return f.showModelPicker(), nil
+			}
 		}
 	}
 
@@ -352,6 +360,11 @@ func (f *missionForm) togglePlan(keyName string) {
 	}
 }
 
+// showModelPicker opens the filterable catalog over the form.
+func (f *missionForm) showModelPicker() modal {
+	return newModelPicker(f.tool, f.model, f.modelSet().Options, f)
+}
+
 // showBranches opens the base branch modal over the form.
 //
 // The repo list is computed here rather than kept on the form because it moves:
@@ -486,13 +499,20 @@ func (f *missionForm) View(width, height int) string {
 		f.label("Operation", fieldMissionOperation) + "  " + f.operationValue(),
 		f.label("Agent", fieldMissionTool) + "   " + f.toolValue() + f.toolWarning(),
 		f.label("Model", fieldMissionModel) + "   " + f.modelValue(),
-		f.label("Effort", fieldMissionEffort) + "  " + f.effortValue(),
-		f.label("Plan mode", fieldMissionPlan) + " " + f.planValue(),
+	}
+
+	if f.field == fieldMissionModel && !f.launched && len(f.modelSet().Options) > 0 {
+		rows = append(rows, styles.CardDetail.Render("  enter to choose from the full list"))
+	}
+
+	rows = append(rows,
+		f.label("Effort", fieldMissionEffort)+"  "+f.effortValue(),
+		f.label("Plan mode", fieldMissionPlan)+" "+f.planValue(),
 		"",
 		f.label("Additional repos", fieldMissionRepos),
 		f.repoHelp(),
 		f.repos.View(inner),
-	}
+	)
 
 	// The summary sits with the repos it qualifies rather than at the end of the
 	// form, since a base branch only means anything against a repository.

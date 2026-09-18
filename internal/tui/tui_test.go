@@ -1217,6 +1217,22 @@ func testModels() map[mission.Tool]mission.ModelSet {
 	}
 }
 
+// opencodeModels is a catalog shaped like what opencode serves: far more models
+// than a cycling selector can reasonably step through.
+func opencodeModels() map[mission.Tool]mission.ModelSet {
+	options := []mission.ModelOption{
+		{Value: "opencode/claude-sonnet-4-5", Label: "Claude Sonnet 4.5", Efforts: []string{"low", "medium", "high"}},
+		{Value: "opencode/gpt-5", Label: "GPT-5"},
+		{Value: "anthropic/claude-opus-4-1", Label: "Claude Opus 4.1"},
+		{Value: "google/gemini-2.5-pro", Label: "Gemini 2.5 Pro"},
+		{Value: "deepseek/deepseek-chat", Label: "DeepSeek Chat"},
+	}
+
+	return map[mission.Tool]mission.ModelSet{
+		mission.ToolOpencode: {Default: options[0].Value, Options: options},
+	}
+}
+
 // A new mission starts on the model its agent reports, which is what makes the
 // board agree with what the agent would have done unprompted.
 func TestMissionFormStartsOnTheAgentDefault(t *testing.T) {
@@ -1424,6 +1440,251 @@ func TestMissionFormSubmitsModelAndEffort(t *testing.T) {
 	if msg.Model != "opus" || msg.Effort != "high" {
 		t.Errorf("model/effort = %q/%q, want opus/high", msg.Model, msg.Effort)
 	}
+}
+
+// opencodeFormWith returns a new-mission form on the opencode agent, focused on
+// its model field.
+func opencodeFormWith() *missionForm {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolOpencode, Models: opencodeModels()}, nil, time.Time{})
+	form.name.SetValue("mission")
+	form.prompt.SetValue("do it")
+	form.focusField(fieldMissionModel)
+
+	return form
+}
+
+// Enter on the model field opens the whole catalog, which is what makes a list
+// the size of opencode's reachable from a keyboard: cycling would take forever,
+// and the picker lets the user type to narrow it.
+func TestMissionFormEnterOnModelOpensThePicker(t *testing.T) {
+	form := opencodeFormWith()
+
+	next, cmd := form.Update(enterKey())
+	if cmd != nil {
+		t.Fatal("opening the picker should not run a command")
+	}
+
+	picker, ok := next.(*modelPicker)
+	if !ok {
+		t.Fatalf("enter opened %T, want the model picker", next)
+	}
+
+	if len(picker.matches()) != len(opencodeModels()[mission.ToolOpencode].Options) {
+		t.Errorf("picker shows %d matches, want the whole catalog", len(picker.matches()))
+	}
+
+	if picker.parent != form {
+		t.Error("picker should return to the form it was opened from")
+	}
+
+	if !strings.Contains(picker.View(90, 40), "opencode/claude-sonnet-4-5") {
+		t.Errorf("picker view is missing the catalog:\n%s", picker.View(90, 40))
+	}
+}
+
+// The model field does not submit the form on enter, and the picker is a no-op
+// before a catalog exists or after launch, matching the way the model choice is
+// fixed once an agent is running.
+func TestMissionFormEnterOnModelIsNoopWithoutACatalog(t *testing.T) {
+	form := newMissionForm(mission.Mission{}, []mission.Operation{testOperation("op_1", "T", 0)},
+		"op_1", Options{DefaultTool: mission.ToolOpencode}, nil, time.Time{})
+	form.name.SetValue("mission")
+	form.prompt.SetValue("do it")
+	form.focusField(fieldMissionModel)
+
+	next, cmd := form.Update(enterKey())
+	if cmd != nil {
+		t.Fatal("enter produced a command with no catalog")
+	}
+
+	if next != modal(form) {
+		t.Fatalf("enter opened %T, want the form to stay put", next)
+	}
+}
+
+func TestMissionFormEnterOnModelIsNoopAfterLaunch(t *testing.T) {
+	started := time.Now()
+	form := newMissionForm(
+		mission.Mission{ID: "ms_1", Tool: mission.ToolOpencode, Model: "opencode/gpt-5", StartedAt: &started},
+		[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1",
+		Options{Models: opencodeModels()}, nil, time.Time{},
+	)
+	form.focusField(fieldMissionModel)
+
+	next, cmd := form.Update(enterKey())
+	if cmd != nil {
+		t.Fatal("enter after launch produced a command")
+	}
+
+	if next != modal(form) {
+		t.Fatalf("enter after launch opened %T, want the form", next)
+	}
+}
+
+// The model row explains the enter binding so a user who never reads the footer
+// can still find the picker.
+func TestMissionFormModelRowHintsAtThePicker(t *testing.T) {
+	form := opencodeFormWith()
+
+	if !strings.Contains(form.View(90, 40), "enter to choose from the full list") {
+		t.Errorf("focused model row does not hint at the picker:\n%s", form.View(90, 40))
+	}
+
+	form.focusField(fieldMissionName)
+
+	if strings.Contains(form.View(90, 40), "enter to choose from the full list") {
+		t.Errorf("the hint should follow the model field, not the name field")
+	}
+}
+
+// A fragment matches any model whose id or label contains it, not only models
+// that begin with it, and the catalog order survives for everything that does.
+func TestModelPickerFiltersBySubstring(t *testing.T) {
+	form := opencodeFormWith()
+	next, _ := form.Update(enterKey())
+	picker := next.(*modelPicker)
+
+	picker.Update(keyMsg("clau"))
+
+	got := picker.matches()
+	want := []string{"opencode/claude-sonnet-4-5", "anthropic/claude-opus-4-1"}
+	if !slices.Equal(optionValues(got), want) {
+		t.Fatalf("matches = %q, want %q", optionValues(got), want)
+	}
+
+	// A fragment that appears only mid-id still matches: "sonnet" is nowhere
+	// near the start of opencode/claude-sonnet-4-5.
+	picker.query.SetValue("sonnet")
+
+	if got := picker.matches(); len(got) != 1 || got[0].Value != "opencode/claude-sonnet-4-5" {
+		t.Fatalf("matches = %+v, want only the sonnet model", got)
+	}
+}
+
+// Enter takes the highlighted model into the form and drops an effort the new
+// model does not accept, exactly as cycling from it would.
+func TestModelPickerEnterSelectsTheHighlightedModel(t *testing.T) {
+	form := opencodeFormWith()
+	form.effort = "high"
+
+	next, _ := form.Update(enterKey())
+	picker := next.(*modelPicker)
+
+	picker.Update(keyMsg("gpt"))
+	next, cmd := picker.Update(enterKey())
+	if cmd != nil {
+		t.Fatal("picking should not run a command")
+	}
+
+	if next != modal(form) {
+		t.Fatalf("picking returned %T, want the form", next)
+	}
+
+	if form.model != "opencode/gpt-5" {
+		t.Errorf("model = %q, want the picked opencode/gpt-5", form.model)
+	}
+
+	// gpt-5 takes no effort, so the high level set on the sonnet default has no
+	// business riding along.
+	if form.effort != "" {
+		t.Errorf("effort = %q, want it dropped", form.effort)
+	}
+}
+
+// A typed fragment nobody matches is taken verbatim, mirroring the branch
+// picker: the catalog can be stale, and a real model must stay launchable.
+func TestModelPickerEnterAcceptsAnUnknownTypedModel(t *testing.T) {
+	form := opencodeFormWith()
+
+	next, _ := form.Update(enterKey())
+	picker := next.(*modelPicker)
+
+	picker.Update(keyMsg("brand/new-model"))
+	next, _ = picker.Update(enterKey())
+
+	if next != modal(form) {
+		t.Fatalf("picking returned %T, want the form", next)
+	}
+
+	if form.model != "brand/new-model" {
+		t.Errorf("model = %q, want the typed value", form.model)
+	}
+}
+
+// Esc leaves the form's choice alone.
+func TestModelPickerEscKeepsTheCurrentModel(t *testing.T) {
+	form := opencodeFormWith()
+	before := form.model
+
+	next, _ := form.Update(enterKey())
+	picker := next.(*modelPicker)
+
+	picker.Update(keyMsg("gemini"))
+	next, _ = picker.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	if next != modal(form) {
+		t.Fatalf("esc returned %T, want the form", next)
+	}
+
+	if form.model != before {
+		t.Errorf("model = %q, want %q unchanged", form.model, before)
+	}
+}
+
+// The form's current choice is highlighted when the box opens, so re-picking
+// the model already on the mission is one enter away.
+func TestModelPickerHighlightsTheCurrentModel(t *testing.T) {
+	form := opencodeFormWith()
+	form.model = "google/gemini-2.5-pro"
+
+	next, _ := form.Update(enterKey())
+	picker := next.(*modelPicker)
+
+	matches := picker.matches()
+	want := 3 // google/gemini-2.5-pro is the fourth option.
+	if picker.cursor != want {
+		t.Errorf("cursor = %d, want %d (%s)", picker.cursor, want, matches[want].Value)
+	}
+
+	next, _ = picker.Update(enterKey())
+	if next != modal(form) {
+		t.Fatalf("picking returned %T, want the form", next)
+	}
+
+	if form.model != "google/gemini-2.5-pro" {
+		t.Errorf("model = %q, want the highlighted one kept", form.model)
+	}
+}
+
+// A catalog the size of opencode's cannot fit on screen, so the picker says how
+// many matches were left out and keeps typing narrows the list.
+func TestModelPickerReportsWhatItLeavesOut(t *testing.T) {
+	var options []mission.ModelOption
+	for i := range maxModelChoices + 3 {
+		options = append(options, mission.ModelOption{Value: fmt.Sprintf("opencode/model-%02d", i)})
+	}
+
+	picker := newModelPicker(mission.ToolOpencode, "", options, &missionForm{})
+
+	out := picker.View(90, 40)
+	if !strings.Contains(out, "… 3 more, keep typing") {
+		t.Errorf("view should report the left-out matches:\n%s", out)
+	}
+
+	if len(picker.matches()) != len(options) {
+		t.Errorf("matches = %d, want the whole catalog", len(picker.matches()))
+	}
+}
+
+// optionValues pulls the values off a match list for comparison.
+func optionValues(options []mission.ModelOption) []string {
+	out := make([]string, 0, len(options))
+	for _, opt := range options {
+		out = append(out, opt.Value)
+	}
+
+	return out
 }
 
 // testApp returns a board wired to a client that cannot reach anything, which is
@@ -2388,4 +2649,3 @@ func TestOperationsMouseClickSelectsOperation(t *testing.T) {
 		t.Errorf("after wheel up cursor = %d, want 1", operations.cursor)
 	}
 }
-
