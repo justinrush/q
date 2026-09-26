@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // fetchSnapshot loads the full state.
@@ -191,18 +192,25 @@ func (a *App) setStatusForce(id mission.MissionID, to mission.Status, message st
 
 // openDebriefCmd opens a mission's debrief session.
 func (a *App) openDebriefCmd(ms mission.Mission, mode string) tea.Cmd {
+	attach := a.opts.AttachBin != "" && (mode == api.DebriefAttach || mode == api.DebriefSteal)
+	steal := mode == api.DebriefSteal
+	if attach {
+		mode = api.DebriefPrepare
+	}
 	return func() tea.Msg {
 		result, err := a.client.OpenDebrief(a.ctx(), ms.ID, mode)
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
 		}
 
-		return debriefOpenedMsg{Mission: ms, Result: result}
+		return debriefOpenedMsg{Mission: ms, Result: result, Attach: attach, Steal: steal}
 	}
 }
 
 // debriefOpenedMsg carries the outcome of opening a debrief.
 type debriefOpenedMsg struct {
+	Attach  bool
+	Steal   bool
 	Mission mission.Mission
 	Result  api.Result
 }
@@ -415,4 +423,17 @@ func (a *App) deleteOperationCmd(operation mission.Operation, force bool) tea.Cm
 
 		return toastMsg{text: "deleted " + operation.Name}
 	}
+}
+
+// attachSessionCmd releases Bubble Tea's terminal while tmux owns it. Inside
+// tmux, switch-client changes the calling client's session; outside, it blocks until
+// detach, at which point Bubble Tea restores the board.
+func (a *App) attachSessionCmd(session string, steal bool) tea.Cmd {
+	cmd := terminal.CurrentCommand(a.ctx(), a.opts.AttachBin, session, steal)
+	return tea.Exec(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return toastMsg{text: "attaching to mission: " + err.Error(), err: true}
+		}
+		return toastMsg{text: "returned from " + session}
+	})
 }

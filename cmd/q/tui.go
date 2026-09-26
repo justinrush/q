@@ -90,5 +90,6 @@ func tuiOptions() tui.Options {
 			Skip:     cfg.Repos.Skip,
 		},
 		DefaultTool: mission.Tool(cfg.Agents.Default),
+		AttachBin:   currentTerminalBin(cfg),
 	}
 }

@@ -23,7 +23,7 @@ type settings struct {
 	TUI      tuiSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
-	Tools map[string]string
+	Tools    map[string]string
 	LogLevel string
 }
 
@@ -130,13 +130,15 @@ const (
 	// terminalCommand runs a user-supplied argv template.
 	terminalCommand = "command"
 	// terminalNone never opens a window. q reports the tmux command to run
-	// instead, which is what a remote or headless setup wants.
+	// instead, for callers that want to attach manually.
 	terminalNone = "none"
+	// terminalCurrent attaches using the foreground client terminal.
+	terminalCurrent = "current"
 )
 
 // terminalSettings configures how a debrief window is opened.
 type terminalSettings struct {
-	// Mode is one of terminalGhostty, terminalCommand, or terminalNone.
+	// Mode is one of terminalGhostty, terminalCommand, terminalCurrent, or terminalNone.
 	Mode string
 	// Command is the argv template used when Mode is terminalCommand.
 	//
@@ -178,15 +180,13 @@ func defaultSettings() settings {
 
 // defaultTerminalMode picks the mode that works out of the box on this OS.
 //
-// Ghostty's AppleScript interface exists only on macOS, and there is no terminal
-// emulator every Linux desktop has, so anywhere else the honest default is to
-// open nothing and tell the user the tmux command.
+// Remote shells and non-macOS hosts attach in the terminal running q.
 func defaultTerminalMode() string {
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" && os.Getenv("SSH_CONNECTION") == "" && os.Getenv("SSH_TTY") == "" {
 		return terminalGhostty
 	}
 
-	return terminalNone
+	return terminalCurrent
 }
 
 // defaultEditorCommand honors $VISUAL, then $EDITOR, and falls back to vi,

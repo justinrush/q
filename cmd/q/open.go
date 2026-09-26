@@ -7,6 +7,7 @@ import (
 
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 	"github.com/spf13/cobra"
 )
 
@@ -43,11 +44,22 @@ func buildOpenSubcommand() *cobra.Command {
 				mode = api.DebriefSteal
 			}
 
+			bin := currentTerminalBin(cfg)
+			attach := bin != "" && !prepare && !raise
+			if attach {
+				mode = api.DebriefPrepare
+			}
+
 			result, err := c.OpenDebrief(cmd.Context(), mission.MissionID(args[0]), mode)
 			if err != nil {
 				return err
 			}
 
+			if attach && !result.NeedsRelaunch {
+				child := terminal.CurrentCommand(cmd.Context(), bin, result.Session, steal)
+				child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
+				return child.Run()
+			}
 			return renderOpenResult(cmd.OutOrStdout(), result)
 		},
 	}

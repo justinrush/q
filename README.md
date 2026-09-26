@@ -45,8 +45,8 @@ repo, so its worktree contains the branch you want to read. See [Base branches](
 - **git** and **tmux**
 - **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** or **[agy](https://antigravity.google/docs/cli/getting-started/)** — at least one
 - **Go 1.26+** to build
-- macOS or Linux. Opening a debrief window natively uses
-  [Ghostty](https://ghostty.org) 1.3+ on macOS; everywhere else you name your own
+- macOS or Linux. Desktop windows on macOS use [Ghostty](https://ghostty.org) 1.3+;
+  remote shells use the current terminal. For other desktop windows, name your own
   terminal command, or let q print the `tmux attach` line for you. See
   [Configuration](#configuration).
 
@@ -154,7 +154,7 @@ settings without writing anything.
 | `agents.codex.configDir` | where codex keeps its configuration. q writes only its own profile there |
 | `agents.codex.profile` | the codex profile name q writes and selects |
 | `editor.command` | argv opened on each changed worktree in a debrief. Defaults to `$VISUAL`, `$EDITOR`, then `vi` |
-| `terminal.mode` | `ghostty`, `command`, or `none` — see below |
+| `terminal.mode` | `ghostty`, `current`, `command`, or `none` — see below |
 | `terminal.command` | the argv template for `command` mode |
 | `paths.dataDir` | overrides where state and mission worktrees live |
 | `paths.stateDir` | overrides where the daemon handle, hook spool, and logs live |
@@ -166,10 +166,13 @@ settings without writing anything.
 
 ### Terminal modes
 
-Opening a debrief means putting a terminal in front of the mission's tmux session, and
-there is no portable way to do that. So:
+Opening a debrief joins the mission's existing tmux session:
 
-- **`ghostty`** (the macOS default) uses Ghostty 1.3+'s native AppleScript interface. The
+- **`current`** (the default on Linux and over SSH) attaches in the terminal running q.
+  Inside tmux, Enter switches your client to the mission session; q keeps running in its
+  original session. Outside tmux, the board pauses until you detach, then resumes.
+  `q open <mission-id>` uses the same workflow.
+- **`ghostty`** (the local macOS default) uses Ghostty 1.3+'s native AppleScript interface. The
   window is created inside the running Ghostty application, so macOS includes it in the
   normal ⌘-\` window cycle. The first one may prompt for Automation permission.
 - **`command`** runs an argv template of your own. `{dir}` is replaced by the working
@@ -186,9 +189,23 @@ there is no portable way to do that. So:
   `["alacritty", "--working-directory", "{dir}", "-e", "{argv}"]`,
   `["gnome-terminal", "--working-directory={dir}", "--", "{argv}"]`.
 
-- **`none`** (the default off macOS) opens nothing. q arranges the panes and tells you the
-  `tmux attach-session` line to run yourself, which is what a headless or remote setup
-  wants.
+- **`none`** opens nothing. q arranges the panes and tells you the
+  `tmux attach-session` line to run yourself.
+
+For a persistent remote board, start `tmux new-session -A -s q-board`, then run q.
+Enter opens the selected mission. Use your tmux prefix followed by `s` to choose
+the board session, or prefix then `L` to return to the previous session.
+With the companion mac repo's config, the prefix is Ctrl+A (tmux's stock prefix
+is Ctrl+B). Ctrl+S by itself is not the session picker.
+
+You can also run q directly over SSH. Enter attaches; prefix then `d` detaches
+and returns to the board without restarting q. Ctrl+D exits the active shell or
+agent instead of detaching.
+
+Existing explicit terminal settings still take precedence. To migrate a remote
+config that names Ghostty or `none`, set `terminal.mode` to `current`, or run
+`Q_TERMINAL=current q`. Restart the daemon after changing saved settings
+(`q daemon restart`).
 
 ### Where settings come from
 
