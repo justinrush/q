@@ -395,6 +395,10 @@ func (a *App) handleDebriefOpened(msg debriefOpenedMsg) tea.Cmd {
 		return nil
 	}
 
+	if msg.Attach {
+		return a.attachSessionCmd(msg.Result.Session, msg.Steal)
+	}
+
 	if msg.Result.AttachCommand != "" {
 		return emit(toastMsg{text: "run: " + msg.Result.AttachCommand})
 	}

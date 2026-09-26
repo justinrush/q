@@ -256,7 +256,7 @@ func resolveTool(s settings, tool toolName) (string, error) {
 // openerFor picks the window opener the user's configuration asks for.
 func openerFor(s settings, scriptBin string, run runner.Runner) (terminal.Opener, error) {
 	switch s.Terminal.Mode {
-	case terminalNone:
+	case terminalNone, terminalCurrent:
 		return terminal.NewManual(), nil
 	case terminalCommand:
 		return terminal.NewCommand(s.Terminal.Command, run)

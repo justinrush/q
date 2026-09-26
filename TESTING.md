@@ -218,3 +218,18 @@ on fresh launches and resumes. Verified with agy 1.1.27: `agy models` returns
 ID/tab/label rows; `agy models --json` is rejected. Local transcript schemas were
 inspected without displaying conversation content: neither transcript.jsonl nor
 transcript_full.jsonl contained usage or quota fields. No agy meter is registered.
+
+
+### Remote terminal attachment
+
+With `Q_TERMINAL=current q`, open a live mission with Enter in both cases:
+
+- Inside tmux: the client switches to the mission, and prefix then `L` returns
+  to the still-running board. A second attached client should stay where it was.
+- Outside tmux: the mission takes over the terminal; prefix then `d` restores
+  the board, including its input and rendering.
+
+Repeat with `q open <mission-id>`; `--prepare` should not attach, and
+`--steal` should detach other clients. A missing session should offer relaunch
+in the board without trying to attach. Desktop `ghostty` and manual `none`
+modes should retain their existing behavior.

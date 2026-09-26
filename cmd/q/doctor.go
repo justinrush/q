@@ -123,7 +123,7 @@ func reportSelf(rep *report) {
 	if tmux := os.Getenv("TMUX"); tmux != "" {
 		rep.row("  tmux\trunning inside tmux (%s)", strings.SplitN(tmux, ",", 2)[0])
 	} else {
-		rep.row("  tmux\tnot inside tmux; a debrief opens its own window")
+		rep.row("  tmux\tnot inside tmux")
 	}
 
 	rep.line("")

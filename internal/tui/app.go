@@ -49,6 +49,8 @@ const (
 // cmd/q resolves these and hands them over, which is what keeps the TUI
 // testable without a home directory.
 type Options struct {
+	// AttachBin enables foreground attachment using this tmux executable.
+	AttachBin string
 	// Repos bounds the checkout search behind the repo picker.
 	Repos git.ScanOptions
 	// DefaultTool is the agent a new mission starts with.
