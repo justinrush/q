@@ -51,6 +51,44 @@ func TestFailedProxyInitializationReapsProcess(t *testing.T) {
 	t.Errorf("proxy child PID %d was not reaped", pid)
 }
 
+func TestManagerPausesAfterConnectionFailure(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "failing-codex")
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nprintf x >> \"$0.calls\"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewManager(t.Context(), bin, "test", runner.OS{})
+	if _, err := manager.connect(); err == nil {
+		t.Fatal("first connection unexpectedly succeeded")
+	}
+	if _, err := manager.connect(); err == nil {
+		t.Fatal("connection during retry pause unexpectedly succeeded")
+	}
+
+	calls, err := os.ReadFile(bin + ".calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(calls) != "x" {
+		t.Errorf("launches during retry pause = %d, want 1", len(calls))
+	}
+
+	manager.mu.Lock()
+	manager.nextAttempt = time.Now().Add(-time.Second)
+	manager.mu.Unlock()
+	if _, err := manager.connect(); err == nil {
+		t.Fatal("connection after retry pause unexpectedly succeeded")
+	}
+
+	calls, err = os.ReadFile(bin + ".calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(calls) != "xx" {
+		t.Errorf("launches after retry pause = %d, want 2", len(calls))
+	}
+}
+
 func TestProxyReadThread(t *testing.T) {
 	stream := newScriptedStream("{\"id\":1,\"result\":{\"thread\":{\"id\":\"thr-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[\"waitingOnApproval\"]}}}}\n")
 	proxy := &Proxy{client: NewClient(stream, stream)}
