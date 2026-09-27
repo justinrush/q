@@ -61,6 +61,8 @@ func startAppServer(
 	if err != nil {
 		return nil, err
 	}
+	// Reap the process on every path, including a failed initialization.
+	go func() { _ = process.Wait() }()
 
 	client := NewClient(process.Stdout, process.Stdin)
 	notifications := make(chan Notification, 64)
@@ -84,8 +86,6 @@ func startAppServer(
 
 		return nil, fmt.Errorf("initializing Codex app-server: %w", err)
 	}
-
-	go func() { _ = process.Wait() }()
 
 	return &Proxy{client: client, process: process}, nil
 }
