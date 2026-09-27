@@ -14,6 +14,9 @@ const initializeTimeout = 5 * time.Second
 
 const daemonStartTimeout = 10 * time.Second
 
+// A failed connection is retried after a pause rather than on every runtime poll.
+const proxyRetryDelay = time.Minute
+
 // Proxy is a Q observer connection to Codex's managed app-server.
 // It intentionally reads threads without resuming them, so the terminal UI
 // remains the sole interactive subscriber and owner of approval requests.
@@ -61,6 +64,8 @@ func startAppServer(
 	if err != nil {
 		return nil, err
 	}
+	// Reap the process on every path, including a failed initialization.
+	go func() { _ = process.Wait() }()
 
 	client := NewClient(process.Stdout, process.Stdin)
 	notifications := make(chan Notification, 64)
@@ -84,8 +89,6 @@ func startAppServer(
 
 		return nil, fmt.Errorf("initializing Codex app-server: %w", err)
 	}
-
-	go func() { _ = process.Wait() }()
 
 	return &Proxy{client: client, process: process}, nil
 }
@@ -243,6 +246,10 @@ type Manager struct {
 
 	mu    sync.Mutex
 	proxy *Proxy
+	// A failed startup is remembered so a down app-server does not cause a
+	// process launch on every one-second runtime poll.
+	nextAttempt time.Time
+	connectErr  error
 }
 
 // NewManager returns a lazy managed app-server connection.
@@ -317,6 +324,9 @@ func (m *Manager) connect() (*Proxy, error) {
 	if m.proxy != nil {
 		return m.proxy, nil
 	}
+	if time.Now().Before(m.nextAttempt) {
+		return nil, fmt.Errorf("Codex app-server connection is cooling down: %w", m.connectErr)
+	}
 
 	startCtx, cancel := context.WithTimeout(m.ctx, daemonStartTimeout)
 	defer cancel()
@@ -326,17 +336,27 @@ func (m *Manager) connect() (*Proxy, error) {
 		Args: []string{"app-server", "daemon", "start"},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("starting Codex app-server daemon: %w", err)
+		return m.connectionFailed(fmt.Errorf("starting Codex app-server daemon: %w", err))
 	}
 
 	proxy, err := StartProxy(m.ctx, m.codexBin, m.version, m.run)
 	if err != nil {
-		return nil, err
+		return m.connectionFailed(err)
 	}
 
 	m.proxy = proxy
+	m.nextAttempt = time.Time{}
+	m.connectErr = nil
 
 	return proxy, nil
+}
+
+// connectionFailed records a failed startup while the manager lock is held.
+func (m *Manager) connectionFailed(err error) (*Proxy, error) {
+	m.nextAttempt = time.Now().Add(proxyRetryDelay)
+	m.connectErr = err
+
+	return nil, err
 }
 
 // Close stops the observer proxy when it was started.
