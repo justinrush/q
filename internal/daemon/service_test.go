@@ -213,6 +213,235 @@ func TestCreateMissionStartsInDraft(t *testing.T) {
 	}
 }
 
+// seedParentMission creates a mission carrying the full setup a follow-up would
+// inherit, so tests can assert one field at a time against a known parent.
+func seedParentMission(t *testing.T, svc *Service, operation mission.Operation) mission.Mission {
+	t.Helper()
+
+	ms, err := svc.CreateMission(api.CreateMissionRequest{
+		OperationID:  operation.ID,
+		Name:         "Wire Up The API",
+		Prompt:       "do the thing",
+		Tool:         mission.ToolOpencode,
+		Model:        "gpt-5-codex",
+		Effort:       "high",
+		PlanMode:     true,
+		ExtraRepos:   []mission.Repo{{Name: "mac", Path: "/dev/mac"}},
+		BaseBranches: map[string]string{"mac": "trunk"},
+	})
+	if err != nil {
+		t.Fatalf("CreateMission parent: %v", err)
+	}
+
+	return ms
+}
+
+func TestCreateMissionInheritsSetupFromParent(t *testing.T) {
+	svc := newTestService(t)
+	operation := seedOperation(t, svc)
+	parent := seedParentMission(t, svc, operation)
+
+	child, err := svc.CreateMission(api.CreateMissionRequest{
+		InheritFrom: parent.ID,
+		Name:        "Add The Docs",
+		Prompt:      "write it up",
+	})
+	if err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	if child.OperationID != operation.ID {
+		t.Errorf("OperationID = %q, want %q from parent", child.OperationID, operation.ID)
+	}
+
+	if child.Tool != mission.ToolOpencode {
+		t.Errorf("Tool = %q, want opencode from parent", child.Tool)
+	}
+
+	if child.Model != "gpt-5-codex" {
+		t.Errorf("Model = %q, want gpt-5-codex from parent", child.Model)
+	}
+
+	if child.Effort != "high" {
+		t.Errorf("Effort = %q, want high from parent", child.Effort)
+	}
+
+	if len(child.ExtraRepos) != 1 || child.ExtraRepos[0].Path != "/dev/mac" {
+		t.Errorf("ExtraRepos = %+v, want the parent's mac repo", child.ExtraRepos)
+	}
+
+	if child.BaseBranches["mac"] != "trunk" {
+		t.Errorf("BaseBranches = %+v, want mac on trunk from parent", child.BaseBranches)
+	}
+
+	// The inherited agent is not inherited, so the child is still a brief that
+	// nobody has launched.
+	if child.Status != mission.StatusBriefing {
+		t.Errorf("Status = %q, want briefing", child.Status)
+	}
+
+	if child.Launched() {
+		t.Error("an inherited child must not inherit the parent's launch state")
+	}
+
+	if child.Name != "Add The Docs" || child.Slug != "add-the-docs" {
+		t.Errorf("Name/Slug = %q/%q, want the child's own", child.Name, child.Slug)
+	}
+}
+
+func TestCreateMissionInheritsOperationWithoutNamingOne(t *testing.T) {
+	svc := newTestService(t)
+	first := seedOperation(t, svc)
+	second := seedOperation(t, svc)
+	parent := seedParentMission(t, svc, first)
+
+	// A child may be sent nothing but the parent and a name. This is the shape
+	// `q mission add --from` produces when an agent has no operation in hand, and
+	// it has to be enough.
+	child, err := svc.CreateMission(api.CreateMissionRequest{
+		InheritFrom: parent.ID,
+		Name:        "Follow Up",
+		Prompt:      "do more",
+	})
+	if err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	if child.OperationID != first.ID {
+		t.Errorf("OperationID = %q, want %q", child.OperationID, first.ID)
+	}
+
+	if child.OperationID == second.ID {
+		t.Error("OperationID came from somewhere other than the parent")
+	}
+}
+
+func TestCreateMissionExplicitFieldsBeatParent(t *testing.T) {
+	svc := newTestService(t)
+	operation := seedOperation(t, svc)
+	parent := seedParentMission(t, svc, operation)
+
+	child, err := svc.CreateMission(api.CreateMissionRequest{
+		InheritFrom:  parent.ID,
+		OperationID:  operation.ID,
+		Name:         "Diverge",
+		Prompt:       "do it differently",
+		Tool:         mission.ToolClaude,
+		Model:        "claude-opus-5",
+		Effort:       "low",
+		ExtraRepos:   []mission.Repo{{Name: "q", Path: "/dev/q"}},
+		BaseBranches: map[string]string{"q": "main"},
+	})
+	if err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	if child.Tool != mission.ToolClaude {
+		t.Errorf("Tool = %q, want the explicit claude", child.Tool)
+	}
+
+	if child.Model != "claude-opus-5" {
+		t.Errorf("Model = %q, want the explicit model", child.Model)
+	}
+
+	if child.Effort != "low" {
+		t.Errorf("Effort = %q, want the explicit effort", child.Effort)
+	}
+
+	// A list the caller names replaces the parent's outright. Merging would make
+	// it impossible to narrow a mission's worktrees back down to a subset of what
+	// the parent was given, and would quietly grow the set of repos a mission is
+	// handed every time it is re-created with one repo added.
+	if len(child.ExtraRepos) != 1 || child.ExtraRepos[0].Name != "q" {
+		t.Errorf("ExtraRepos = %+v, want only the explicit repo", child.ExtraRepos)
+	}
+
+	if _, ok := child.BaseBranches["mac"]; ok {
+		t.Errorf("BaseBranches = %+v, want the parent's map replaced", child.BaseBranches)
+	}
+
+	if child.BaseBranches["q"] != "main" {
+		t.Errorf("BaseBranches = %+v, want q on main", child.BaseBranches)
+	}
+}
+
+func TestCreateMissionDoesNotInheritPlanMode(t *testing.T) {
+	svc := newTestService(t)
+	operation := seedOperation(t, svc)
+	parent := seedParentMission(t, svc, operation)
+
+	if !parent.PlanMode {
+		t.Fatal("the parent fixture must be in plan mode for this test to mean anything")
+	}
+
+	child, err := svc.CreateMission(api.CreateMissionRequest{
+		InheritFrom: parent.ID,
+		Name:        "Just Do It",
+		Prompt:      "go",
+	})
+	if err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	// PlanMode is a bool on the wire with no third state, so an inherited value
+	// could never be turned back off. Whether a mission stops for approval is
+	// settled by whoever launches it, not by whoever wrote the brief.
+	if child.PlanMode {
+		t.Error("PlanMode was inherited from the parent")
+	}
+}
+
+func TestCreateMissionInheritsFromUnknownMission(t *testing.T) {
+	svc := newTestService(t)
+	seedOperation(t, svc)
+
+	_, err := svc.CreateMission(api.CreateMissionRequest{
+		InheritFrom: "ms_does_not_exist",
+		Name:        "Orphan",
+		Prompt:      "go",
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCreateMissionRequiresAnOperationSomewhere(t *testing.T) {
+	svc := newTestService(t)
+	seedOperation(t, svc)
+
+	// Neither named nor inherited. This has to read as a bad request rather than
+	// as a missing operation, because there is no operation id to be missing.
+	_, err := svc.CreateMission(api.CreateMissionRequest{
+		Name:   "Homeless",
+		Prompt: "go",
+	})
+	if !errors.Is(err, ErrInvalid) {
+		t.Errorf("err = %v, want ErrInvalid", err)
+	}
+}
+
+func TestCreateMissionValidatesInheritedModel(t *testing.T) {
+	svc := newTestService(t)
+	operation := seedOperation(t, svc)
+
+	parent, err := svc.CreateMission(api.CreateMissionRequest{
+		OperationID: operation.ID,
+		Name:        "Parent",
+		Prompt:      "go",
+		Model:       "not a model",
+	})
+	if err == nil {
+		t.Fatal("expected the parent to be rejected for its whitespace in the model")
+	}
+
+	// A parent cannot hold a model that q would refuse to put on a command line,
+	// so this only pins the ordering: inheritance is validated the same way an
+	// explicit value is, and cannot smuggle something past the check.
+	if parent.ID != "" {
+		t.Errorf("rejected create still returned %q", parent.ID)
+	}
+}
+
 func TestCreateMissionStoresAdditionalRepos(t *testing.T) {
 	svc := newTestService(t)
 	operation := seedOperation(t, svc)

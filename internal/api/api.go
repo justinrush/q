@@ -70,6 +70,8 @@ type UpdateOperationRequest struct {
 // CreateMissionRequest creates a mission. New missions always land in the draft lane;
 // launching is a separate, explicit action.
 type CreateMissionRequest struct {
+	// OperationID is the operation the mission belongs to. It is required unless
+	// InheritFrom names a mission that already has one.
 	OperationID mission.OperationID `json:"operationId"`
 	Name        string              `json:"name"`
 	Prompt      string              `json:"prompt"`
@@ -84,6 +86,20 @@ type CreateMissionRequest struct {
 	// BaseBranches names the branch each repo's worktree is based on, keyed by
 	// repo name. Repos it does not mention use their own default branch.
 	BaseBranches map[string]string `json:"baseBranches,omitempty"`
+	// InheritFrom names a mission whose setup this one copies: its operation,
+	// agent, model, effort, repositories, and base branches.
+	//
+	// It exists so that a mission which designs follow-up work can queue it
+	// without restating, and eventually getting subtly wrong, the context it is
+	// already running in. Any field the caller sends wins, so it is a default
+	// rather than an override. In particular it is what makes OperationID
+	// optional.
+	//
+	// PlanMode is deliberately not among the inherited fields. A bool has no
+	// unset state on the wire, so an inherited value could never be switched back
+	// off, and whether a mission should stop for approval is a decision for
+	// whoever launches it.
+	InheritFrom mission.MissionID `json:"inheritFrom,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.

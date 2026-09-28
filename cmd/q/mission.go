@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
@@ -88,19 +89,24 @@ func buildMissionAddSubcommand() *cobra.Command {
 		planMode  bool
 		repos     []string
 		bases     []string
+		fromFlag  string
 	)
 
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a mission in the briefing lane",
-		Args:  cobra.ExactArgs(1),
+		Long: "Create a mission in the briefing lane. Nothing launches until it is moved to active.\n\n" +
+			"Give --from a mission id to copy its operation, agent, model, effort, repositories, " +
+			"and base branches, so a mission that has just designed follow-up work can queue it " +
+			"without restating its own context. Anything passed here still wins.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := connectDaemon(cmd.Context())
 			if err != nil {
 				return err
 			}
 
-			parsedTool, err := mission.ParseTool(tool)
+			parsedTool, err := parseToolFlag(tool)
 			if err != nil {
 				return err
 			}
@@ -115,15 +121,24 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
+			// Q_MISSION_ID is set only by the launch script q writes, so its
+			// presence means an agent is running inside a mission and is exactly
+			// the mission whose setup a follow-up should match.
+			from := inheritTarget(fromFlag)
+
 			// An unnamed model resolves to whatever the agent itself reports, so a
 			// scripted mission gets the same default the board would have offered
-			// rather than silently differing from it.
-			if model == "" {
-				model, effort = defaultModelFor(cmd.Context(), c, parsedTool, effort)
+			// rather than silently differing from it. Inheriting is different: the
+			// parent's model is the answer, and a parent that had none should leave
+			// its children on the agent's own default rather than being quietly
+			// upgraded out of step with it.
+			if wantsModelDefault(model, from) {
+				model, effort = defaultModelFor(cmd.Context(), c, orDefaultTool(parsedTool), effort)
 			}
 
 			ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
 				OperationID:  mission.OperationID(operation),
+				InheritFrom:  from,
 				Name:         args[0],
 				Prompt:       prompt,
 				Tool:         parsedTool,
@@ -143,22 +158,31 @@ func buildMissionAddSubcommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&operation, "operation", "", "Operation id this mission belongs to (required)")
+	cmd.Flags().StringVar(&operation, "operation", "",
+		"Operation id this mission belongs to; not required with --from")
+	cmd.Flags().StringVar(&fromFlag, "from", "",
+		"Copy another mission's operation, agent, model, effort, repos, and base branches "+
+			"(default: $Q_MISSION_ID when set)")
 	cmd.Flags().StringVar(&prompt, "prompt", "", "What the agent should do (required)")
-	cmd.Flags().StringVar(&tool, "tool", string(mission.DefaultTool), "Agent to run: claude, codex, agy, or opencode")
+	cmd.Flags().StringVar(&tool, "tool", "",
+		"Agent to run: claude, codex, agy, or opencode. Defaults to claude, or to the agent "+
+			"this mission inherits when --from is used")
 	cmd.Flags().StringVar(&model, "model", "",
 		"Model to run on; defaults to the agent's own (see q models)")
 	cmd.Flags().StringVar(&effort, "effort", "",
 		"Reasoning effort, for a model that takes one (see q models)")
-	cmd.Flags().BoolVar(&planMode, "plan", false, "Start in plan mode and stop for approval (claude and opencode)")
-	cmd.Flags().StringArrayVar(&repos, "repo", nil, "Add a repo to this mission; repeatable, accepts name=path")
+	cmd.Flags().BoolVar(&planMode, "plan", false,
+		"Start in plan mode and stop for approval (claude and opencode); never inherited")
+	cmd.Flags().StringArrayVar(&repos, "repo", nil,
+		"Add a repo to this mission; repeatable, accepts name=path. Replaces the inherited list")
 	cmd.Flags().StringArrayVar(&bases, "base", nil,
-		"Base a repo's worktree on a branch instead of its default; repeatable, accepts repo=branch")
+		"Base a repo's worktree on a branch instead of its default; repeatable, accepts repo=branch. "+
+			"Replaces the inherited map")
 
-	if err := cmd.MarkFlagRequired("operation"); err != nil {
-		panic(err)
-	}
-
+	// --operation is deliberately not marked required. The daemon is the only
+	// place mission rules live, and "required unless --from names a mission that
+	// has one" is not a rule the client can express without a second copy of it
+	// waiting to drift.
 	if err := cmd.MarkFlagRequired("prompt"); err != nil {
 		panic(err)
 	}
@@ -419,6 +443,55 @@ func missionDetail(ms mission.Mission) string {
 	}
 
 	return strings.Join(parts, " · ")
+}
+
+// inheritTarget resolves which mission a new one copies its setup from.
+//
+// An explicit --from wins. Otherwise Q_MISSION_ID, which only the launch script q
+// writes, names the mission the agent is currently running inside -- so the
+// default is the mission the agent can see the context of, which is the one thing
+// a follow-up is most likely to need copied.
+func inheritTarget(flag string) mission.MissionID {
+	if flag != "" {
+		return mission.MissionID(flag)
+	}
+
+	return mission.MissionID(os.Getenv(mission.EnvMissionID))
+}
+
+// wantsModelDefault reports whether an unnamed model should be resolved from the
+// daemon's catalog before the mission is created.
+//
+// Not when inheriting. The parent's model is the answer, and a parent that named
+// none should leave its children on the agent's own default rather than being
+// quietly upgraded out of step with the mission they were copied from.
+func wantsModelDefault(model string, from mission.MissionID) bool {
+	return model == "" && from == ""
+}
+
+// parseToolFlag turns --tool into a Tool, leaving it empty when the flag was not
+// given.
+//
+// Empty is a real answer here, not a missing one: it is what lets the daemon
+// either apply its own default or inherit the parent's agent, and a flag that
+// defaulted to "claude" would report claude on every request and make inheriting
+// one impossible.
+func parseToolFlag(value string) (mission.Tool, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+
+	return mission.ParseTool(value)
+}
+
+// orDefaultTool names a concrete agent for the lookups that need one, matching
+// the fallback the daemon applies to an empty tool.
+func orDefaultTool(t mission.Tool) mission.Tool {
+	if t == "" {
+		return mission.DefaultTool
+	}
+
+	return t
 }
 
 // defaultModelFor asks the daemon what a new mission on this agent should run

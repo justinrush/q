@@ -105,6 +105,34 @@ q open ms_…                    # open the debrief session
 q mission rm ms_… --dry-run    # what deleting would discard
 ```
 
+### Queuing follow-up work
+
+A mission that designs the next piece of work is usually the one best placed to
+queue it, because it already holds the context. `q mission add --from` copies
+another mission's operation, agent, model, effort, repositories, and base
+branches, so a follow-up can be written without restating any of it:
+
+```sh
+parent=$Q_MISSION_ID   # the mission q launched this agent into
+q mission add ship-it --from "$parent" --prompt "…"
+```
+
+`--from` defaults to `$Q_MISSION_ID`, which q exports into every agent's
+session, so inside a mission the flag can be left off entirely. `Q_BIN` is
+exported alongside it for the same reason: an agent's own `PATH` is the vendor's
+to set, and q is often not on it, so use `"$Q_BIN"` if `q` is not found.
+
+Inheritance is a default, not an override. Anything passed on the command line
+wins, and a `--repo` or `--base` you name replaces the parent's list outright
+rather than adding to it — so naming one repo narrows the mission's worktrees
+instead of quietly widening them.
+
+`--plan` is the exception: it is never inherited. Whether a mission stops for
+approval is the launcher's decision, not the parent brief's.
+
+Created missions land in briefing either way. Nothing runs until a mission is
+moved to active.
+
 ## Configuration
 
 q works with no configuration. When you want to change something, it reads
@@ -248,6 +276,22 @@ writer is also what makes a plain JSON state file safe.
 One thing worth knowing: a running daemon keeps serving with the binary and environment
 it started with, and `q daemon run` defers to it rather than replacing it. After
 reinstalling, use `q daemon restart`. `q daemon status` reports which binary is running.
+
+### Inside a mission
+
+The launch script q writes exports four variables into every agent's session, so a
+mission can identify itself and reach q without being told where either lives:
+
+| | |
+|---|---|
+| `Q_MISSION_ID` | the mission the agent is running inside; also the default for `q mission add --from` |
+| `Q_HOOK_EPOCH` | the launch generation, so events from an abandoned session can be discarded |
+| `Q_DAEMON_FILE` | the daemon handle, as a path because a tmux session's environment prints in plaintext |
+| `Q_BIN` | the absolute path to the q binary |
+
+An agent's own `PATH` is its vendor's to set, and q is often not on it even though q
+started the agent, so prefer `"$Q_BIN"` over a bare `q` when writing commands for the
+mission to run.
 
 ### Models
 
