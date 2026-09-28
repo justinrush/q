@@ -27,8 +27,8 @@ var (
 // Service applies q's rules on top of the state store.
 //
 // It is deliberately free of HTTP concerns and of subprocess work, so the rules
-// (a mission starts in draft, a codex mission cannot use plan mode, an operation with live
-// missions cannot be deleted) are unit-testable without a server or a git tree.
+// (a mission starts in briefing, a codex mission cannot use plan mode, an operation with
+// live missions cannot be deleted) are unit-testable without a server or a git tree.
 type Service struct {
 	store  *mission.Store
 	hub    *Hub
@@ -277,10 +277,12 @@ func (s *Service) DeleteOperation(id mission.OperationID, force bool) error {
 	return nil
 }
 
-// CreateMission adds a mission in the draft lane.
+// CreateMission adds a mission in the briefing lane.
+//
+// Nothing here launches anything. A created mission is a written brief, and
+// moving it to the active lane is a separate, explicit act.
 func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, error) {
-	name := strings.TrimSpace(req.Name)
-	if name == "" {
+	if strings.TrimSpace(req.Name) == "" {
 		return mission.Mission{}, fmt.Errorf("%w: mission name is required", ErrInvalid)
 	}
 
@@ -288,56 +290,36 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 		return mission.Mission{}, fmt.Errorf("%w: mission prompt is required", ErrInvalid)
 	}
 
-	tool := req.Tool
-	if tool == "" {
-		tool = mission.DefaultTool
-	}
-
-	if !tool.Valid() {
-		return mission.Mission{}, fmt.Errorf("%w: unknown tool %q", ErrInvalid, req.Tool)
-	}
-
-	if req.PlanMode && !tool.SupportsPlanMode() {
-		return mission.Mission{}, fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, tool)
-	}
-
-	if err := validateModelFlags(req.Model, req.Effort); err != nil {
-		return mission.Mission{}, err
-	}
-
 	id, err := mission.NewMissionID()
 	if err != nil {
 		return mission.Mission{}, err
 	}
 
+	// Every read of stored state happens inside this one mutation: which mission
+	// is inherited from, and whether the operation it names still exists. Keeping
+	// them here is what makes reading the parent and writing the child a single
+	// step, so a parent edited or deleted in between cannot be half applied.
 	now := s.now()
-	ms := mission.Mission{
-		ID:           id,
-		OperationID:  req.OperationID,
-		Name:         name,
-		Slug:         mission.Slug(name),
-		Tool:         tool,
-		Prompt:       req.Prompt,
-		PlanMode:     req.PlanMode,
-		Model:        req.Model,
-		Effort:       req.Effort,
-		ExtraRepos:   normalizeRepos(req.ExtraRepos),
-		BaseBranches: normalizeBaseBranches(req.BaseBranches),
-		Status:       mission.StatusBriefing,
-		AgentState:   mission.AgentUnknown,
-		CreatedAt:    now,
-		UpdatedAt:    now,
-	}
 
 	err = s.store.Mutate("mission.create", func(snap *mission.Snapshot) error {
-		operation, ok := snap.Operation(req.OperationID)
-		if !ok {
-			return fmt.Errorf("%w: operation %s", ErrNotFound, req.OperationID)
+		ms, err := resolveCreate(snap, req)
+		if err != nil {
+			return err
 		}
 
-		_, combineErr := mission.MissionRepos(operation, ms)
-		if combineErr != nil {
-			return fmt.Errorf("%w: %w", ErrInvalid, combineErr)
+		ms.ID = id
+		ms.Status = mission.StatusBriefing
+		ms.AgentState = mission.AgentUnknown
+		ms.CreatedAt = now
+		ms.UpdatedAt = now
+
+		operation, ok := snap.Operation(ms.OperationID)
+		if !ok {
+			return fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
+		}
+
+		if _, err := mission.MissionRepos(operation, ms); err != nil {
+			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
 
 		ms.Order = snap.NextOrder(mission.StatusBriefing)
@@ -353,6 +335,104 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 	s.publishMission(stored)
 
 	return stored, nil
+}
+
+// resolveCreate fills in everything a create request leaves to q: the mission it
+// inherits from, the default agent, and every check whose result depends on one or
+// both of those.
+//
+// It reads the parent off snap rather than from a separate lookup, because the
+// whole point of a create that can inherit is that the answer must be consistent
+// with the write that follows it.
+func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (mission.Mission, error) {
+	var zero mission.Mission
+
+	if req.InheritFrom != "" {
+		parent, ok := snap.Mission(req.InheritFrom)
+		if !ok {
+			return zero, fmt.Errorf("%w: mission %s", ErrNotFound, req.InheritFrom)
+		}
+
+		inheritDefaults(&req, parent)
+	}
+
+	// Checked here rather than left to the operation lookup below, so that a
+	// request naming no operation at all is a 400 saying so, instead of a 404
+	// looking for an operation whose id is the empty string.
+	if req.OperationID == "" {
+		return zero, fmt.Errorf(
+			"%w: an operation is required, either named directly or inherited from a mission",
+			ErrInvalid)
+	}
+
+	tool := req.Tool
+	if tool == "" {
+		tool = mission.DefaultTool
+	}
+
+	if !tool.Valid() {
+		return zero, fmt.Errorf("%w: unknown tool %q", ErrInvalid, req.Tool)
+	}
+
+	if req.PlanMode && !tool.SupportsPlanMode() {
+		return zero, fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, tool)
+	}
+
+	if err := validateModelFlags(req.Model, req.Effort); err != nil {
+		return zero, err
+	}
+
+	name := strings.TrimSpace(req.Name)
+
+	return mission.Mission{
+		OperationID:  req.OperationID,
+		Name:         name,
+		Slug:         mission.Slug(name),
+		Tool:         tool,
+		Prompt:       req.Prompt,
+		PlanMode:     req.PlanMode,
+		Model:        req.Model,
+		Effort:       req.Effort,
+		ExtraRepos:   normalizeRepos(req.ExtraRepos),
+		BaseBranches: normalizeBaseBranches(req.BaseBranches),
+	}, nil
+}
+
+// inheritDefaults copies from parent every field the caller left unset.
+//
+// It is a default, not an override: a field the caller did send is kept. A list
+// the caller did send replaces the parent's outright rather than being merged
+// into it, so inheriting and then naming a repository reads as "the same as the
+// parent, except this" instead of quietly widening the set of worktrees the
+// mission will be given.
+//
+// PlanMode is left alone on purpose. It is a bool with no unset state on the
+// wire, so an inherited value could never be turned back off, and whether a
+// mission should stop for approval is the launcher of the mission's decision.
+func inheritDefaults(req *api.CreateMissionRequest, parent mission.Mission) {
+	if req.OperationID == "" {
+		req.OperationID = parent.OperationID
+	}
+
+	if req.Tool == "" {
+		req.Tool = parent.Tool
+	}
+
+	if req.Model == "" {
+		req.Model = parent.Model
+	}
+
+	if req.Effort == "" {
+		req.Effort = parent.Effort
+	}
+
+	if len(req.ExtraRepos) == 0 {
+		req.ExtraRepos = parent.ExtraRepos
+	}
+
+	if len(req.BaseBranches) == 0 {
+		req.BaseBranches = parent.BaseBranches
+	}
 }
 
 // UpdateMission patches a mission's editable fields.

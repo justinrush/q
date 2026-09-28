@@ -253,6 +253,41 @@ func TestLaunchPresetsClaudeSessionID(t *testing.T) {
 	}
 }
 
+// An agent's tool PATH belongs to the agent vendor, and q is frequently not on it
+// even though q is very much what put the agent there. Exporting the path q
+// already knows is the difference between a mission that can read its own id and
+// one that can also queue the follow-up work it just designed.
+func TestLaunchExportsQBin(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
+
+	got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), testMission())
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+
+	script := readArtifact(t, got, mission.LaunchScript)
+	prefix := "export " + mission.EnvBin + "="
+
+	for _, line := range strings.Split(script, "\n") {
+		value, ok := strings.CutPrefix(line, prefix)
+		if !ok {
+			continue
+		}
+
+		// An empty export would land as Q_BIN='' in the agent's environment and
+		// clobber a real value the shell already had, which is worse than not
+		// exporting at all.
+		if strings.Trim(value, "'\"") == "" {
+			t.Errorf("%s was exported empty:\n%s", mission.EnvBin, script)
+		}
+
+		return
+	}
+
+	t.Errorf("script does not export %s:\n%s", mission.EnvBin, script)
+}
+
 // codex has no --session-id, so its id must be learned from its SessionStart hook
 // and stays empty until then.
 func TestLaunchDoesNotPresetCodexSessionID(t *testing.T) {

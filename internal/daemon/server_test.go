@@ -313,6 +313,67 @@ func TestDoneStatusPassesConfirmedForce(t *testing.T) {
 	}
 }
 
+// inheritFrom is the one part of a create that names no row of its own, so it is
+// the part most likely to be lost or mangled between client and daemon. Pin it to
+// a real request over a real socket.
+func TestCreateMissionInheritsOverHTTP(t *testing.T) {
+	_, c, base := newTestServer(t)
+
+	var operation mission.Operation
+	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/operations", api.CreateOperationRequest{
+		Name: "Discussions API",
+	}), &operation)
+
+	var parent mission.Mission
+	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions", api.CreateMissionRequest{
+		OperationID:  operation.ID,
+		Name:         "wire it up",
+		Prompt:       "go",
+		Tool:         mission.ToolAgy,
+		Model:        "gpt-5-codex",
+		Effort:       "high",
+		ExtraRepos:   []mission.Repo{{Name: "mac", Path: "/dev/mac"}},
+		BaseBranches: map[string]string{"mac": "trunk"},
+	}), &parent)
+
+	// Nothing but the parent, the name, and the prompt: the whole point is that an
+	// agent holding this mission's context does not have to restate it.
+	var child mission.Mission
+	decodeBody(t, do(t, c, http.MethodPost, base+"/v1/missions", api.CreateMissionRequest{
+		InheritFrom: parent.ID,
+		Name:        "write the docs",
+		Prompt:      "go",
+	}), &child)
+
+	if child.OperationID != operation.ID {
+		t.Errorf("OperationID = %q, want %q", child.OperationID, operation.ID)
+	}
+
+	if child.Tool != mission.ToolAgy {
+		t.Errorf("Tool = %q, want agy", child.Tool)
+	}
+
+	if child.Model != "gpt-5-codex" {
+		t.Errorf("Model = %q, want gpt-5-codex", child.Model)
+	}
+
+	if child.Effort != "high" {
+		t.Errorf("Effort = %q, want high", child.Effort)
+	}
+
+	if len(child.ExtraRepos) != 1 || child.ExtraRepos[0].Path != "/dev/mac" {
+		t.Errorf("ExtraRepos = %+v, want the parent's mac repo", child.ExtraRepos)
+	}
+
+	if child.BaseBranches["mac"] != "trunk" {
+		t.Errorf("BaseBranches = %+v, want mac on trunk", child.BaseBranches)
+	}
+
+	if child.ID == parent.ID {
+		t.Error("inheriting produced a second copy of the parent instead of a new mission")
+	}
+}
+
 func TestErrorStatusMapping(t *testing.T) {
 	_, c, base := newTestServer(t)
 
@@ -330,6 +391,18 @@ func TestErrorStatusMapping(t *testing.T) {
 			"mission on unknown operation", http.MethodPost, "/v1/missions",
 			api.CreateMissionRequest{OperationID: "op_000000000000", Name: "x", Prompt: "y"},
 			http.StatusNotFound,
+		},
+		{
+			"mission inheriting an unknown mission", http.MethodPost, "/v1/missions",
+			api.CreateMissionRequest{InheritFrom: "ms_000000000000", Name: "x", Prompt: "y"},
+			http.StatusNotFound,
+		},
+		{
+			// No operation named and no parent to borrow one from: there is no id
+			// to be missing, so this is a bad request rather than a 404.
+			"mission with no operation anywhere", http.MethodPost, "/v1/missions",
+			api.CreateMissionRequest{Name: "x", Prompt: "y"},
+			http.StatusBadRequest,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

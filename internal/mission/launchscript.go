@@ -147,6 +147,17 @@ func RenderLaunchScript(agent Agent, inv Invocation) string {
 	fmt.Fprintf(&b, "export %s=%s\n", EnvHookEpoch, ShellQuote(fmt.Sprint(inv.HookEpoch)))
 	fmt.Fprintf(&b, "export %s=%s\n", EnvDaemonFile, ShellQuote(inv.DaemonFile))
 
+	// Q_BIN is the same override the generated hooks use, exported here so the
+	// agent can find q too. An agent's tool PATH is the agent vendor's to set, and
+	// q is frequently not on it even though q is very much what put the agent
+	// there; without this the mission can read its own id but cannot call q.
+	//
+	// Guarded, because an empty Q_BIN would export as Q_BIN='' and clobber a real
+	// one the shell already had, which is the opposite of helping.
+	if inv.QBin != "" {
+		fmt.Fprintf(&b, "export %s=%s\n", EnvBin, ShellQuote(inv.QBin))
+	}
+
 	if inv.PathEnv != "" {
 		fmt.Fprintf(&b, "export PATH=%s\n", ShellQuote(inv.PathEnv))
 	}
