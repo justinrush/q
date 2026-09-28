@@ -376,10 +376,10 @@ Two things the number tells you about itself:
 - A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
   Unknown models can be priced under `cost.models`.
 
-q ships Claude rates and OpenAI rates for GPT-6 Astra, GPT-5.6 Sol/Terra/Luna, GPT-5.4, and GPT-5/5.1/5.3 Codex.
+q ships Claude rates and OpenAI rates for GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.4, and GPT-5/5.1/5.3 Codex.
 Codex usage is priced per response using the recorded turn model, including discounted
 cached input. Rates use [standard short-context API pricing](https://developers.openai.com/api/docs/pricing)
-verified September 9, 2026; they exclude service-tier, long-context, regional, and tool
+verified September 28, 2026; they exclude service-tier, long-context, regional, and tool
 surcharges. This is a comparison estimate, not a subscription charge. Override rates
 with `cost.models` as needed; metering does not fetch prices at runtime.
 

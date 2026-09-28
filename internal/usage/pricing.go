@@ -64,13 +64,15 @@ type Pricing struct {
 // add it to the table without waiting for a release.
 func DefaultPricing() Pricing {
 	return Pricing{Models: map[string]ModelPrice{
-		// OpenAI standard, short-context API rates, verified 2026-09-09.
+		// OpenAI standard, short-context API rates, verified 2026-09-28.
 		// https://developers.openai.com/api/docs/pricing
 		"gpt-5-codex":       {Input: 1.25, Output: 10, CacheRead: 0.125},
 		"gpt-5.1-codex":     {Input: 1.25, Output: 10, CacheRead: 0.125},
 		"gpt-5.3-codex":     {Input: 1.75, Output: 14, CacheRead: 0.175},
 		"gpt-5.4":           {Input: 2.5, Output: 15, CacheRead: 0.25},
 		"gpt-6-astra":       {Input: 10, Output: 50, CacheRead: 1},
+		"gpt-6-sol":         {Input: 2, Output: 10, CacheRead: 0.2},
+		"gpt-6-luna":        {Input: 0.1, Output: 0.5, CacheRead: 0.01},
 		"gpt-5.6-sol":       {Input: 4, Output: 20, CacheRead: 0.4},
 		"gpt-5.6-terra":     {Input: 2, Output: 12, CacheRead: 0.2},
 		"gpt-5.6-luna":      {Input: 0.2, Output: 1.2, CacheRead: 0.02},

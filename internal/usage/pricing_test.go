@@ -177,6 +177,10 @@ func TestDefaultPricingCoversTheModelsQRuns(t *testing.T) {
 	// The models a mission actually runs under today. A release that drops one
 	// of these would start reporting every card's cost as a floor.
 	for _, model := range []string{
+		"gpt-6-astra",
+		"gpt-6-sol",
+		"gpt-6-luna",
+		"gpt-5.6-terra",
 		"claude-opus-5",
 		"claude-opus-4-8",
 		"claude-sonnet-5",
