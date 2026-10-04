@@ -128,6 +128,13 @@ func (s *Service) RefreshModels(ctx context.Context) map[mission.Tool]mission.Mo
 
 			continue
 		}
+		if len(set.Options) == 0 && set.Err == "" {
+			err := errors.New("agent returned no models")
+			s.warn("asking an agent for its models", "tool", tool, "error", err)
+			s.models.fail(tool, err)
+
+			continue
+		}
 
 		s.models.put(tool, set)
 	}

@@ -130,6 +130,33 @@ func TestRefreshModelsKeepsStaleAnswer(t *testing.T) {
 	}
 }
 
+// TestRefreshModelsKeepsStaleAnswerOnEmptySuccess covers agents whose catalog
+// endpoint transiently answers successfully before its models have loaded. An
+// empty response is not useful new knowledge and must not erase the last real
+// catalog.
+func TestRefreshModelsKeepsStaleAnswerOnEmptySuccess(t *testing.T) {
+	svc := newTestService(t)
+	prober := &fakeProber{tool: mission.ToolCodex, set: mission.ModelSet{
+		Default: "gpt-5.6-sol",
+		Options: []mission.ModelOption{{Value: "gpt-5.6-sol", Label: "GPT-5.6-Sol"}},
+	}}
+	WithProber(prober)(svc)
+
+	svc.RefreshModels(context.Background())
+
+	prober.set = mission.ModelSet{ProbedAt: time.Now()}
+	sets := svc.RefreshModels(context.Background())
+	got := sets[mission.ToolCodex]
+
+	if got.Default != "gpt-5.6-sol" || len(got.Options) != 1 {
+		t.Errorf("catalog = %+v, want the previous answer retained", got)
+	}
+
+	if !strings.Contains(got.Err, "returned no models") {
+		t.Errorf("Err = %q, want the empty response explained", got.Err)
+	}
+}
+
 func TestModelCacheRoundTrips(t *testing.T) {
 	svc := newTestService(t)
 	WithProber(&fakeProber{tool: mission.ToolClaude, set: claudeSet()})(svc)
