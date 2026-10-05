@@ -349,3 +349,18 @@ func TestCodexPricesEachTurnModel(t *testing.T) {
 		}
 	}
 }
+
+func TestCodexPricesGPT61Sol(t *testing.T) {
+	path := writeRollout(t,
+		turnContext("gpt-6.1-sol"),
+		tokenRecord("t1", "r1", 1_000_000, 500_000, 100_000, 100_000),
+	)
+	meter := NewCodex(DefaultPricing())
+	for range 2 {
+		got, measured, err := meter.Meter(mission.Mission{TranscriptPath: path})
+		// Fresh input $1, cache read $0.05, cache write $0.25, output $1.
+		if err != nil || !measured || got.Usage.Unpriced || math.Abs(got.Usage.USD-2.3) > 1e-9 {
+			t.Fatalf("Meter() = %+v, %v, %v; want $2.30 priced", got, measured, err)
+		}
+	}
+}

@@ -64,29 +64,41 @@ type Pricing struct {
 // add it to the table without waiting for a release.
 func DefaultPricing() Pricing {
 	return Pricing{Models: map[string]ModelPrice{
-		// OpenAI standard, short-context API rates, verified 2026-09-28.
+		// OpenAI standard, short-context API rates, verified 2026-10-05.
 		// https://developers.openai.com/api/docs/pricing
-		"gpt-5-codex":       {Input: 1.25, Output: 10, CacheRead: 0.125},
-		"gpt-5.1-codex":     {Input: 1.25, Output: 10, CacheRead: 0.125},
-		"gpt-5.3-codex":     {Input: 1.75, Output: 14, CacheRead: 0.175},
-		"gpt-5.4":           {Input: 2.5, Output: 15, CacheRead: 0.25},
-		"gpt-6-astra":       {Input: 10, Output: 50, CacheRead: 1},
-		"gpt-6-sol":         {Input: 2, Output: 10, CacheRead: 0.2},
-		"gpt-6-luna":        {Input: 0.1, Output: 0.5, CacheRead: 0.01},
-		"gpt-5.6-sol":       {Input: 4, Output: 20, CacheRead: 0.4},
-		"gpt-5.6-terra":     {Input: 2, Output: 12, CacheRead: 0.2},
-		"gpt-5.6-luna":      {Input: 0.2, Output: 1.2, CacheRead: 0.02},
+		"gpt-5-codex":   {Input: 1.25, Output: 10, CacheRead: 0.125},
+		"gpt-5.1-codex": {Input: 1.25, Output: 10, CacheRead: 0.125},
+		"gpt-5.3-codex": {Input: 1.75, Output: 14, CacheRead: 0.175},
+		"gpt-5.4":       {Input: 2.5, Output: 15, CacheRead: 0.25},
+		"gpt-5.5":       {Input: 5, Output: 30, CacheRead: 0.5},
+		"gpt-6-astra":   {Input: 10, Output: 50, CacheRead: 1},
+		"gpt-6.1-sol":   {Input: 2, Output: 10, CacheRead: 0.1},
+		"gpt-6-sol":     {Input: 2, Output: 10, CacheRead: 0.2},
+		"gpt-6-luna":    {Input: 0.1, Output: 0.5, CacheRead: 0.01},
+		"gpt-5.6-sol":   {Input: 4, Output: 20, CacheRead: 0.4},
+		"gpt-5.6-terra": {Input: 2, Output: 12, CacheRead: 0.2},
+		"gpt-5.6-luna":  {Input: 0.2, Output: 1.2, CacheRead: 0.02},
+		// Anthropic standard API rates, verified 2026-10-05.
+		// https://platform.claude.com/docs/en/about-claude/pricing
 		"claude-fable-5-1":  {Input: 10, Output: 50, CacheRead: 0.25},
-		"claude-mythos-5-1": {Input: 10, Output: 50},
+		"claude-mythos-5-1": {Input: 10, Output: 50, CacheRead: 0.25},
 		"claude-fable-5":    {Input: 10, Output: 50},
 		"claude-mythos-5":   {Input: 10, Output: 50},
 		"claude-opus-5":     {Input: 5, Output: 25},
+		"claude-opus-5-5":   {Input: 4, Output: 20, CacheRead: 0.2},
 		"claude-opus-4-8":   {Input: 5, Output: 25},
 		"claude-opus-4-7":   {Input: 5, Output: 25},
 		"claude-opus-4-6":   {Input: 5, Output: 25},
+		"claude-opus-4-5":   {Input: 5, Output: 25},
+		"claude-opus-4-1":   {Input: 15, Output: 75},
+		"claude-opus-4":     {Input: 15, Output: 75},
 		"claude-sonnet-5":   {Input: 2, Output: 10},
+		"claude-sonnet-5-5": {Input: 2, Output: 10},
 		"claude-sonnet-4-6": {Input: 3, Output: 15},
+		"claude-sonnet-4-5": {Input: 3, Output: 15},
+		"claude-sonnet-4":   {Input: 3, Output: 15},
 		"claude-haiku-4-5":  {Input: 1, Output: 5},
+		"claude-haiku-3-5":  {Input: 0.8, Output: 4},
 	}}
 }
 

@@ -177,10 +177,18 @@ func TestDefaultPricingCoversTheModelsQRuns(t *testing.T) {
 	// The models a mission actually runs under today. A release that drops one
 	// of these would start reporting every card's cost as a floor.
 	for _, model := range []string{
+		"gpt-6.1-sol",
+		"gpt-5.5",
+		"gpt-5.6-sol",
+		"gpt-5.6-luna",
 		"gpt-6-astra",
 		"gpt-6-sol",
 		"gpt-6-luna",
 		"gpt-5.6-terra",
+		"claude-opus-5-5",
+		"claude-sonnet-5-5",
+		"claude-fable-5-1",
+		"claude-mythos-5-1",
 		"claude-opus-5",
 		"claude-opus-4-8",
 		"claude-sonnet-5",
@@ -202,5 +210,38 @@ func TestOpenAISnapshotDoesNotPriceUnknownVariants(t *testing.T) {
 	}
 	if price, ok := pricing.Price("gpt-5.6-sol-2026-09-01"); !ok || price.Input != 4 {
 		t.Fatalf("snapshot price = %+v, %v", price, ok)
+	}
+}
+
+// Keep the discounted reads distinct from the generic 10% rate: cached
+// tokens dominate many coding sessions, so a wrong multiplier is material.
+func TestCurrentModelCacheRates(t *testing.T) {
+	pricing := DefaultPricing()
+	for _, tc := range []struct {
+		model string
+		want  float64
+	}{
+		{"gpt-6.1-sol", 14.6},
+		{"gpt-6.1-sol-2026-09-29", 14.6},
+		{"gpt-5.5", 41.75},
+		{"claude-opus-5-5", 29.2},
+		{"claude-sonnet-5-5", 14.7},
+		{"claude-fable-5-1", 72.75},
+		{"claude-mythos-5-1", 72.75},
+	} {
+		t.Run(tc.model, func(t *testing.T) {
+			got, ok := pricing.Cost(tc.model, mission.ModelTokens{
+				Input: 1_000_000, Output: 1_000_000,
+				CacheRead: 1_000_000, CacheWrite5m: 1_000_000,
+			})
+			if !ok || math.Abs(got-tc.want) > 1e-9 {
+				t.Fatalf("Cost(%q) = %v, %v; want %v, true", tc.model, got, ok, tc.want)
+			}
+		})
+	}
+	for _, model := range []string{"gpt-reserve", "codex-auto-review", "gpt-6.1-sol-pro", "claude-opus-5-5-unknown"} {
+		if _, ok := pricing.Price(model); ok {
+			t.Errorf("unexpected rate for %q", model)
+		}
 	}
 }

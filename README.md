@@ -420,12 +420,18 @@ Two things the number tells you about itself:
 - A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
   Unknown models can be priced under `cost.models`.
 
-q ships Claude rates and OpenAI rates for GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.4, and GPT-5/5.1/5.3 Codex.
+q ships Claude rates (including Opus/Sonnet 5.5 and Fable/Mythos 5.1) and OpenAI rates
+for GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4,
+and GPT-5/5.1/5.3 Codex.
 Codex usage is priced per response using the recorded turn model, including discounted
 cached input. Rates use [standard short-context API pricing](https://developers.openai.com/api/docs/pricing)
-verified September 28, 2026; they exclude service-tier, long-context, regional, and tool
+and [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing),
+verified October 5, 2026; they exclude service-tier, long-context, regional, and tool
 surcharges. This is a comparison estimate, not a subscription charge. Override rates
 with `cost.models` as needed; metering does not fetch prices at runtime.
+Catalog availability does not imply a published price: `gpt-reserve` and
+`codex-auto-review` remain unpriced. OpenCode and Antigravity currently have no
+usage meter, so adding a model rate alone does not enable cost display for them.
 
 `q doctor` reports any model your missions used that the table cannot price, which is how
 a table that has fallen behind announces itself rather than quietly under-reporting.
