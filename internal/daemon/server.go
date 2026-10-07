@@ -27,10 +27,16 @@ const (
 	// maxBodyBytes caps request bodies. Hook payloads carry transcripts paths and
 	// assistant messages, not transcripts themselves.
 	maxBodyBytes = 1 << 20
+	// maxSyncBytes caps an exchange between paired daemons, which carries every
+	// mission's brief and so is far larger than any other request.
+	maxSyncBytes = 32 << 20
 	// pingInterval is how often an idle event stream emits a heartbeat, so a
 	// client can detect a socket that died without notice.
 	pingInterval = 15 * time.Second
 )
+
+// syncPath is where a paired daemon's exchange arrives.
+const syncPath = "/v1/sync"
 
 // Server is the daemon's HTTP interface.
 type Server struct {
@@ -184,6 +190,11 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/hooks/{tool}/{event}", s.handleHook)
 
+	mux.HandleFunc("POST "+syncPath, s.handleSync)
+	mux.HandleFunc("GET /v1/remote", s.handleRemoteStatus)
+	mux.HandleFunc("POST /v1/remote/sync", s.handleRemoteSync)
+	mux.HandleFunc("DELETE /v1/remote", s.handleRemoteForget)
+
 	return s.guard(mux)
 }
 
@@ -215,7 +226,9 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ms, err := s.svc.Resume(r.Context(), mission.MissionID(r.PathValue("id")), req.Text)
+	// A message is a move to active that carries text, which is what lets one for
+	// a mission the paired q runs take the same route as any other lane move.
+	ms, err := s.svc.Message(r.Context(), mission.MissionID(r.PathValue("id")), req.Text)
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -295,7 +308,12 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		limit := int64(maxBodyBytes)
+		if r.URL.Path == syncPath {
+			limit = maxSyncBytes
+		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 		next.ServeHTTP(w, r)
 	})
@@ -420,6 +438,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 
 		flusher.Flush()
+	}
+
+	// A paired daemon follows the snapshot with the state of the pairing, which
+	// is not part of it, so a board's header is right from its first frame.
+	if status := s.svc.RemoteStatus(); status.Role != mission.RoleStandalone {
+		if frame, err := encodeFrame(api.EventRemote, status); err == nil {
+			if _, err := w.Write(frame); err != nil {
+				return
+			}
+
+			flusher.Flush()
+		}
 	}
 
 	ticker := time.NewTicker(pingInterval)
@@ -587,45 +617,6 @@ func (s *Server) handleDeletePlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plan)
 }
 
-// dispatchStatus decides what a lane move actually does.
-//
-// Moving out of draft launches the agent. Moving into the active lane from a lane that
-// implies the agent is waiting resumes it, delivering the accompanying message and
-// reviving the session if it has died. Moving to closed reclaims its resources before
-// filing the card. Everything else is bookkeeping.
-//
-// This lives here rather than inside SetStatus so the lane rules stay free of
-// subprocess work and remain testable on their own.
-func (s *Server) dispatchStatus(
-	ctx context.Context,
-	id mission.MissionID,
-	current mission.Mission,
-	req api.SetStatusRequest,
-) (mission.Mission, error) {
-	if req.To == mission.StatusClosed {
-		ms, _, err := s.svc.FinishMission(ctx, id, req.Force)
-
-		return ms, err
-	}
-
-	if req.To != mission.StatusActive {
-		return s.svc.SetStatus(id, req.To)
-	}
-
-	if !current.Launched() {
-		return s.svc.Start(ctx, id)
-	}
-
-	switch current.Status {
-	case mission.StatusBriefing:
-		return s.svc.Start(ctx, id)
-	case mission.StatusAwaiting, mission.StatusDebrief:
-		return s.svc.Resume(ctx, id, req.Message)
-	default:
-		return s.svc.SetStatus(id, req.To)
-	}
-}
-
 // handleSetStatus moves a mission between lanes.
 func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 	var req api.SetStatusRequest
@@ -633,16 +624,7 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := mission.MissionID(r.PathValue("id"))
-
-	current, ok := s.svc.Snapshot().Mission(id)
-	if !ok {
-		writeError(w, http.StatusNotFound, fmt.Errorf("%w: mission %s", ErrNotFound, id))
-
-		return
-	}
-
-	ms, err := s.dispatchStatus(r.Context(), id, current, req)
+	ms, err := s.svc.Dispatch(r.Context(), mission.MissionID(r.PathValue("id")), req)
 	if err != nil {
 		writeServiceError(w, err)
 
@@ -650,6 +632,49 @@ func (s *Server) handleSetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleSync answers a paired daemon's exchange.
+func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
+	var req api.SyncRequest
+	if !decode(w, r, &req) {
+		return
+	}
+
+	resp, err := s.svc.SyncExchange(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleRemoteStatus(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.RemoteStatus())
+}
+
+// handleRemoteSync runs an exchange now rather than at the next tick, and
+// reports how it went.
+func (s *Server) handleRemoteSync(w http.ResponseWriter, r *http.Request) {
+	if err := s.svc.SyncNow(r.Context()); err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.svc.RemoteStatus())
+}
+
+func (s *Server) handleRemoteForget(w http.ResponseWriter, _ *http.Request) {
+	if err := s.svc.ForgetPeer(); err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, s.svc.RemoteStatus())
 }
 
 // decode reads a JSON body, writing a 400 and returning false on failure.

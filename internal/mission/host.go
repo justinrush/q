@@ -92,25 +92,18 @@ func (l Lease) HeldBy(host HostID) bool { return l.Holder == "" || l.Holder == h
 func (l Lease) Take(host HostID) Lease { return Lease{Holder: host, Epoch: l.Epoch + 1} }
 
 // Peer is the other q installation this one is paired with.
+//
+// When the two last spoke is deliberately not here. It changes several times a
+// minute, and a state file rewritten that often to record that nothing
+// happened is the kind of churn the store goes out of its way to avoid. The
+// daemon keeps it in memory instead, and treats a restart as not knowing.
 type Peer struct {
 	HostInfo
 
-	// LastSyncAt is when this host last completed an exchange with its peer, by
-	// this host's own clock.
-	//
-	// Both roles record it, and each reads it differently. The secondary reads it
-	// as "when the primary was last seen", which is what decides a takeover. The
-	// primary reads it as "how long since anyone confirmed my leases", which is
-	// what stops a laptop waking from sleep from starting work its peer already
-	// took.
-	LastSyncAt time.Time `json:"lastSyncAt,omitzero"`
-	// LastError is why the most recent exchange failed, empty after a success.
-	LastError string `json:"lastError,omitempty"`
-}
-
-// Seen reports whether the peer completed an exchange within the given window.
-func (p *Peer) Seen(now time.Time, within time.Duration) bool {
-	return p != nil && !p.LastSyncAt.IsZero() && now.Sub(p.LastSyncAt) <= within
+	// TakeoverAfter is how long the secondary waits, having not heard from the
+	// primary, before running the primary's missions itself. The primary sets
+	// it and sends it with every exchange, so only one machine is configured.
+	TakeoverAfter time.Duration `json:"takeoverAfter,omitempty"`
 }
 
 // Tombstone records that an entity was deleted.
@@ -197,6 +190,24 @@ func (s Snapshot) HostName(id HostID) string {
 	default:
 		return string(id)
 	}
+}
+
+// Elsewhere names the paired host when a mission is running there, or is pinned
+// to it, and is empty for a mission that is simply this host's.
+//
+// It is what a card and a listing show, so that the one thing which changes
+// what opening a mission does is visible before it is opened.
+func (s Snapshot) Elsewhere(ms Mission) string {
+	peer := s.PeerID()
+	if peer == "" {
+		return ""
+	}
+
+	if (ms.Running() && ms.Lease.Holder == peer) || (!ms.Launched() && ms.Pin == peer) {
+		return s.HostName(peer)
+	}
+
+	return ""
 }
 
 // hostLabel prefers a host's name and falls back to its id.

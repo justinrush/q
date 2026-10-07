@@ -59,6 +59,19 @@ func (l *Launcher) Relaunch(
 	return ms, nil
 }
 
+// Stop ends a mission's agent session, leaving its worktrees as they are.
+//
+// It is what a host does when a mission it was running is now run by its
+// paired peer. Reclaiming would be wrong there: the worktrees stay, as the
+// mirror of the work now happening elsewhere.
+func (l *Launcher) Stop(ctx context.Context, ms mission.Mission) error {
+	if ms.TmuxSession == "" || !l.tmux.HasSession(ctx, ms.TmuxSession) {
+		return nil
+	}
+
+	return l.tmux.KillSession(ctx, ms.TmuxSession)
+}
+
 // writeRelaunchArtifacts regenerates the prompt and script for a resumed session.
 //
 // The prompt is rewritten because a resumed agent is given the follow-up message

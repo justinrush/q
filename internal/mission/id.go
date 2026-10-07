@@ -44,6 +44,21 @@ func NewMissionID() (MissionID, error) {
 	return MissionID(missionIDPrefix + s), nil
 }
 
+// commandIDBytes is longer than the others because a command id is never read
+// by a person and is the only thing that stops a retried request being carried
+// out twice.
+const commandIDBytes = 8
+
+// NewCommandID returns a fresh identifier for a queued command.
+func NewCommandID() (string, error) {
+	s, err := randomHex(commandIDBytes)
+	if err != nil {
+		return "", err
+	}
+
+	return "cmd_" + s, nil
+}
+
 // Valid reports whether the identifier is well formed.
 func (id OperationID) Valid() bool { return validID(string(id), operationIDPrefix) }
 

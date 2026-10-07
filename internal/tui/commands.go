@@ -117,6 +117,8 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 			Operations []mission.Operation `json:"operations"`
 			Missions   []mission.Mission   `json:"missions"`
 			Limits     []mission.Limit     `json:"limits"`
+			Self       mission.HostInfo    `json:"self"`
+			Peer       *mission.Peer       `json:"peer"`
 		}
 
 		if err := event.Decode(&snap); err != nil {
@@ -126,6 +128,8 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 		a.snapshot.Operations = snap.Operations
 		a.snapshot.Missions = snap.Missions
 		a.snapshot.Limits = snap.Limits
+		a.snapshot.Self = snap.Self
+		a.snapshot.Peer = snap.Peer
 	case api.EventLimits:
 		var limits api.Limits
 		if err := event.Decode(&limits); err != nil {
@@ -133,6 +137,13 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 		}
 
 		a.snapshot.Limits = limits.Limits
+	case api.EventRemote:
+		var status api.RemoteStatus
+		if err := event.Decode(&status); err != nil {
+			return nil
+		}
+
+		a.adoptRemote(status)
 	case api.EventMission:
 		var ms mission.Mission
 		if err := event.Decode(&ms); err != nil {
@@ -163,6 +174,26 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 	}
 
 	return a.applySnapshot(a.snapshot)
+}
+
+// adoptRemote records the state of the pairing.
+//
+// The peer's identity is copied into the snapshot as well. It normally arrives
+// with one, but a pairing made while the board is open is announced only by
+// this event, and without the name every card the peer runs would be labeled
+// with a bare host id until the next reconnect.
+func (a *App) adoptRemote(status api.RemoteStatus) {
+	a.remote = status
+	a.snapshot.Self = status.Self
+
+	switch {
+	case status.Peer == nil:
+		a.snapshot.Peer = nil
+	case a.snapshot.Peer == nil:
+		a.snapshot.Peer = &mission.Peer{HostInfo: *status.Peer}
+	default:
+		a.snapshot.Peer.HostInfo = *status.Peer
+	}
 }
 
 // setStatus moves a mission to another lane.

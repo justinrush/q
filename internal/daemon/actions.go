@@ -22,6 +22,8 @@ type Debriefer interface {
 type Messenger interface {
 	SendMessage(ctx context.Context, ms mission.Mission, text string) error
 	Relaunch(ctx context.Context, operation mission.Operation, ms mission.Mission, message string) (mission.Mission, error)
+	// Stop ends a mission's agent session without touching its worktrees.
+	Stop(ctx context.Context, ms mission.Mission) error
 }
 
 // WithMessenger attaches the component that talks to a live agent session.
@@ -252,6 +254,78 @@ func (s *Service) Resume(ctx context.Context, id mission.MissionID, message stri
 	}
 
 	return s.commitRelaunch(relaunched)
+}
+
+// Dispatch decides what a lane move actually does, and does it.
+//
+// Moving out of briefing launches the agent. Moving into the active lane from a
+// lane that implies the agent is waiting resumes it, delivering the
+// accompanying message and reviving the session if it has died. Moving to
+// closed reclaims its resources before filing the card. Everything else is
+// bookkeeping.
+//
+// A mission the paired q is running is not this host's to move, so the request
+// is passed to the host that can act on it.
+//
+// This is kept apart from SetStatus so the lane rules stay free of subprocess
+// work and remain testable on their own.
+func (s *Service) Dispatch(
+	ctx context.Context,
+	id mission.MissionID,
+	req api.SetStatusRequest,
+) (mission.Mission, error) {
+	current, ok := s.store.Snapshot().Mission(id)
+	if !ok {
+		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+	}
+
+	if current.Running() && !s.holds(current) {
+		return s.dispatchToPeer(ctx, current, req)
+	}
+
+	if req.To == mission.StatusClosed {
+		ms, _, err := s.FinishMission(ctx, id, req.Force)
+
+		return ms, err
+	}
+
+	if req.To != mission.StatusActive {
+		return s.SetStatus(id, req.To)
+	}
+
+	if !current.Launched() {
+		return s.Start(ctx, id)
+	}
+
+	switch current.Status {
+	case mission.StatusBriefing:
+		return s.Start(ctx, id)
+	case mission.StatusAwaiting, mission.StatusDebrief:
+		return s.Resume(ctx, id, req.Message)
+	default:
+		// Already active, so there is no lane to change. Text sent along with the
+		// move is still meant for the agent, and is how a message reaches one
+		// that the paired q is running.
+		if req.Message != "" {
+			return s.Resume(ctx, id, req.Message)
+		}
+
+		return s.SetStatus(id, req.To)
+	}
+}
+
+// Message sends text to a mission's agent, wherever it is running.
+func (s *Service) Message(ctx context.Context, id mission.MissionID, text string) (mission.Mission, error) {
+	current, ok := s.store.Snapshot().Mission(id)
+	if !ok {
+		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+	}
+
+	if current.Running() && !s.holds(current) {
+		return s.dispatchToPeer(ctx, current, api.SetStatusRequest{To: mission.StatusActive, Message: text})
+	}
+
+	return s.Resume(ctx, id, text)
 }
 
 // sessionAlive reports whether the mission's agent is still there to talk to.

@@ -215,6 +215,11 @@ settings without writing anything.
 | `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
 | `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
 | `queue.maxConcurrent` | how many queued missions run at once on this machine. Defaults to `2` |
+| `remote.ssh` | the command that gets a shell on the paired machine, e.g. `["ssh", "mini.local"]`. Setting it makes this machine the primary |
+| `remote.bin` | the q binary on the paired machine. Defaults to `~/.local/bin/q` |
+| `remote.name` | what this machine is called on cards. Defaults to its hostname |
+| `remote.interval` | how often the primary exchanges state with its pair. Defaults to `15s` |
+| `remote.takeoverAfter` | how long the pair waits for a silent primary before running its missions. Defaults to `5m` |
 | `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
@@ -280,6 +285,8 @@ one-off run can point q somewhere else without editing the file:
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_MOUSE` | `tui.mouse` (enable/disable mouse with `true`/`false`) |
 | `Q_MAX_CONCURRENT` | `queue.maxConcurrent` |
+| `Q_REMOTE_SSH` | `remote.ssh`, split on spaces |
+| `Q_HOST_NAME` | `remote.name` |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
 The daemon reads the configuration when it starts, so after editing the file run
@@ -638,7 +645,8 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 | `cmd/q` | the command tree, `~/.q-config.json`, tool resolution, and all wiring |
 | `internal/mission` | operations, missions, lanes, the state machine, the store, and the interfaces the rest implement |
 | `internal/api` | the daemon protocol: wire types, the handle, and the client |
-| `internal/daemon` | the service rules, the HTTP server, hook intake, and the reconciler |
+| `internal/daemon` | the service rules, the HTTP server, hook intake, the reconciler, the scheduler, and the exchange with a paired q |
+| `internal/remote` | reaching the q daemon on another machine over ssh |
 | `internal/claude` | running missions with `claude`, and reading its session registry |
 | `internal/codex` | running missions with `codex`, and its app-server client |
 | `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |

@@ -567,6 +567,10 @@ func (b *Board) renderCollapsedDone(missions []mission.Mission, width int) strin
 	return strings.Join(lines, "\n")
 }
 
+// hostOf names the other host when a mission is running there, or is pinned to
+// it, and is empty for a mission that is simply this machine's.
+func (b *Board) hostOf(ms mission.Mission) string { return b.snapshot.Elsewhere(ms) }
+
 // renderCards renders a lane's visible cards.
 func (b *Board) renderCards(lane, width int, layout Layout) string {
 	missions := b.missionsIn(lane)
@@ -581,7 +585,7 @@ func (b *Board) renderCards(lane, width int, layout Layout) string {
 
 	for i := start; i < end; i++ {
 		selected := lane == b.lane && i == b.cursor[lane]
-		cards = append(cards, renderCard(missions[i], b.operation(missions[i]), width, selected))
+		cards = append(cards, renderCard(missions[i], b.operation(missions[i]), b.hostOf(missions[i]), width, selected))
 	}
 
 	if end < len(missions) {

@@ -40,6 +40,8 @@ func BuildRootCommand() *cobra.Command {
 		buildDaemonSubcommand(),
 		buildDoctorSubcommand(),
 		buildHookSubcommand(),
+		buildRPCSubcommand(),
+		buildRemoteSubcommand(),
 		buildOpenSubcommand(),
 		buildMissionSubcommand(),
 		buildModelsSubcommand(),

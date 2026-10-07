@@ -136,9 +136,13 @@ func (s *Snapshot) mergeOperation(in Operation, primary bool) bool {
 	}
 
 	if !incomingWins(local.Rev, in.Rev, primary) || operationEqual(local, in) {
+		// Same content at a higher revision: catch the counter up, and report it,
+		// so it is written once rather than rediscovered on every exchange.
 		if in.Rev > local.Rev {
 			local.Rev = in.Rev
 			s.PutOperation(local)
+
+			return true
 		}
 
 		return false

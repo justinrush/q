@@ -54,7 +54,7 @@ func TestRenderCardShowsTheOperationStripe(t *testing.T) {
 
 	const width = 40
 
-	out := renderCard(ms, operation, width, false)
+	out := renderCard(ms, operation, "", width, false)
 	lines := strings.Split(out, "\n")
 
 	stripe := lines[len(lines)-1]
@@ -73,7 +73,7 @@ func TestRenderCardIncludesToolAndPlanMode(t *testing.T) {
 	ms := testMission("ms_1", "add endpoint", "op_1", mission.StatusBriefing)
 	ms.PlanMode = true
 
-	out := renderCard(ms, testOperation("op_1", "T", 0), 44, false)
+	out := renderCard(ms, testOperation("op_1", "T", 0), "", 44, false)
 
 	for _, want := range []string{"add endpoint", "claude", "plan"} {
 		if !strings.Contains(out, want) {
@@ -91,7 +91,7 @@ func TestRenderCardPrioritisesWhatNeedsAttention(t *testing.T) {
 	waiting := base
 	waiting.WaitingFor = "Bash(rm -rf build)"
 
-	out := renderCard(waiting, testOperation("op_1", "T", 0), 46, false)
+	out := renderCard(waiting, testOperation("op_1", "T", 0), "", 46, false)
 	if !strings.Contains(out, "rm -rf build") {
 		t.Errorf("a blocked agent should be shown:\n%s", out)
 	}
@@ -103,7 +103,7 @@ func TestRenderCardPrioritisesWhatNeedsAttention(t *testing.T) {
 	failed := base
 	failed.LaunchError = "fetching origin/main failed"
 
-	out = renderCard(failed, testOperation("op_1", "T", 0), 46, false)
+	out = renderCard(failed, testOperation("op_1", "T", 0), "", 46, false)
 	if !strings.Contains(out, "launch failed") {
 		t.Errorf("a failed launch should be shown:\n%s", out)
 	}
@@ -113,7 +113,7 @@ func TestRenderCardShowsBadges(t *testing.T) {
 	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
 	ms.Badges = []mission.Badge{{Kind: mission.BadgeAPIError, Detail: "rate_limit"}}
 
-	out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
+	out := renderCard(ms, testOperation("op_1", "T", 0), "", 50, false)
 	if !strings.Contains(out, "api:rate_limit") {
 		t.Errorf("badge missing:\n%s", out)
 	}
@@ -126,7 +126,7 @@ func TestRenderCardNeverExceedsItsWidth(t *testing.T) {
 	ms.WaitingFor = strings.Repeat("blocked ", 20)
 
 	for _, width := range []int{20, 24, 32, 48, 80} {
-		out := renderCard(ms, testOperation("op_1", strings.Repeat("Operation ", 10), 3), width, false)
+		out := renderCard(ms, testOperation("op_1", strings.Repeat("Operation ", 10), 3), "", width, false)
 
 		for i, line := range strings.Split(out, "\n") {
 			if got := lipgloss.Width(line); got > width {
@@ -137,7 +137,7 @@ func TestRenderCardNeverExceedsItsWidth(t *testing.T) {
 }
 
 func TestRenderCardHonoursMinimumWidth(t *testing.T) {
-	out := renderCard(testMission("ms_1", "t", "op_1", mission.StatusBriefing), testOperation("op_1", "T", 0), 4, false)
+	out := renderCard(testMission("ms_1", "t", "op_1", mission.StatusBriefing), testOperation("op_1", "T", 0), "", 4, false)
 
 	for _, line := range strings.Split(out, "\n") {
 		if got := lipgloss.Width(line); got != MinCardWidth {
@@ -1906,7 +1906,7 @@ func TestRenderCardShowsCost(t *testing.T) {
 			ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
 			ms.Usage = tc.usage
 
-			out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
+			out := renderCard(ms, testOperation("op_1", "T", 0), "", 50, false)
 
 			if tc.want != "" && !strings.Contains(out, tc.want) {
 				t.Errorf("card should show %q:\n%s", tc.want, out)
@@ -1949,13 +1949,13 @@ func TestRenderCardKeepsCostOnANarrowCard(t *testing.T) {
 		}
 	}
 
-	out := renderCard(ms, testOperation("op_1", "T", 0), narrowest, false)
+	out := renderCard(ms, testOperation("op_1", "T", 0), "", narrowest, false)
 	if !strings.Contains(out, "$1.23") {
 		t.Errorf("cost should survive truncation at %d columns:\n%s", narrowest, out)
 	}
 
 	for _, width := range []int{MinCardWidth, narrowest} {
-		out := renderCard(ms, testOperation("op_1", "T", 0), width, false)
+		out := renderCard(ms, testOperation("op_1", "T", 0), "", width, false)
 
 		for i, line := range strings.Split(out, "\n") {
 			if got := lipgloss.Width(line); got > width {
@@ -2102,7 +2102,7 @@ func TestRenderCardFallsBackToTokensWhenNothingIsPriced(t *testing.T) {
 			ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
 			ms.Usage = tc.usage
 
-			out := renderCard(ms, testOperation("op_1", "T", 0), 50, false)
+			out := renderCard(ms, testOperation("op_1", "T", 0), "", 50, false)
 			if !strings.Contains(out, tc.want) {
 				t.Errorf("card should show %q:\n%s", tc.want, out)
 			}
@@ -2648,5 +2648,71 @@ func TestOperationsMouseClickSelectsOperation(t *testing.T) {
 	operations.HandleMouse(mouseWheelMsg(10, 10, true), 10, 10)
 	if operations.cursor != 1 {
 		t.Errorf("after wheel up cursor = %d, want 1", operations.cursor)
+	}
+}
+
+// A card for a mission on the other machine looks like any other, and opening
+// it does something different. The host has to be on it.
+func TestRenderCardNamesTheHostAMissionRunsOn(t *testing.T) {
+	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+
+	remote := renderCard(ms, testOperation("op_1", "T", 0), "mini", 50, false)
+	if !strings.Contains(remote, "@mini") {
+		t.Errorf("card should name the host:\n%s", remote)
+	}
+
+	if local := renderCard(ms, testOperation("op_1", "T", 0), "", 50, false); strings.Contains(local, "@") {
+		t.Errorf("a local mission's card should name no host:\n%s", local)
+	}
+}
+
+func TestBoardNamesThePeerOnlyForItsMissions(t *testing.T) {
+	started := time.Now()
+
+	onPeer := testMission("ms_peer", "on the mini", "op_1", mission.StatusActive)
+	onPeer.StartedAt = &started
+	onPeer.Lease = mission.Lease{Holder: "h_bbbbbbbbbbbb", Epoch: 2}
+
+	here := testMission("ms_here", "on the laptop", "op_1", mission.StatusActive)
+	here.StartedAt = &started
+	here.Lease = mission.Lease{Holder: "h_aaaaaaaaaaaa", Epoch: 1}
+
+	pinned := testMission("ms_pinned", "pinned to the mini", "op_1", mission.StatusBriefing)
+	pinned.Pin = "h_bbbbbbbbbbbb"
+
+	board := boardWith([]mission.Operation{testOperation("op_1", "T", 0)}, []mission.Mission{onPeer, here, pinned})
+	board.snapshot.Self = mission.HostInfo{ID: "h_aaaaaaaaaaaa", Name: "laptop"}
+	board.snapshot.Peer = &mission.Peer{HostInfo: mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}}
+
+	for name, want := range map[string]string{"ms_peer": "mini", "ms_here": "", "ms_pinned": "mini"} {
+		ms, _ := board.snapshot.Mission(mission.MissionID(name))
+
+		if got := board.hostOf(ms); got != want {
+			t.Errorf("hostOf(%s) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// A link that has dropped must not look like a quiet one: the cards for the
+// other machine's missions freeze exactly as they were.
+func TestHeaderShowsWhetherThePairingIsUp(t *testing.T) {
+	peer := mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}
+
+	app := &App{}
+	if got := app.linkLabel(); got != "" {
+		t.Errorf("an unpaired q shows %q, want nothing", got)
+	}
+
+	app.remote = api.RemoteStatus{Role: mission.RolePrimary, Peer: &peer, LastSyncAt: time.Now()}
+	if got := app.linkLabel(); !strings.Contains(got, "mini") || strings.Contains(got, "offline") {
+		t.Errorf("a live link shows %q", got)
+	}
+
+	app.remote.Error = "connection timed out"
+	app.remote.LastSyncAt = time.Now().Add(-10 * time.Minute)
+	app.remote.Pending = 1
+
+	if got := app.linkLabel(); !strings.Contains(got, "offline") || !strings.Contains(got, "1 pending") {
+		t.Errorf("a dropped link shows %q, want it to say so and count what is waiting", got)
 	}
 }

@@ -121,7 +121,7 @@ func (s *Service) runnerFor(snap mission.Snapshot, ms mission.Mission, now time.
 		return ms.Pin
 	}
 
-	if s.role == mission.RoleSecondary && snap.Peer.Seen(now, s.takeoverAfter) {
+	if s.roleOf(snap) == mission.RoleSecondary && s.peerSeen(snap, now) {
 		return snap.Peer.ID
 	}
 
@@ -131,7 +131,7 @@ func (s *Service) runnerFor(snap mission.Snapshot, ms mission.Mission, now time.
 // unconfirmed reports whether this host is a primary whose peer may have taken
 // over its missions without it knowing.
 func (s *Service) unconfirmed(snap mission.Snapshot, now time.Time) bool {
-	return s.role == mission.RolePrimary && snap.Peer != nil && !snap.Peer.Seen(now, s.takeoverAfter)
+	return s.roleOf(snap) == mission.RolePrimary && !s.peerSeen(snap, now)
 }
 
 // passLease hands an unlaunched mission to the host that should run it.

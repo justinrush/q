@@ -69,11 +69,23 @@ type Service struct {
 
 	// maxConcurrent is how many queued missions this host runs at once.
 	maxConcurrent int
-	// role and takeoverAfter describe the pairing with another q installation.
-	// Both are zero when q runs alone, which makes every decision that consults
-	// them come out as "this host".
-	role          mission.Role
+
+	// remote is the paired daemon this one dials. It is nil unless this host is
+	// the primary of a pair, and its presence is what makes it one.
+	remote  Remote
+	locator RepoLocator
+	// syncInterval and takeoverAfter are the primary's settings for the pair.
+	syncInterval  time.Duration
 	takeoverAfter time.Duration
+	// syncMu allows one exchange at a time, and syncKick asks for one soon.
+	syncMu   sync.Mutex
+	syncKick chan struct{}
+	link     link
+	// started is when this service was built, which a secondary treats as the
+	// last time it heard from its primary until an exchange says otherwise.
+	started  time.Time
+	hostName string
+	version  string
 
 	// self is this installation's host id, fixed for the life of the store. It
 	// is what every "do I run this mission" question is answered against.
@@ -146,6 +158,9 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		approvals: make(map[mission.MissionID]approvalCandidate),
 
 		maxConcurrent: DefaultMaxConcurrent,
+		syncInterval:  DefaultSyncInterval,
+		takeoverAfter: DefaultTakeoverAfter,
+		syncKick:      make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
@@ -153,6 +168,8 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 	}
 
 	s.self = store.Snapshot().Self.ID
+	s.started = s.now()
+	s.adoptHostName()
 
 	return s
 }

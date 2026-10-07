@@ -47,6 +47,8 @@ const (
 	EnvLogLevel      = "Q_LOG_LEVEL"
 	EnvMouse         = "Q_MOUSE"
 	EnvMaxConcurrent = "Q_MAX_CONCURRENT"
+	EnvRemoteSSH     = "Q_REMOTE_SSH"
+	EnvHostName      = "Q_HOST_NAME"
 )
 
 // fileConfig is the JSON shape of ~/.q-config.json.
@@ -64,6 +66,7 @@ type fileConfig struct {
 	Cost     *costConfig     `json:"cost,omitempty"`
 	TUI      *tuiConfig      `json:"tui,omitempty"`
 	Queue    *queueConfig    `json:"queue,omitempty"`
+	Remote   *remoteConfig   `json:"remote,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
 	LogLevel string            `json:"logLevel,omitempty"`
@@ -72,6 +75,24 @@ type fileConfig struct {
 // queueConfig configures how the daemon works through queued missions.
 type queueConfig struct {
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
+}
+
+// remoteConfig pairs this q with one on another machine.
+//
+// Only the machine that dials is configured. Naming how to reach the other one
+// is what makes this the primary of the pair; the other learns its part when
+// it is first called.
+type remoteConfig struct {
+	// SSH is the command that gets a shell on the peer, e.g. ["ssh", "mini"].
+	SSH []string `json:"ssh,omitempty"`
+	// Bin is the q binary on the peer.
+	Bin string `json:"bin,omitempty"`
+	// Name is what this machine is called on cards. It applies whether or not q
+	// is paired.
+	Name string `json:"name,omitempty"`
+	// Interval and TakeoverAfter are duration strings, e.g. "15s" and "5m".
+	Interval      string `json:"interval,omitempty"`
+	TakeoverAfter string `json:"takeoverAfter,omitempty"`
 }
 
 type tuiConfig struct {
@@ -297,12 +318,36 @@ func applyFile(out *settings, file fileConfig) {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
 	}
 
+	applyRemote(out, file.Remote)
+
 	for name, path := range file.Tools {
 		out.Tools[name] = path
 	}
 
 	if file.LogLevel != "" {
 		out.LogLevel = file.LogLevel
+	}
+}
+
+// applyRemote layers the remote section.
+func applyRemote(out *settings, r *remoteConfig) {
+	if r == nil {
+		return
+	}
+
+	if len(r.SSH) > 0 {
+		out.Remote.SSH = r.SSH
+	}
+
+	out.Remote.Bin = firstNonEmpty(r.Bin, out.Remote.Bin)
+	out.Remote.Name = firstNonEmpty(r.Name, out.Remote.Name)
+
+	if d, ok := parseRefresh(r.Interval); ok {
+		out.Remote.Interval = d
+	}
+
+	if d, ok := parseRefresh(r.TakeoverAfter); ok {
+		out.Remote.TakeoverAfter = d
 	}
 }
 
@@ -440,6 +485,14 @@ func applyEnv(out *settings) {
 		}
 	}
 
+	if v := strings.TrimSpace(os.Getenv(EnvRemoteSSH)); v != "" {
+		out.Remote.SSH = strings.Fields(v)
+	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvHostName)); v != "" {
+		out.Remote.Name = v
+	}
+
 	if v := strings.TrimSpace(os.Getenv(EnvMaxConcurrent)); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			out.Queue.MaxConcurrent = n
@@ -557,6 +610,13 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
 		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse},
 		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
+		Remote: &remoteConfig{
+			SSH:           s.Remote.SSH,
+			Bin:           s.Remote.Bin,
+			Name:          s.Remote.Name,
+			Interval:      refreshString(s.Remote.Interval),
+			TakeoverAfter: refreshString(s.Remote.TakeoverAfter),
+		},
 		Tools:    s.Tools,
 		LogLevel: s.LogLevel,
 	}

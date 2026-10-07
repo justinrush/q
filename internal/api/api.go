@@ -226,3 +226,62 @@ const (
 	KindOperation = "operation"
 	KindMission   = "mission"
 )
+
+// SyncProtocol is the version of the exchange two paired daemons speak.
+//
+// It is checked on every exchange rather than negotiated. The two machines are
+// one person's, upgraded together, so a mismatch means one was missed, and the
+// useful response is to say so rather than to guess at a common subset.
+const SyncProtocol = 1
+
+// SyncRequest is the primary's half of an exchange.
+type SyncRequest struct {
+	Protocol int `json:"protocol"`
+	// Version is the sender's q version, reported when the protocols disagree
+	// so the error names what to upgrade.
+	Version string          `json:"version,omitempty"`
+	Payload mission.Payload `json:"payload"`
+	// TakeoverAfter is how long the secondary should wait, having not heard
+	// from the primary, before running the primary's missions itself. It
+	// travels with the exchange so the secondary needs no configuration.
+	TakeoverAfter time.Duration `json:"takeoverAfter,omitempty"`
+	// Commands are requests for missions the secondary runs that could not be
+	// delivered when they were made.
+	Commands []mission.Command `json:"commands,omitempty"`
+}
+
+// SyncResponse is the secondary's half.
+type SyncResponse struct {
+	Protocol int             `json:"protocol"`
+	Version  string          `json:"version,omitempty"`
+	Payload  mission.Payload `json:"payload"`
+	// Results answers each command by id. A command with no result was not
+	// attempted and is retried on the next exchange.
+	Results []CommandResult `json:"results,omitempty"`
+}
+
+// CommandResult is what became of one queued command.
+type CommandResult struct {
+	ID string `json:"id"`
+	// Error is why the peer refused, empty on success.
+	Error string `json:"error,omitempty"`
+}
+
+// RemoteStatus describes this daemon's pairing with another, for q remote
+// status and the board's header.
+type RemoteStatus struct {
+	Self mission.HostInfo `json:"self"`
+	Role mission.Role     `json:"role,omitempty"`
+	// Peer is nil until the first exchange has told each side who the other is.
+	Peer *mission.HostInfo `json:"peer,omitempty"`
+	// LastSyncAt is the last completed exchange, zero if there has been none
+	// since this daemon started.
+	LastSyncAt time.Time `json:"lastSyncAt,omitzero"`
+	// Error is why the most recent exchange failed, empty when it succeeded.
+	Error string `json:"error,omitempty"`
+	// Pending counts commands waiting to reach the peer.
+	Pending int `json:"pending,omitempty"`
+}
+
+// Linked reports whether an exchange has completed and the latest one worked.
+func (r RemoteStatus) Linked() bool { return !r.LastSyncAt.IsZero() && r.Error == "" }

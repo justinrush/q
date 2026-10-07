@@ -39,7 +39,12 @@ var agentGlyphs = map[mission.AgentState]string{
 // The operation stripe is rendered as its own full-width line joined beneath the bordered
 // body rather than inside the border, because a bordered style clips its background at
 // the edges and would break the solid bar.
-func renderCard(ms mission.Mission, operation mission.Operation, width int, selected bool) string {
+//
+// host names the other machine for a mission that runs, or must run, there, and
+// is empty otherwise. It is on the card because everything else about such a
+// mission looks the same as a local one, and the difference decides what
+// opening it does.
+func renderCard(ms mission.Mission, operation mission.Operation, host string, width int, selected bool) string {
 	width = max(width, MinCardWidth)
 
 	// lipgloss sizes a block by its content plus padding, with the border outside
@@ -51,7 +56,7 @@ func renderCard(ms mission.Mission, operation mission.Operation, width int, sele
 	body := strings.Join([]string{
 		styles.CardTitle.Render(styles.Truncate(agentGlyph(ms)+" "+ms.Name, content)),
 		detailLine(ms, content),
-		metaLine(ms, content),
+		metaLine(ms, host, content),
 	}, "\n")
 
 	style := styles.Card
@@ -111,8 +116,14 @@ func detailLine(ms mission.Mission, width int) string {
 // of them survives. Everything after it — the model, the repo count, the age,
 // the badges — is a property you chose or can recover by opening the mission. A
 // running total is the one thing on this line that exists only here.
-func metaLine(ms mission.Mission, width int) string {
+func metaLine(ms mission.Mission, host string, width int) string {
 	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
+
+	// The host comes straight after the agent, ahead of everything that can be
+	// truncated away, for the same reason cost does: it exists only here.
+	if host != "" {
+		parts = append(parts, "@"+host)
+	}
 
 	if cost := missionCost(ms); cost != "" {
 		parts = append(parts, cost)

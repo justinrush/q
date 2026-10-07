@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/justinrush/q/internal/agy"
@@ -16,6 +19,7 @@ import (
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/opencode"
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/remote"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/justinrush/q/internal/terminal"
 	"github.com/justinrush/q/internal/usage"
@@ -52,6 +56,10 @@ func assembleService(
 		daemon.WithHealer(claude.NewRegistry("")),
 		daemon.WithModelRefresh(s.Agents.ModelRefresh),
 		daemon.WithMaxConcurrent(s.Queue.MaxConcurrent),
+		daemon.WithHostName(s.Remote.Name),
+		daemon.WithVersion(version),
+		daemon.WithSyncInterval(s.Remote.Interval),
+		daemon.WithTakeoverAfter(s.Remote.TakeoverAfter),
 	}
 
 	// Metering runs off files the agent has already written, so it is wired
@@ -77,7 +85,23 @@ func assembleService(
 		return nil, nil, err
 	}
 
-	opts = append(opts, daemon.WithBrancher(gitc))
+	opts = append(opts,
+		daemon.WithBrancher(gitc),
+		daemon.WithLocator(git.NewLocator(gitc, git.ScanOptions{
+			Roots:    s.Repos.Roots,
+			MaxDepth: s.Repos.MaxDepth,
+			Skip:     s.Repos.Skip,
+		})),
+	)
+
+	link, err := remoteFor(s, dirs, run)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if link != nil {
+		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
+	}
 
 	workspace := git.NewProvisioner(dirs, gitc, tmux,
 		git.WithLogger(logger),
@@ -117,6 +141,32 @@ func assembleService(
 	)
 
 	return daemon.NewService(store, hub, dirs, opts...), stop, nil
+}
+
+// remoteFor builds the connection to the paired q, or nil when this machine
+// does not dial one.
+//
+// The command's first element is resolved here, once, for the same reason every
+// other tool is: the daemon may not have the PATH an interactive shell does,
+// and a pairing that works from a terminal and fails from the daemon is the
+// hardest kind of broken to notice.
+func remoteFor(s settings, dirs paths.Dirs, run runner.Runner) (*remote.Command, error) {
+	if len(s.Remote.SSH) == 0 {
+		return nil, nil
+	}
+
+	argv := slices.Clone(s.Remote.SSH)
+
+	if !filepath.IsAbs(argv[0]) {
+		resolved, err := exec.LookPath(argv[0])
+		if err != nil {
+			return nil, fmt.Errorf("remote.ssh: %q was not found on PATH: %w", argv[0], err)
+		}
+
+		argv[0] = resolved
+	}
+
+	return &remote.Command{Argv: argv, Bin: s.Remote.Bin, ControlDir: dirs.State, Run: run}, nil
 }
 
 // agentsFor builds an agent for every tool whose binary this machine has.

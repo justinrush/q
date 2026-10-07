@@ -156,6 +156,15 @@ func (s *Store) Apply(label string, fn func(*Snapshot) error) error {
 	return s.mutate(label, fn, false)
 }
 
+// ErrUnchanged is returned by a mutation function to say it found nothing to
+// change. The store then writes nothing and reports success.
+//
+// It exists for work that runs on a timer. A peer exchange happens every few
+// seconds and nearly always finds the two sides already agree; without a way to
+// say so, a board left open overnight would rewrite the state file a few
+// thousand times to record that nothing happened.
+var ErrUnchanged = errors.New("unchanged")
+
 // mutate is the single write path behind Mutate and Apply.
 func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) error {
 	s.mu.Lock()
@@ -163,6 +172,10 @@ func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) err
 
 	next := s.snap.Clone()
 	if err := fn(&next); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return nil
+		}
+
 		return err
 	}
 

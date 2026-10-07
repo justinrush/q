@@ -472,8 +472,13 @@ func renderBoard(out io.Writer, snap mission.Snapshot, lanes []mission.Status) e
 		rep.line("%s (%d)", strings.ToUpper(lane.Label()), len(missions))
 
 		for _, ms := range missions {
+			detail := missionDetail(ms)
+			if host := snap.Elsewhere(ms); host != "" {
+				detail = strings.TrimPrefix("@"+host+" · "+detail, " · ")
+			}
+
 			rep.row("  %s\t%s\t%s\t%s\t%s",
-				ms.ID, ms.Name, ms.Tool, operations[ms.OperationID], missionDetail(ms))
+				ms.ID, ms.Name, ms.Tool, operations[ms.OperationID], strings.TrimSuffix(detail, " · "))
 		}
 
 		rep.line("")

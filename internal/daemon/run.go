@@ -76,6 +76,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	// nobody is sitting at work through a backlog.
 	go svc.RunScheduler(ctx)
 
+	// A primary keeps its paired q current. This returns at once on a daemon
+	// that dials nobody.
+	go svc.RunSync(ctx)
+
 	token, err := api.NewToken()
 	if err != nil {
 		return err
