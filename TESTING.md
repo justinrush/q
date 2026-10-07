@@ -173,6 +173,85 @@ Restart the machine, or `tmux kill-server`. Every mission should come back badge
 `tmux-gone` rather than silently wrong. Moving one back to active should relaunch the
 agent against its surviving worktrees and resume the conversation.
 
+### Two machines
+
+The automated tests pair two daemons in one process over real git clones, and
+cover the rules: who wins an edit, when a worktree may be overwritten, when a
+mission moves. What they cannot cover is two real machines, real ssh, and a
+real agent. With a laptop and an always-on machine that both have q installed
+and the same repositories cloned under `repos.roots`:
+
+**Pairing**
+
+- [ ] Start the daemon on the always-on machine as a service. From the laptop,
+      `q remote setup <host>` reports the other machine's name and a link that
+      is up. `q remote status` on the other machine says `secondary`.
+- [ ] Stop the daemon on the always-on machine. `q remote status` on the laptop
+      says the link is down and why, within one interval, and the board header
+      shows the pair offline. Start it again and the link recovers by itself.
+- [ ] `lsof -iTCP -sTCP:LISTEN -P | grep q` on either machine shows the daemon
+      listening on `127.0.0.1` only.
+
+**Mirroring**
+
+- [ ] Launch a mission on the laptop. Within an interval its card appears on
+      the other machine marked with the laptop's name, and
+      `~/.local/share/q/missions/` there holds a worktree for each repository.
+- [ ] While the agent works, `git status` in the other machine's worktree
+      follows it: same branch tip, same modified and untracked files.
+- [ ] A file listed in `.gitignore` and created on one side never appears on
+      the other.
+- [ ] `git branch -a` in the repository on either machine shows nothing under
+      `refs/q`, and `git for-each-ref refs/q` shows the hidden refs.
+- [ ] Close the mission. Both worktrees are gone and `git for-each-ref refs/q`
+      is empty on both machines.
+
+**Takeover and return**
+
+- [ ] Queue two missions and close the laptop lid before either starts. After
+      `remote.takeoverAfter`, both are running on the other machine.
+- [ ] Launch a mission on the laptop and close the lid while the agent is
+      mid-turn. After the window, the other machine shows the mission as its
+      own and a new agent is working in it. Its first message shows it was told
+      it is continuing from the laptop.
+- [ ] Open the lid. Within an interval the laptop's card is marked with the
+      other machine's name and its own tmux session for the mission is gone.
+- [ ] When the agent on the other machine finishes its turn, the card loses the
+      host mark and gains a `handoff` badge. Reply from the laptop: the agent
+      starts on the laptop, and its prompt quotes what the other agent last
+      said.
+- [ ] A mission created with `--on remote` runs on the other machine with the
+      laptop awake, and stays there after its agent finishes a turn.
+
+**Reviewing from the laptop**
+
+- [ ] With a mission running on the other machine, press `enter` on its card.
+      Editors open on the laptop's own worktrees and the agent pane shows the
+      other machine's agent. Type into it; the agent there receives it.
+- [ ] Disconnect the network and reconnect. The agent pane says the connection
+      ended and reconnects on enter, without the editors closing.
+- [ ] Send a message with `m` while the other machine is unreachable. The card
+      shows `pending`, and the message is delivered when the link returns.
+- [ ] `t` on the card brings the mission to the laptop and stops the agent on
+      the other machine.
+
+**Both sides editing**
+
+- [ ] While the agent on the other machine is busy, edit a file in the laptop's
+      worktree. The card shows `local-edits` and the agent's worktree is not
+      changed. When the agent goes idle, the edit appears there.
+- [ ] With the agent idle, change one file on each machine. Both worktrees end
+      up with both changes, still uncommitted, and no new commit.
+- [ ] Change the same line on both. The laptop keeps its version, both
+      worktrees show it, the card shows `diverged` naming a branch, and that
+      branch in the laptop's repository holds the other machine's version.
+
+**Missing repository**
+
+- [ ] Move one of a mission's repositories out of `repos.roots` on the
+      always-on machine, then queue the mission and close the lid. It is not
+      started there, and its card on that machine names the missing repository.
+
 ## Things known not to be covered automatically
 
 Stated plainly so nobody assumes otherwise:
@@ -181,6 +260,11 @@ Stated plainly so nobody assumes otherwise:
   launch commands, state mapping, missed-hook recovery, and the doctor probe are tested,
   but the terminal/app-server pairing still needs the manual check above after a Codex
   upgrade.
+- **Two real machines.** The pairing tests run two daemons in one process and move
+  snapshots between two clones on one disk. The ssh command line, git's `ext`
+  transport, and the `q rpc` relay are each asserted or exercised separately, but
+  nothing automated runs them across a network, against a real sshd, or with a
+  machine that actually sleeps. The checklist above is the only cover for that.
 
 ## Testing a configuration change
 
