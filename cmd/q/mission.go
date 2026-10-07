@@ -29,6 +29,7 @@ func buildMissionSubcommand() *cobra.Command {
 		buildMissionMoveSubcommand(),
 		buildMissionQueueSubcommand(),
 		buildMissionUnqueueSubcommand(),
+		buildMissionTakeSubcommand(),
 		buildMissionRemoveSubcommand(),
 	)
 
@@ -294,6 +295,37 @@ func buildMissionUnqueueSubcommand() *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return patchMissions(cmd, args, api.UpdateMissionRequest{Queued: new(false)}, "not queued")
+		},
+	}
+}
+
+func buildMissionTakeSubcommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "take <mission-id>",
+		Short: "Bring a mission the paired machine is running to this one",
+		Long: "Move a mission's agent to this machine. The other machine is asked to stop " +
+			"its agent first, and its work arrives here before this returns. If it cannot " +
+			"be reached, the mission is taken anyway and the other machine stands down when " +
+			"the two next speak; anything it did in the meantime is kept beside what " +
+			"happens here.\n\n" +
+			"q moves missions by itself: to the always-on machine when this one goes " +
+			"quiet, and back when an agent there finishes a turn. This is for when you " +
+			"do not want to wait for that.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := connectDaemon(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			ms, err := c.TakeMission(cmd.Context(), mission.MissionID(args[0]))
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s now runs here (%s)\n", ms.Name, ms.Status.Label())
+
+			return err
 		},
 	}
 }

@@ -89,6 +89,18 @@ func (w *wire) Settle(ctx context.Context, req api.SettleRequest) (api.SettleRes
 // machine, and a path is a remote git already understands.
 func (w *wire) GitURL(path string) string { return path }
 
+func (w *wire) Release(ctx context.Context, id mission.MissionID) error {
+	if w.down {
+		return fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
+	}
+
+	if _, err := w.peer.Release(ctx, id); err != nil {
+		return asStatus(err)
+	}
+
+	return nil
+}
+
 func (w *wire) AttachArgv(id mission.MissionID) []string {
 	return []string{"/usr/bin/ssh", "-t", "mini", "q", "attach", string(id)}
 }

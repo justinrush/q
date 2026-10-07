@@ -323,24 +323,9 @@ func (s *Service) Resume(ctx context.Context, id mission.MissionID, message stri
 		return s.SetStatus(id, mission.StatusActive)
 	}
 
-	snap := s.store.Snapshot()
-
-	operation, ok := snap.Operation(ms.OperationID)
-	if !ok {
-		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
-	}
-
-	if !s.inflight.claim(id) {
-		return mission.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
-	}
-	defer s.inflight.release(id)
-
-	relaunched, err := s.messenger.Relaunch(ctx, operation, ms, message)
-	if err != nil {
-		return mission.Mission{}, err
-	}
-
-	return s.commitRelaunch(relaunched)
+	// An agent started here for a mission that was last worked on elsewhere is
+	// told so, and told what the agent there last said.
+	return s.relaunch(ctx, id, s.continuation(ms, message))
 }
 
 // Dispatch decides what a lane move actually does, and does it.
@@ -515,9 +500,13 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		stored.AgentSessionID = relaunched.AgentSessionID
 		stored.HookEpoch = relaunched.HookEpoch
 		stored.Badges = relaunched.Badges
+		stored.Badges = stored.WithoutBadge(mission.BadgeHandoff)
+		stored.Badges = stored.WithoutBadge(mission.BadgeLaunching)
 		stored.WaitingFor = ""
 		stored.LaunchError = ""
 		stored.FinishedAt = nil
+		stored.TurnEnded = false
+		stored.MovedFrom = ""
 		stored.UpdatedAt = now
 
 		updated = stored
@@ -529,7 +518,7 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }

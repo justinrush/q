@@ -380,7 +380,7 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 	}
 
 	stored, _ := s.store.Snapshot().Mission(id)
-	s.publishMission(stored)
+	s.announce(stored)
 
 	return stored, nil
 }
@@ -537,7 +537,7 @@ func (s *Service) UpdateMission(id mission.MissionID, req api.UpdateMissionReque
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }
@@ -723,7 +723,7 @@ func (s *Service) setStatus(
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }
@@ -822,6 +822,20 @@ func (s *Service) publishOperation(t mission.Operation) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventOperation, t)
 	}
+
+	s.kickSync()
+}
+
+// announce publishes a mission changed by a deliberate act — created, edited,
+// launched, moved — and asks for an exchange with the paired q soon.
+//
+// The distinction from publishMission is the exchange. An agent's hooks change
+// a mission several times a second and the peer can wait for the next tick to
+// hear of those; a human's change is one the other machine may be about to act
+// on, and a laptop lid can close in less time than a tick takes.
+func (s *Service) announce(t mission.Mission) {
+	s.publishMission(t)
+	s.kickSync()
 }
 
 func (s *Service) publishMission(t mission.Mission) {
@@ -834,6 +848,8 @@ func (s *Service) publishDeleted(kind, id string) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventDeleted, api.Deleted{Kind: kind, ID: id})
 	}
+
+	s.kickSync()
 }
 
 func (s *Service) publishLimits(limits []mission.Limit) {

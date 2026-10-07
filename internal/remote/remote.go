@@ -273,6 +273,13 @@ func (p *Peer) GitURL(path string) string {
 	return carrier.GitURL(path)
 }
 
+// Release asks the peer to stop running a mission and hand it over.
+func (p *Peer) Release(ctx context.Context, id mission.MissionID) error {
+	_, err := call[mission.Mission](ctx, p, http.MethodPost, "/v1/missions/"+string(id)+"/release", struct{}{})
+
+	return err
+}
+
 // AttachArgv returns the command that attaches a terminal to a mission's agent
 // on the peer, or nil when the transport cannot carry one.
 func (p *Peer) AttachArgv(id mission.MissionID) []string {

@@ -198,7 +198,7 @@ func (s *Service) commitLaunch(launched mission.Mission) (mission.Mission, error
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }

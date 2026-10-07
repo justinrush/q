@@ -437,3 +437,11 @@ func (c *Client) RemoteForget(ctx context.Context) (RemoteStatus, error) {
 func (c *Client) AttachCommand(ctx context.Context, id mission.MissionID) (AttachCommand, error) {
 	return get[AttachCommand](ctx, c, "/v1/missions/"+string(id)+"/attach")
 }
+
+// TakeMission brings a mission the paired q is running to this host.
+//
+// It can take as long as an exchange does, since the other host is asked to
+// stop its agent and its final state is fetched before this returns.
+func (c *Client) TakeMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/take", struct{}{}, refreshTimeout)
+}

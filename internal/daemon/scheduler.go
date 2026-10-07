@@ -43,6 +43,9 @@ func (s *Service) RunScheduler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Leases first: a mission that has just been taken over, or handed
+			// back, changes what this host has room to start.
+			s.tendLeases(ctx)
 			s.Schedule(ctx)
 		}
 	}
@@ -213,7 +216,7 @@ func (s *Service) updateLease(id mission.MissionID, label string, fn func(*missi
 	}
 
 	if changed {
-		s.publishMission(updated)
+		s.announce(updated)
 	}
 
 	return changed

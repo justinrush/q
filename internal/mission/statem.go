@@ -90,12 +90,33 @@ func Reduce(ms Mission, ev HookEvent, now time.Time) Reduction {
 	}
 
 	proposed := apply(&ms, ev, now)
+	ms.TurnEnded = turnEnded(before.TurnEnded, ev.Event, proposed)
 
 	return Reduction{
 		Mission:        ms,
 		ProposedStatus: proposed,
 		Definite:       definiteEvents[ev.Event],
 		Changed:        proposed != "" || !equivalent(before, ms),
+	}
+}
+
+// turnEnded decides whether the agent is now between turns.
+//
+// A Stop that leaves the card waiting or in debrief ended one. A Stop with
+// background work still running, or with a plan awaiting approval, did not. A
+// failed turn and an exited session both leave nothing in flight. A
+// notification says nothing new either way. Anything else is activity, which
+// means a turn is under way.
+func turnEnded(previous bool, event string, proposed Status) bool {
+	switch event {
+	case EventStop:
+		return proposed == StatusAwaiting || proposed == StatusDebrief
+	case EventStopFailure, EventSessionEnd:
+		return true
+	case EventNotification:
+		return previous
+	default:
+		return false
 	}
 }
 
@@ -413,6 +434,7 @@ func equivalent(a, b Mission) bool {
 		a.TranscriptPath != b.TranscriptPath ||
 		a.LastMessage != b.LastMessage ||
 		a.LaunchError != b.LaunchError ||
+		a.TurnEnded != b.TurnEnded ||
 		len(a.Badges) != len(b.Badges) {
 		return false
 	}

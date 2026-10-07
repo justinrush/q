@@ -192,6 +192,27 @@ type Mission struct {
 	// name as the holder publishes it, which is what lets the other host attach
 	// to an agent it is not running.
 	HolderSession string `json:"holderSession,omitempty" q:"run"`
+	// TurnEnded reports that the agent's last turn is over and it is sitting at
+	// its prompt, as opposed to being stopped part-way through one.
+	//
+	// The lane alone cannot say this. A mission is awaiting orders both when the
+	// agent asked a question and stopped, and when it is blocked on a permission
+	// prompt in the middle of a tool call. Moving a mission between hosts is safe
+	// in the first case and loses the turn in the second.
+	TurnEnded bool `json:"turnEnded,omitempty" q:"run"`
+	// UsageByHost is what the mission has consumed on each host that has run it.
+	// Usage is their sum, and is what a card shows.
+	//
+	// A meter reads the agent's own transcript, which lives on the host the agent
+	// ran on. A mission that moves therefore has a transcript on each, and
+	// keeping the readings apart is what stops the total from resetting, or
+	// doubling, every time the lease changes hands.
+	UsageByHost map[HostID]Usage `json:"usageByHost,omitempty" q:"run"`
+	// MovedFrom names the host that was running this mission when it came to
+	// this one, until an agent has been started here. It is how the agent is told
+	// that the conversation it is resuming, or starting, is missing part of the
+	// story.
+	MovedFrom HostID `json:"movedFrom,omitempty" q:"local"`
 	// LocalBadges are badges this host raised about its own copy of the mission,
 	// such as edits in a mirror worktree that have not been merged. They are kept
 	// apart from Badges because those belong to the lease holder and are
@@ -267,6 +288,10 @@ const (
 	// BadgeDiverged marks a mission whose two worktrees changed the same lines.
 	// The primary's version is on the branch and the other is kept beside it.
 	BadgeDiverged = "diverged"
+	// BadgeHandoff marks a mission that finished a turn on one host and was
+	// passed to the other, where its next turn will start. Its detail names
+	// the host it came from.
+	BadgeHandoff = "handoff"
 	// BadgeUnconfirmed marks a mission this host believes it is running but has
 	// not been able to confirm with its peer for long enough that the peer may
 	// have taken it over.

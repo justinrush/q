@@ -178,6 +178,8 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("DELETE /v1/missions/{id}", s.handleDeleteMission)
 	mux.HandleFunc("POST /v1/missions/{id}/status", s.handleSetStatus)
 
+	mux.HandleFunc("POST /v1/missions/{id}/take", s.handleTake)
+	mux.HandleFunc("POST /v1/missions/{id}/release", s.handleRelease)
 	mux.HandleFunc("POST /v1/missions/{id}/open", s.handleOpenDebrief)
 	mux.HandleFunc("POST /v1/missions/{id}/message", s.handleMessage)
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
@@ -231,6 +233,31 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	// A message is a move to active that carries text, which is what lets one for
 	// a mission the paired q runs take the same route as any other lane move.
 	ms, err := s.svc.Message(r.Context(), mission.MissionID(r.PathValue("id")), req.Text)
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleTake brings a mission the paired q is running to this host.
+func (s *Server) handleTake(w http.ResponseWriter, r *http.Request) {
+	ms, err := s.svc.Take(r.Context(), mission.MissionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleRelease hands a mission this host is running to its peer. It is the
+// peer that asks.
+func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
+	ms, err := s.svc.Release(r.Context(), mission.MissionID(r.PathValue("id")))
 	if err != nil {
 		writeServiceError(w, err)
 

@@ -75,6 +75,15 @@ func cloneMission(t Mission) Mission {
 	t.LocalBadges = slices.Clone(t.LocalBadges)
 	t.BaseBranches = maps.Clone(t.BaseBranches)
 	t.Usage = t.Usage.Clone()
+
+	if t.UsageByHost != nil {
+		byHost := make(map[HostID]Usage, len(t.UsageByHost))
+		for host, usage := range t.UsageByHost {
+			byHost[host] = usage.Clone()
+		}
+
+		t.UsageByHost = byHost
+	}
 	t.ExtraRepos = slices.Clone(t.ExtraRepos)
 	t.LaunchRepos = slices.Clone(t.LaunchRepos)
 

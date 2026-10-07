@@ -51,6 +51,8 @@ type Remote interface {
 	// GitURL is the remote git should use to reach a repository on the peer,
 	// or empty when there is no way to.
 	GitURL(path string) string
+	// Release asks the peer to stop running a mission and hand it over.
+	Release(ctx context.Context, id mission.MissionID) error
 	// AttachArgv is the command that attaches a terminal to a mission's agent
 	// on the peer, or nil when there is no way to.
 	AttachArgv(id mission.MissionID) []string
@@ -294,7 +296,6 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		return err
 	}
 
-	s.link.ok(s.now())
 	s.shareWorktrees(ctx, mine, resp.Refs)
 
 	if wasLinked != "" || snap.Peer == nil {
@@ -399,14 +400,13 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 		window = DefaultTakeoverAfter
 	}
 
+	_, wasLinked := s.link.state()
+
 	if err := s.applyPeer(ctx, req.Payload, window, nil); err != nil {
 		return api.SyncResponse{}, err
 	}
 
 	results := s.runCommands(ctx, req.Commands)
-
-	_, wasLinked := s.link.state()
-	s.link.ok(s.now())
 
 	if wasLinked != "" {
 		s.publishRemote()
@@ -456,6 +456,14 @@ func (s *Service) applyPeer(
 		if err != nil {
 			return err
 		}
+
+		// Recorded here, in the same step that accepts the peer, and not once the
+		// exchange has finished. Carrying out what an exchange implies can take
+		// seconds, and for all of them the scheduler would otherwise see a paired
+		// host it had not heard from: on a secondary that has been up for a day,
+		// that reads as a primary a day gone, and it would start the primary's
+		// queued missions in the middle of being told about them.
+		s.link.ok(s.now())
 
 		merge = snap.MergePeer(payload, primary, s.now())
 		answered = dropAnswered(snap, results)
@@ -628,6 +636,11 @@ func (s *Service) afterMerge(ctx context.Context, merge mission.Merge) {
 	// message meant for the agent must not be typed into it.
 	for _, id := range slices.Concat(merge.Lost, merge.Gained) {
 		s.standDown(ctx, id)
+	}
+
+	// There are only two hosts, so a mission that arrived came from the peer.
+	for _, id := range merge.Gained {
+		s.noteMoved(id, s.store.Snapshot().PeerID())
 	}
 
 	if merge.Changed() {

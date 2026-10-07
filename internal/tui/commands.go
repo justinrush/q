@@ -426,6 +426,18 @@ func (a *App) setQueued(ms mission.Mission, queued bool) tea.Cmd {
 	}
 }
 
+// takeMission asks the daemon to bring a mission to this machine.
+func (a *App) takeMission(ms mission.Mission) tea.Cmd {
+	return func() tea.Msg {
+		taken, err := a.client.TakeMission(a.ctx(), ms.ID)
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: taken.Name + ": now runs here"}
+	}
+}
+
 // reorderMission changes a mission's position within its lane.
 func (a *App) reorderMission(ms mission.Mission, order int) tea.Cmd {
 	return func() tea.Msg {
