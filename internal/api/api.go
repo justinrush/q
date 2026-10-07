@@ -250,6 +250,11 @@ type SyncRequest struct {
 	Commands []mission.Command `json:"commands,omitempty"`
 	// Refs reports the primary's worktrees. See [mission.RepoState].
 	Refs []mission.RepoState `json:"refs,omitempty"`
+	// Expect is the host the primary believes it is calling, empty on a first
+	// exchange. A secondary that is not that host refuses before recording
+	// anything, so a primary pointed at the wrong machine cannot leave it
+	// believing in a pairing the primary itself is about to reject.
+	Expect mission.HostID `json:"expect,omitempty"`
 }
 
 // SyncResponse is the secondary's half.
@@ -316,4 +321,13 @@ type AttachCommand struct {
 	Argv []string `json:"argv"`
 	// Host names the machine the agent is on, for messages.
 	Host string `json:"host"`
+}
+
+// Forgotten reports what ending a pairing did.
+type Forgotten struct {
+	// Peer is the host that was forgotten, nil if there was none.
+	Peer *mission.HostInfo `json:"peer,omitempty"`
+	// PeerTold reports that the other host was reached and ended the pairing on
+	// its side too. When false, it still believes in the pairing.
+	PeerTold bool `json:"peerTold,omitempty"`
 }

@@ -429,8 +429,11 @@ func (c *Client) RemoteSync(ctx context.Context) (RemoteStatus, error) {
 }
 
 // RemoteForget ends the pairing on this side.
-func (c *Client) RemoteForget(ctx context.Context) (RemoteStatus, error) {
-	return send[RemoteStatus](ctx, c, http.MethodDelete, "/v1/remote", nil)
+//
+// On a primary this also asks the other host to forget, which is a round trip
+// to it, so the call is given as long as an exchange.
+func (c *Client) RemoteForget(ctx context.Context) (Forgotten, error) {
+	return sendWithin[Forgotten](ctx, c, http.MethodDelete, "/v1/remote", nil, refreshTimeout)
 }
 
 // AttachCommand asks how to attach to a mission's agent on the paired host.

@@ -51,6 +51,8 @@ type Remote interface {
 	// GitURL is the remote git should use to reach a repository on the peer,
 	// or empty when there is no way to.
 	GitURL(path string) string
+	// Forget asks the peer to end the pairing on its side.
+	Forget(ctx context.Context) error
 	// Release asks the peer to stop running a mission and hand it over.
 	Release(ctx context.Context, id mission.MissionID) error
 	// AttachArgv is the command that attaches a terminal to a mission's agent
@@ -281,6 +283,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		TakeoverAfter: s.takeoverAfter,
 		Commands:      snap.Outbox,
 		Refs:          mine,
+		Expect:        snap.PeerID(),
 	})
 	if err != nil {
 		return err
@@ -388,6 +391,13 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 
 	if req.Protocol != api.SyncProtocol {
 		return api.SyncResponse{}, protocolMismatch(req.Protocol, req.Version)
+	}
+
+	if req.Expect != "" && req.Expect != s.self {
+		return api.SyncResponse{}, fmt.Errorf(
+			"%w: %s is paired with a different machine (%s) and reached this one instead; "+
+				"run `q remote forget` there before pairing it with this one",
+			ErrConflict, req.Payload.From.Name, req.Expect)
 	}
 
 	s.syncMu.Lock()
@@ -792,8 +802,29 @@ func (s *Service) RemoteStatus() api.RemoteStatus {
 // Missions the peer was running are handed to this host, because with the
 // pairing gone nobody else will ever report on them, and a card that says
 // "running elsewhere" forever is worse than one that asks to be looked at.
-func (s *Service) ForgetPeer() error {
-	var touched []mission.Mission
+//
+// A primary tells its peer first, when it can. A secondary left believing in
+// the pairing would wait out the takeover window and then start running the
+// missions of a primary that is not gone, only no longer calling. It reports
+// whether the peer was told, because when it was not, that still has to be
+// done by hand on the other machine.
+func (s *Service) ForgetPeer(ctx context.Context) (api.Forgotten, error) {
+	var (
+		touched []mission.Mission
+		result  api.Forgotten
+	)
+
+	if peer := s.store.Snapshot().Peer; peer != nil {
+		result.Peer = &peer.HostInfo
+
+		if s.remote != nil {
+			if err := s.remote.Forget(ctx); err != nil {
+				s.warn("telling the paired q to forget", "error", err)
+			} else {
+				result.PeerTold = true
+			}
+		}
+	}
 
 	err := s.store.Mutate("sync.forget", func(snap *mission.Snapshot) error {
 		if snap.Peer == nil {
@@ -820,7 +851,7 @@ func (s *Service) ForgetPeer() error {
 		return nil
 	})
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	for _, ms := range touched {
@@ -829,7 +860,7 @@ func (s *Service) ForgetPeer() error {
 
 	s.publishRemote()
 
-	return nil
+	return result, nil
 }
 
 // orphan marks a mission whose agent this host cannot account for.

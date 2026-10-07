@@ -12,6 +12,8 @@ import (
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/remote"
+	"github.com/justinrush/q/internal/runner"
 	"github.com/spf13/cobra"
 )
 
@@ -54,16 +56,30 @@ func buildRemoteSetupSubcommand() *cobra.Command {
 			"The arguments are what you would give ssh to get a shell there: a host from " +
 			"your ssh config, user@host, or options followed by a host. To reach it some " +
 			"other way, set remote.ssh in the config file to any command that does.\n\n" +
+			"The other machine is asked who it is before anything is saved. Setup refuses " +
+			"if either machine is already paired with a third, and says which `q remote " +
+			"forget` clears the way. A machine has one peer.\n\n" +
+			"q's own flags go before the destination. Everything from the destination on " +
+			"is handed to ssh.\n\n" +
 			"This rewrites the config file, keeping every setting and losing only its " +
 			"formatting.",
 		Example: "  q remote setup mini.local\n" +
-			"  q remote setup -J bastion.example.com dev-vm",
+			"  q remote setup -J bastion.example.com dev-vm\n" +
+			"  q remote setup --bin /opt/q/bin/q mini.local",
 		Args:               cobra.MinimumNArgs(1),
 		DisableFlagParsing: false,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := configPath()
+			ssh := append([]string{"ssh"}, args...)
 
-			if err := writeRemoteConfig(path, append([]string{"ssh"}, args...), bin); err != nil {
+			// Asked before anything is written. A setup that saved the address
+			// and then failed would leave this machine dialing a host it must
+			// not pair with, every few seconds, until someone noticed.
+			if err := probePairing(cmd, ssh, bin); err != nil {
+				return err
+			}
+
+			if err := writeRemoteConfig(path, ssh, bin); err != nil {
 				return err
 			}
 
@@ -91,6 +107,91 @@ func buildRemoteSetupSubcommand() *cobra.Command {
 	cmd.Flags().SetInterspersed(false)
 
 	return cmd
+}
+
+// probePairing asks the machine at the far end of ssh who it is, and refuses
+// unless pairing this machine with it would leave both with exactly one peer.
+func probePairing(cmd *cobra.Command, ssh []string, bin string) error {
+	ctx := cmd.Context()
+
+	dirs, err := paths.Resolve(pathOverrides())
+	if err != nil {
+		return err
+	}
+
+	probe := cfg
+	probe.Remote.SSH = ssh
+	probe.Remote.Bin = firstNonEmpty(bin, cfg.Remote.Bin)
+
+	link, err := remoteFor(probe, dirs, runner.OS{})
+	if err != nil {
+		return err
+	}
+
+	target, err := remote.NewPeer(*link).Status(ctx)
+	if err != nil {
+		return fmt.Errorf("could not ask the other machine who it is: %w", err)
+	}
+
+	c, err := connectDaemon(ctx)
+	if err != nil {
+		return err
+	}
+
+	local, err := c.RemoteStatus(ctx)
+	if err != nil {
+		return err
+	}
+
+	return checkPairable(local, target)
+}
+
+// checkPairable decides whether this machine may become the primary of target.
+//
+// A machine has one peer. Each refusal here is a way of ending up with two, or
+// with half of one, and each names the command that clears the way.
+func checkPairable(local, target api.RemoteStatus) error {
+	switch {
+	case target.Self.ID == local.Self.ID:
+		return fmt.Errorf("that is this machine, or a copy of its q state: both report host id %s", local.Self.ID)
+	case local.Peer != nil && local.Peer.ID != target.Self.ID:
+		return fmt.Errorf(
+			"this machine is already paired with %s; run `q remote forget` here first, then set up %s",
+			hostLabel(*local.Peer), hostLabel(target.Self))
+	case target.Role == mission.RolePrimary:
+		return fmt.Errorf(
+			"%s is itself set up to dial a peer, so it cannot be the always-on half of a pair; "+
+				"run `q remote forget` there if that is no longer wanted", hostLabel(target.Self))
+	case target.Peer != nil && target.Peer.ID != local.Self.ID:
+		return fmt.Errorf(
+			"%s is already paired with %s; run `q remote forget` on %s first",
+			hostLabel(target.Self), hostLabel(*target.Peer), target.Self.Name)
+	default:
+		return nil
+	}
+}
+
+// clearRemoteConfig removes the saved command that reaches the peer, reporting
+// whether there was one. Without this a primary that had forgotten its peer
+// would dial it again on the next tick and pair the two straight back.
+func clearRemoteConfig(path string) (bool, error) {
+	file, err := readConfigFile(path)
+	if err != nil || file.Remote == nil || len(file.Remote.SSH) == 0 {
+		return false, err
+	}
+
+	file.Remote.SSH = nil
+
+	data, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return false, fmt.Errorf("encoding %s: %w", path, err)
+	}
+
+	if err := os.WriteFile(path, append(data, '\n'), paths.FileMode); err != nil {
+		return false, fmt.Errorf("writing %s: %w", path, err)
+	}
+
+	return true, nil
 }
 
 // writeRemoteConfig records the command that reaches the peer, leaving every
@@ -135,32 +236,69 @@ func writeRemoteConfig(path string, ssh []string, bin string) error {
 	return nil
 }
 
-// restartAndSync replaces the daemon, which reads its configuration once at
-// start, and runs an exchange with the peer it now knows how to reach.
-func restartAndSync(cmd *cobra.Command) (api.RemoteStatus, error) {
+// describeForgotten says what ending a pairing did and what, if anything, is
+// still to do by hand.
+func describeForgotten(forgotten api.Forgotten, cleared bool) string {
+	rep := newReport()
+
+	if forgotten.Peer == nil {
+		rep.line("this machine was not paired")
+	} else {
+		rep.line("forgot %s", hostLabel(*forgotten.Peer))
+	}
+
+	if cleared {
+		rep.line("removed remote.ssh from the config file and restarted the daemon")
+	}
+
+	if forgotten.Peer != nil && !forgotten.PeerTold {
+		rep.line("")
+		rep.line("%s was not told. Run `q remote forget` there too, or once it has gone",
+			forgotten.Peer.Name)
+		rep.line("without hearing from this machine it will start running this machine's missions.")
+	}
+
+	return rep.String()
+}
+
+// restartDaemon replaces the daemon, which reads its configuration once at
+// start.
+func restartDaemon(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 
 	dirs, err := paths.Resolve(pathOverrides())
 	if err != nil {
-		return api.RemoteStatus{}, err
+		return err
 	}
 
 	if _, err := api.Connect(ctx, dirs); err == nil {
 		if err := api.Stop(dirs); err != nil {
-			return api.RemoteStatus{}, err
+			return err
 		}
 
 		if err := waitForStop(ctx, dirs); err != nil {
-			return api.RemoteStatus{}, err
+			return err
 		}
 	}
 
-	c, err := api.Ensure(ctx, dirs)
+	_, err = api.Ensure(ctx, dirs)
+
+	return err
+}
+
+// restartAndSync restarts the daemon and runs an exchange with the peer it now
+// knows how to reach.
+func restartAndSync(cmd *cobra.Command) (api.RemoteStatus, error) {
+	if err := restartDaemon(cmd); err != nil {
+		return api.RemoteStatus{}, err
+	}
+
+	c, err := connectDaemon(cmd.Context())
 	if err != nil {
 		return api.RemoteStatus{}, err
 	}
 
-	return c.RemoteSync(ctx)
+	return c.RemoteSync(cmd.Context())
 }
 
 func buildRemoteStatusSubcommand() *cobra.Command {
@@ -233,9 +371,11 @@ func buildRemoteForgetSubcommand() *cobra.Command {
 		Short: "End the pairing on this machine",
 		Long: "Forget the paired q. Missions it was running are handed to this machine " +
 			"and moved to debrief, since nothing will report on them again.\n\n" +
-			"This changes only this machine. Run it on both to end a pairing, and on the " +
-			"primary also remove remote.ssh from the config file, or the next exchange " +
-			"will pair the two again.",
+			"Run on the primary, this also tells the other machine to forget, and " +
+			"removes remote.ssh from the config file so the two do not pair again on " +
+			"the next exchange. If the other machine cannot be reached it says so, and " +
+			"the command has to be run there too: a machine left believing in the " +
+			"pairing will eventually start running this one's missions.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			c, err := connectDaemon(cmd.Context())
@@ -243,11 +383,24 @@ func buildRemoteForgetSubcommand() *cobra.Command {
 				return err
 			}
 
-			if _, err := c.RemoteForget(cmd.Context()); err != nil {
+			forgotten, err := c.RemoteForget(cmd.Context())
+			if err != nil {
 				return err
 			}
 
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), "forgotten")
+			cleared, err := clearRemoteConfig(configPath())
+			if err != nil {
+				return err
+			}
+
+			if cleared {
+				// The daemon read the address at start and would go on dialing it.
+				if err := restartDaemon(cmd); err != nil {
+					return err
+				}
+			}
+
+			_, err = io.WriteString(cmd.OutOrStdout(), describeForgotten(forgotten, cleared))
 
 			return err
 		},

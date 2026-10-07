@@ -232,3 +232,112 @@ func TestAttachTargetExplainsWhyThereIsNothingToAttachTo(t *testing.T) {
 		}
 	}
 }
+
+// A machine has one peer. Setup refuses each way of ending up with two, or
+// with half of one, and says which command clears the way.
+func TestCheckPairable(t *testing.T) {
+	laptop := mission.HostInfo{ID: "h_aaaaaaaaaaaa", Name: "laptop"}
+	mini := mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}
+	vm := mission.HostInfo{ID: "h_cccccccccccc", Name: "vm"}
+
+	cases := []struct {
+		name   string
+		local  api.RemoteStatus
+		target api.RemoteStatus
+		want   string
+	}{
+		{"a first pairing", api.RemoteStatus{Self: laptop}, api.RemoteStatus{Self: mini}, ""},
+		{
+			"setting up the same pair again",
+			api.RemoteStatus{Self: laptop, Role: mission.RolePrimary, Peer: &mini},
+			api.RemoteStatus{Self: mini, Role: mission.RoleSecondary, Peer: &laptop},
+			"",
+		},
+		{
+			"this machine already has a different peer",
+			api.RemoteStatus{Self: laptop, Role: mission.RolePrimary, Peer: &mini},
+			api.RemoteStatus{Self: vm},
+			"already paired with mini",
+		},
+		{
+			"the target already has a different primary",
+			api.RemoteStatus{Self: laptop},
+			api.RemoteStatus{Self: mini, Role: mission.RoleSecondary, Peer: &vm},
+			"mini (h_bbbbbbbbbbbb) is already paired with vm",
+		},
+		{
+			"the target is itself a primary",
+			api.RemoteStatus{Self: laptop},
+			api.RemoteStatus{Self: mini, Role: mission.RolePrimary},
+			"cannot be the always-on half",
+		},
+		{"the target is this machine", api.RemoteStatus{Self: laptop}, api.RemoteStatus{Self: laptop}, "this machine"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkPairable(tc.local, tc.target)
+
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("refused: %v", err)
+			case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+				t.Errorf("err = %v, want a refusal mentioning %q", err, tc.want)
+			case tc.want != "" && !strings.Contains(err.Error(), "q remote forget") && !strings.Contains(err.Error(), "this machine"):
+				t.Errorf("the refusal does not say how to clear the way: %v", err)
+			}
+		})
+	}
+}
+
+// Forgetting on a primary has to take the address out of the config, or the
+// daemon dials it again and the pair re-forms within seconds.
+func TestClearRemoteConfigRemovesOnlyTheAddress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+
+	original := `{"queue":{"maxConcurrent":3},"remote":{"ssh":["ssh","mini.local"],"name":"laptop","takeoverAfter":"10m"}}`
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cleared, err := clearRemoteConfig(path)
+	if err != nil || !cleared {
+		t.Fatalf("cleared=%v err=%v", cleared, err)
+	}
+
+	file, err := readConfigFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(file.Remote.SSH) != 0 || file.Remote.Name != "laptop" || file.Remote.TakeoverAfter != "10m" || file.Queue.MaxConcurrent != 3 {
+		t.Errorf("file = %+v remote %+v, want only remote.ssh gone", file, file.Remote)
+	}
+
+	// Nothing to clear is not an error and writes nothing.
+	if again, err := clearRemoteConfig(path); again || err != nil {
+		t.Errorf("second clear: cleared=%v err=%v", again, err)
+	}
+
+	if missing, err := clearRemoteConfig(filepath.Join(t.TempDir(), "absent.json")); missing || err != nil {
+		t.Errorf("missing file: cleared=%v err=%v", missing, err)
+	}
+}
+
+func TestDescribeForgottenSaysWhatIsLeftToDo(t *testing.T) {
+	mini := mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}
+
+	told := describeForgotten(api.Forgotten{Peer: &mini, PeerTold: true}, true)
+	if !strings.Contains(told, "forgot mini") || !strings.Contains(told, "removed remote.ssh") || strings.Contains(told, "was not told") {
+		t.Errorf("told:\n%s", told)
+	}
+
+	untold := describeForgotten(api.Forgotten{Peer: &mini}, false)
+	if !strings.Contains(untold, "mini was not told") || !strings.Contains(untold, "q remote forget") {
+		t.Errorf("untold must say what to run on the other machine:\n%s", untold)
+	}
+
+	if none := describeForgotten(api.Forgotten{}, false); !strings.Contains(none, "was not paired") {
+		t.Errorf("unpaired:\n%s", none)
+	}
+}

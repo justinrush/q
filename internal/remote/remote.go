@@ -273,6 +273,19 @@ func (p *Peer) GitURL(path string) string {
 	return carrier.GitURL(path)
 }
 
+// Forget asks the peer to end the pairing on its side.
+func (p *Peer) Forget(ctx context.Context) error {
+	_, err := call[api.Forgotten](ctx, p, http.MethodDelete, "/v1/remote", nil)
+
+	return err
+}
+
+// Status asks the peer who it is and whom it is paired with, without pairing
+// with it.
+func (p *Peer) Status(ctx context.Context) (api.RemoteStatus, error) {
+	return call[api.RemoteStatus](ctx, p, http.MethodGet, "/v1/remote", nil)
+}
+
 // Release asks the peer to stop running a mission and hand it over.
 func (p *Peer) Release(ctx context.Context, id mission.MissionID) error {
 	_, err := call[mission.Mission](ctx, p, http.MethodPost, "/v1/missions/"+string(id)+"/release", struct{}{})
@@ -298,9 +311,13 @@ func (p *Peer) AttachArgv(id mission.MissionID) []string {
 func call[T any](ctx context.Context, p *Peer, method, path string, body any) (T, error) {
 	var zero T
 
-	encoded, err := json.Marshal(body)
-	if err != nil {
-		return zero, fmt.Errorf("encoding %s %s: %w", method, path, err)
+	var encoded []byte
+
+	if body != nil {
+		var err error
+		if encoded, err = json.Marshal(body); err != nil {
+			return zero, fmt.Errorf("encoding %s %s: %w", method, path, err)
+		}
 	}
 
 	resp, err := p.transport.Call(ctx, Request{Method: method, Path: path, Body: encoded})

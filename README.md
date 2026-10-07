@@ -178,6 +178,19 @@ daemon should run as a service so it survives a reboot, because q will not
 start one over ssh. A daemon started that way would hand the bare environment
 of a non-interactive session to every agent it launched.
 
+A machine has one peer. `setup` asks the other machine who it is before saving
+anything, and refuses if either one is already paired with a third. To pair the
+laptop with a different machine:
+
+```sh
+q remote forget          # tells the old one too, and removes the saved address
+q remote setup vm.work
+```
+
+If the old machine cannot be reached when you forget it, the command says so.
+Run `q remote forget` there as well: a machine left believing in the pairing
+waits out `remote.takeoverAfter` and then starts running the laptop's missions.
+
 ### What each machine does
 
 The laptop is the **primary** and the always-on machine the **secondary**. The

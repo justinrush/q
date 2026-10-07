@@ -101,6 +101,16 @@ func (w *wire) Release(ctx context.Context, id mission.MissionID) error {
 	return nil
 }
 
+func (w *wire) Forget(ctx context.Context) error {
+	if w.down {
+		return fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
+	}
+
+	_, err := w.peer.ForgetPeer(ctx)
+
+	return err
+}
+
 func (w *wire) AttachArgv(id mission.MissionID) []string {
 	return []string{"/usr/bin/ssh", "-t", "mini", "q", "attach", string(id)}
 }
@@ -428,8 +438,16 @@ func TestForgettingThePeerTakesOverItsMissions(t *testing.T) {
 	primary, secondary, _ := pairedServices(t)
 	ms := runOnSecondary(t, primary, secondary)
 
-	if err := primary.ForgetPeer(); err != nil {
+	forgotten, err := primary.ForgetPeer(t.Context())
+	if err != nil {
 		t.Fatalf("ForgetPeer: %v", err)
+	}
+
+	// The other side is told, or it would wait out the takeover window and
+	// start running the missions of a primary that has only stopped calling.
+	if !forgotten.PeerTold || secondary.RemoteStatus().Peer != nil {
+		t.Errorf("peerTold=%v and the secondary still records %+v; want it to have forgotten too",
+			forgotten.PeerTold, secondary.RemoteStatus().Peer)
 	}
 
 	got, _ := primary.Snapshot().Mission(ms.ID)
@@ -556,4 +574,54 @@ func (stubDebriefer) Open(_ context.Context, ms mission.Mission, _ api.Mode) (ap
 
 func (stubDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
 	return nil, nil
+}
+
+// With the other machine unreachable, forgetting still works here, and says
+// plainly that the other side has not been told.
+func TestForgettingAnUnreachablePeerSaysItWasNotTold(t *testing.T) {
+	primary, secondary, link := pairedServices(t)
+	exchange(t, primary)
+
+	link.down = true
+
+	forgotten, err := primary.ForgetPeer(t.Context())
+	if err != nil {
+		t.Fatalf("ForgetPeer: %v", err)
+	}
+
+	if forgotten.PeerTold || forgotten.Peer == nil || forgotten.Peer.Name != "mini" {
+		t.Errorf("forgotten = %+v, want it to name mini and say it was not told", forgotten)
+	}
+
+	if primary.RemoteStatus().Peer != nil || secondary.RemoteStatus().Peer == nil {
+		t.Error("want the pairing gone here and, unavoidably, still recorded there")
+	}
+}
+
+// A laptop that remembers one machine and is pointed at another must not leave
+// the second believing it has been paired. The laptop is about to refuse, and
+// a machine holding half a pairing would start taking over missions.
+func TestAPrimaryPairedElsewhereLeavesNoTraceOnTheWrongMachine(t *testing.T) {
+	primary, _, _ := pairedServices(t)
+	briefOn(t, primary, "the laptop's mission")
+	exchange(t, primary)
+
+	other := newTestService(t)
+	other.apply(WithHostName("vm"))
+	other.adoptHostName()
+
+	primary.apply(WithRemote(&wire{peer: other}))
+
+	err := primary.SyncNow(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "paired with a different machine") {
+		t.Fatalf("err = %v, want the wrong machine to refuse", err)
+	}
+
+	if status := other.RemoteStatus(); status.Peer != nil || status.Role != mission.RoleStandalone {
+		t.Errorf("the wrong machine recorded a pairing: %+v", status)
+	}
+
+	if n := len(other.Snapshot().Missions); n != 0 {
+		t.Errorf("the wrong machine took %d of the laptop's missions", n)
+	}
 }

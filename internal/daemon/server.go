@@ -724,14 +724,15 @@ func (s *Server) handleRemoteSync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.svc.RemoteStatus())
 }
 
-func (s *Server) handleRemoteForget(w http.ResponseWriter, _ *http.Request) {
-	if err := s.svc.ForgetPeer(); err != nil {
+func (s *Server) handleRemoteForget(w http.ResponseWriter, r *http.Request) {
+	forgotten, err := s.svc.ForgetPeer(r.Context())
+	if err != nil {
 		writeServiceError(w, err)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, s.svc.RemoteStatus())
+	writeJSON(w, http.StatusOK, forgotten)
 }
 
 // decode reads a JSON body, writing a 400 and returning false on failure.

@@ -192,6 +192,14 @@ and the same repositories cloned under `repos.roots`:
 - [ ] `lsof -iTCP -sTCP:LISTEN -P | grep q` on either machine shows the daemon
       listening on `127.0.0.1` only.
 
+- [ ] With the pair up, `q remote setup <a third host>` on the laptop refuses,
+      names the machine it is already paired with, and leaves the config file
+      unchanged. `q remote status` on the third host still says unpaired.
+- [ ] `q remote forget` on the laptop reports the other machine by name,
+      removes `remote.ssh` from the config file, and `q remote status` on both
+      machines says unpaired. Repeat with the other machine's daemon stopped:
+      the command says it was not told.
+
 **Mirroring**
 
 - [ ] Launch a mission on the laptop. Within an interval its card appears on
