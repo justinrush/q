@@ -65,6 +65,34 @@ func (w *wire) SetStatus(
 	return ms, nil
 }
 
+func (w *wire) Settle(ctx context.Context, req api.SettleRequest) (api.SettleResponse, error) {
+	if w.down {
+		return api.SettleResponse{}, fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
+	}
+
+	var sent api.SettleRequest
+	if err := roundTrip(req, &sent); err != nil {
+		return api.SettleResponse{}, err
+	}
+
+	resp, err := w.peer.SettleWorktrees(ctx, sent)
+	if err != nil {
+		return api.SettleResponse{}, asStatus(err)
+	}
+
+	var received api.SettleResponse
+
+	return received, roundTrip(resp, &received)
+}
+
+// GitURL addresses the peer's repository by its path. Both services are on one
+// machine, and a path is a remote git already understands.
+func (w *wire) GitURL(path string) string { return path }
+
+func (w *wire) AttachArgv(id mission.MissionID) []string {
+	return []string{"/usr/bin/ssh", "-t", "mini", "q", "attach", string(id)}
+}
+
 // roundTrip copies a value through JSON.
 func roundTrip(from, to any) error {
 	data, err := json.Marshal(from)
@@ -407,6 +435,7 @@ func TestForgettingThePeerTakesOverItsMissions(t *testing.T) {
 type recordingMessenger struct {
 	relaunched []string
 	stopped    []mission.MissionID
+	viewed     []mission.MissionID
 }
 
 func (m *recordingMessenger) SendMessage(context.Context, mission.Mission, string) error { return nil }
@@ -427,4 +456,92 @@ func (m *recordingMessenger) Stop(_ context.Context, ms mission.Mission) error {
 	m.stopped = append(m.stopped, ms.ID)
 
 	return nil
+}
+
+func (m *recordingMessenger) View(
+	_ context.Context,
+	_ mission.Operation,
+	ms mission.Mission,
+) (mission.Mission, error) {
+	m.viewed = append(m.viewed, ms.ID)
+	ms.TmuxSession, ms.AgentPaneID = "q-viewer", "%9"
+
+	return ms, nil
+}
+
+// Opening a mission the peer runs must show the peer's agent, not start one
+// here, and must refuse rather than open something half-built.
+func TestOpeningAMissionThePeerRunsStartsAViewer(t *testing.T) {
+	primary, secondary, _ := pairedServices(t)
+	ms := runOnSecondary(t, primary, secondary)
+
+	messenger := &recordingMessenger{}
+	primary.apply(WithMessenger(messenger), WithDebriefer(stubDebriefer{}))
+
+	// Not mirrored yet: there is no code here to open editors on.
+	if _, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare); !errors.Is(err, ErrConflict) {
+		t.Fatalf("opening before the mirror exists: err = %v, want a refusal", err)
+	}
+
+	primary.updateLocal(ms.ID, "test.mirrored", func(stored *mission.Mission) { stored.MissionDir = "/mirror" })
+
+	result, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare)
+	if err != nil {
+		t.Fatalf("OpenDebrief: %v", err)
+	}
+
+	if !slices.Equal(messenger.viewed, []mission.MissionID{ms.ID}) {
+		t.Fatalf("viewers started for %v, want one for the mission", messenger.viewed)
+	}
+
+	// What the viewer runs is asked for when it runs, so it is still right
+	// after the mission has moved.
+	command, err := primary.AttachCommand(ms.ID)
+	if err != nil || !slices.Contains(command.Argv, "attach") || command.Host != "mini" {
+		t.Errorf("attach command = %+v, err %v; want one that attaches to the agent on mini", command, err)
+	}
+
+	if _, err := secondary.AttachCommand(ms.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("asking the host that runs it: err = %v, want a refusal", err)
+	}
+
+	if result.Session != "q-viewer" {
+		t.Errorf("opened session %q, want the viewer", result.Session)
+	}
+
+	stored, _ := primary.Snapshot().Mission(ms.ID)
+	if stored.TmuxSession != "q-viewer" || stored.Lease.Holder != secondary.self {
+		t.Errorf("session %q holder %s, want the viewer recorded and the lease untouched",
+			stored.TmuxSession, stored.Lease.Holder)
+	}
+}
+
+// The secondary has no way to reach the primary, so it cannot show its agent.
+func TestTheSecondaryCannotOpenAMissionThePrimaryRuns(t *testing.T) {
+	primary, secondary, _ := pairedServices(t)
+
+	ms := briefOn(t, primary, "on the laptop")
+	if _, err := primary.Start(t.Context(), ms.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	exchange(t, primary)
+
+	secondary.apply(WithMessenger(&recordingMessenger{}), WithDebriefer(stubDebriefer{}))
+
+	_, err := secondary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare)
+	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "laptop") {
+		t.Errorf("err = %v, want a refusal naming where it runs", err)
+	}
+}
+
+// stubDebriefer opens nothing and reports the session it was asked to open.
+type stubDebriefer struct{}
+
+func (stubDebriefer) Open(_ context.Context, ms mission.Mission, _ api.Mode) (api.Result, mission.Mission, error) {
+	return api.Result{Session: ms.TmuxSession}, ms, nil
+}
+
+func (stubDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
+	return nil, nil
 }

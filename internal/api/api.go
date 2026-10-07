@@ -248,6 +248,8 @@ type SyncRequest struct {
 	// Commands are requests for missions the secondary runs that could not be
 	// delivered when they were made.
 	Commands []mission.Command `json:"commands,omitempty"`
+	// Refs reports the primary's worktrees. See [mission.RepoState].
+	Refs []mission.RepoState `json:"refs,omitempty"`
 }
 
 // SyncResponse is the secondary's half.
@@ -258,6 +260,8 @@ type SyncResponse struct {
 	// Results answers each command by id. A command with no result was not
 	// attempted and is retried on the next exchange.
 	Results []CommandResult `json:"results,omitempty"`
+	// Refs reports the secondary's worktrees.
+	Refs []mission.RepoState `json:"refs,omitempty"`
 }
 
 // CommandResult is what became of one queued command.
@@ -285,3 +289,31 @@ type RemoteStatus struct {
 
 // Linked reports whether an exchange has completed and the latest one worked.
 func (r RemoteStatus) Linked() bool { return !r.LastSyncAt.IsZero() && r.Error == "" }
+
+// SettleRequest tells a secondary that the snapshots named in an exchange have
+// been transferred, and carries the primary's report to settle against.
+//
+// It is a second request rather than part of the exchange because of ordering.
+// The exchange tells each host what the other has; only then can the primary
+// move the snapshots; and only after that can the secondary lay one out.
+type SettleRequest struct {
+	Refs []mission.RepoState `json:"refs,omitempty"`
+}
+
+// SettleResponse reports the secondary's worktrees as they stand once it has
+// settled, which is what the primary then settles its own against. Without it
+// the primary would judge by a report taken before the secondary acted, and
+// spend one more exchange believing an edit it had just delivered was still
+// waiting.
+type SettleResponse struct {
+	Refs []mission.RepoState `json:"refs,omitempty"`
+}
+
+// AttachCommand is how to attach a terminal to a mission's agent on the paired
+// host.
+type AttachCommand struct {
+	// Argv is the command to run, with this terminal as its own.
+	Argv []string `json:"argv"`
+	// Host names the machine the agent is on, for messages.
+	Host string `json:"host"`
+}

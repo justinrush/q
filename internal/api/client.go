@@ -432,3 +432,8 @@ func (c *Client) RemoteSync(ctx context.Context) (RemoteStatus, error) {
 func (c *Client) RemoteForget(ctx context.Context) (RemoteStatus, error) {
 	return send[RemoteStatus](ctx, c, http.MethodDelete, "/v1/remote", nil)
 }
+
+// AttachCommand asks how to attach to a mission's agent on the paired host.
+func (c *Client) AttachCommand(ctx context.Context, id mission.MissionID) (AttachCommand, error) {
+	return get[AttachCommand](ctx, c, "/v1/missions/"+string(id)+"/attach")
+}

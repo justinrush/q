@@ -223,9 +223,10 @@ func (s *Service) clearLocal(id mission.MissionID) {
 	})
 }
 
-// standDown stops this host's agent for a mission the peer now runs.
+// standDown stops whatever session this host has for a mission whose lease just
+// moved.
 //
-// This is the other half of a takeover. The peer took the mission because this
+// For a mission that moved away, this is the other half of a takeover. The peer took the mission because this
 // host went quiet, but a sleeping laptop is frozen rather than dead: its agent
 // wakes with it and carries on. Leaving it would put two agents on one
 // mission. Its hooks are already ignored; this stops the process.

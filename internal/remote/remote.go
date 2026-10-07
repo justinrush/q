@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
@@ -110,6 +111,29 @@ func (c Command) shellArgv() []string {
 	out := append([]string{c.Argv[0]}, c.sshOptions()...)
 
 	return append(out, c.Argv[1:]...)
+}
+
+// AttachArgv returns the command that attaches this terminal to a mission's
+// agent on the peer.
+//
+// The far end is `q attach` rather than tmux itself. The peer's q knows which
+// session the mission is in and where its tmux lives, neither of which this
+// side can know: a non-interactive ssh session has no PATH to find tmux on.
+//
+// ssh is told to allocate a terminal, since the agent's session is a
+// full-screen program. A command that is not ssh is trusted to do so itself.
+func (c Command) AttachArgv(id mission.MissionID) []string {
+	if len(c.Argv) == 0 {
+		return nil
+	}
+
+	argv := c.Argv
+	if filepath.Base(c.Argv[0]) == "ssh" {
+		argv = append(append([]string{c.Argv[0]}, c.sshOptions()...), "-t")
+		argv = append(argv, c.Argv[1:]...)
+	}
+
+	return append(slices.Clone(argv), c.bin(), "attach", string(id))
 }
 
 // bin returns the peer's q binary.
@@ -231,6 +255,35 @@ func (p *Peer) SetStatus(
 	req api.SetStatusRequest,
 ) (mission.Mission, error) {
 	return call[mission.Mission](ctx, p, http.MethodPost, "/v1/missions/"+string(id)+"/status", req)
+}
+
+// Settle tells the peer its snapshots have arrived.
+func (p *Peer) Settle(ctx context.Context, req api.SettleRequest) (api.SettleResponse, error) {
+	return call[api.SettleResponse](ctx, p, http.MethodPost, "/v1/sync/settle", req)
+}
+
+// GitURL returns the remote git should use for a repository on the peer, or
+// empty when the transport cannot carry git.
+func (p *Peer) GitURL(path string) string {
+	carrier, ok := p.transport.(interface{ GitURL(path string) string })
+	if !ok || path == "" {
+		return ""
+	}
+
+	return carrier.GitURL(path)
+}
+
+// AttachArgv returns the command that attaches a terminal to a mission's agent
+// on the peer, or nil when the transport cannot carry one.
+func (p *Peer) AttachArgv(id mission.MissionID) []string {
+	carrier, ok := p.transport.(interface {
+		AttachArgv(id mission.MissionID) []string
+	})
+	if !ok {
+		return nil
+	}
+
+	return carrier.AttachArgv(id)
 }
 
 // call sends one request and decodes the answer, turning a refusal from the

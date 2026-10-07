@@ -72,6 +72,53 @@ func (l *Launcher) Stop(ctx context.Context, ms mission.Mission) error {
 	return l.tmux.KillSession(ctx, ms.TmuxSession)
 }
 
+// View starts a session for a mission whose agent runs on another host.
+//
+// The session is laid out like any other mission's, with the agent's window
+// where it always is, so everything that arranges a debrief works on it
+// unchanged. The difference is what runs in that window: not an agent, but
+// `q view`, which attaches to the one running elsewhere. The editors beside it
+// open on this host's own mirror of the worktrees, which is the point — the
+// conversation is remote and the code is local.
+//
+// The pane runs q rather than ssh directly so that it outlives the
+// connection. A laptop sleeps, the connection drops, and a pane that simply
+// exited would take the session and its editors with it.
+func (l *Launcher) View(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Mission, error) {
+	if ms.MissionDir == "" {
+		return ms, fmt.Errorf("mission %s has no worktrees on this machine yet", ms.ID)
+	}
+
+	self, err := l.selfPath()
+	if err != nil {
+		return ms, err
+	}
+
+	ms.TmuxSession = mission.TmuxSessionName(operation.Slug, ms.Slug, ms.ID)
+
+	if l.tmux.HasSession(ctx, ms.TmuxSession) {
+		if err := l.tmux.KillSession(ctx, ms.TmuxSession); err != nil {
+			return ms, err
+		}
+	}
+
+	paneID, err := l.tmux.NewSession(ctx, terminal.NewSessionOptions{
+		Name:    ms.TmuxSession,
+		Window:  agentWindow,
+		Dir:     ms.MissionDir,
+		Command: []string{self, "view", string(ms.ID)},
+	})
+	if err != nil {
+		return ms, err
+	}
+
+	ms.AgentPaneID = paneID
+
+	l.applySessionOptions(ctx, &ms)
+
+	return ms, nil
+}
+
 // writeRelaunchArtifacts regenerates the prompt and script for a resumed session.
 //
 // The prompt is rewritten because a resumed agent is given the follow-up message

@@ -85,28 +85,17 @@ func assembleService(
 		return nil, nil, err
 	}
 
-	opts = append(opts,
-		daemon.WithBrancher(gitc),
-		daemon.WithLocator(git.NewLocator(gitc, git.ScanOptions{
-			Roots:    s.Repos.Roots,
-			MaxDepth: s.Repos.MaxDepth,
-			Skip:     s.Repos.Skip,
-		})),
-	)
-
-	link, err := remoteFor(s, dirs, run)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if link != nil {
-		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
-	}
-
 	workspace := git.NewProvisioner(dirs, gitc, tmux,
 		git.WithLogger(logger),
 		git.WithBranchPrefix(s.Git.BranchPrefix),
 	)
+
+	pairing, err := pairingOptions(s, dirs, run, gitc, workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	opts = append(append(opts, daemon.WithBrancher(gitc)), pairing...)
 
 	launchOpts := []launch.Option{launch.WithLogger(logger)}
 	for _, agent := range agentsFor(s) {
@@ -141,6 +130,39 @@ func assembleService(
 	)
 
 	return daemon.NewService(store, hub, dirs, opts...), stop, nil
+}
+
+// pairingOptions wires what sharing missions with another machine needs.
+//
+// All of it is harmless on a q that is never paired. Locating repositories and
+// snapshotting worktrees are only ever asked for by an exchange, and an
+// exchange only happens when one side has been told how to reach the other.
+func pairingOptions(
+	s settings,
+	dirs paths.Dirs,
+	run runner.Runner,
+	gitc *git.Client,
+	workspace *git.Provisioner,
+) ([]daemon.Option, error) {
+	opts := []daemon.Option{
+		daemon.WithLocator(git.NewLocator(gitc, git.ScanOptions{
+			Roots:    s.Repos.Roots,
+			MaxDepth: s.Repos.MaxDepth,
+			Skip:     s.Repos.Skip,
+		})),
+		daemon.WithWorktrees(git.NewMirrors(gitc, workspace)),
+	}
+
+	link, err := remoteFor(s, dirs, run)
+	if err != nil {
+		return nil, err
+	}
+
+	if link != nil {
+		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
+	}
+
+	return opts, nil
 }
 
 // remoteFor builds the connection to the paired q, or nil when this machine

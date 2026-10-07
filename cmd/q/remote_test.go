@@ -205,3 +205,30 @@ func TestCompactJSONStaysOnOneLine(t *testing.T) {
 		t.Error("an empty or non-JSON body should become no body")
 	}
 }
+
+// What `q attach` prints is all a person sees in the pane on the other
+// machine, so each way of having nothing to attach to has to say which it is.
+func TestAttachTargetExplainsWhyThereIsNothingToAttachTo(t *testing.T) {
+	self := mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}
+	peer := &mission.Peer{HostInfo: mission.HostInfo{ID: "h_aaaaaaaaaaaa", Name: "laptop"}}
+
+	snap := mission.Snapshot{Self: self, Peer: peer}
+	snap.PutMission(mission.Mission{ID: "ms_running", Name: "running", TmuxSession: "q-run", Lease: mission.Lease{Holder: self.ID}})
+	snap.PutMission(mission.Mission{ID: "ms_moved", Name: "moved", TmuxSession: "", Lease: mission.Lease{Holder: peer.ID}})
+	snap.PutMission(mission.Mission{ID: "ms_idle", Name: "idle", Lease: mission.Lease{Holder: self.ID}})
+
+	if session, err := attachTarget(snap, "ms_running"); err != nil || session != "q-run" {
+		t.Errorf("running: session %q err %v", session, err)
+	}
+
+	for id, want := range map[mission.MissionID]string{
+		"ms_missing": "no mission",
+		"ms_moved":   "moved to laptop",
+		"ms_idle":    "no agent session",
+	} {
+		_, err := attachTarget(snap, id)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want it to mention %q", id, err, want)
+		}
+	}
+}

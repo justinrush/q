@@ -181,6 +181,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/missions/{id}/open", s.handleOpenDebrief)
 	mux.HandleFunc("POST /v1/missions/{id}/message", s.handleMessage)
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
+	mux.HandleFunc("GET /v1/missions/{id}/attach", s.handleAttachCommand)
 	mux.HandleFunc("GET /v1/missions/{id}/delete-plan", s.handleDeletePlan)
 
 	mux.HandleFunc("GET /v1/branches", s.handleBranches)
@@ -191,6 +192,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/hooks/{tool}/{event}", s.handleHook)
 
 	mux.HandleFunc("POST "+syncPath, s.handleSync)
+	mux.HandleFunc("POST /v1/sync/settle", s.handleSettle)
 	mux.HandleFunc("GET /v1/remote", s.handleRemoteStatus)
 	mux.HandleFunc("POST /v1/remote/sync", s.handleRemoteSync)
 	mux.HandleFunc("DELETE /v1/remote", s.handleRemoteForget)
@@ -236,6 +238,17 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ms)
+}
+
+func (s *Server) handleAttachCommand(w http.ResponseWriter, r *http.Request) {
+	command, err := s.svc.AttachCommand(mission.MissionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, command)
 }
 
 func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
@@ -309,7 +322,7 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 
 		limit := int64(maxBodyBytes)
-		if r.URL.Path == syncPath {
+		if strings.HasPrefix(r.URL.Path, syncPath) {
 			limit = maxSyncBytes
 		}
 
@@ -642,6 +655,23 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := s.svc.SyncExchange(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleSettle lets a secondary lay out the snapshots its primary just sent.
+func (s *Server) handleSettle(w http.ResponseWriter, r *http.Request) {
+	var req api.SettleRequest
+	if !decode(w, r, &req) {
+		return
+	}
+
+	resp, err := s.svc.SettleWorktrees(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, err)
 

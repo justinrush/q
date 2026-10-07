@@ -24,6 +24,9 @@ type Messenger interface {
 	Relaunch(ctx context.Context, operation mission.Operation, ms mission.Mission, message string) (mission.Mission, error)
 	// Stop ends a mission's agent session without touching its worktrees.
 	Stop(ctx context.Context, ms mission.Mission) error
+	// View starts a session on this host that shows an agent running on
+	// another, by running the given command where the agent would be.
+	View(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Mission, error)
 }
 
 // WithMessenger attaches the component that talks to a live agent session.
@@ -196,6 +199,12 @@ func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode ap
 		return api.Result{}, err
 	}
 
+	if ms.Running() && !s.holds(ms) {
+		if ms, err = s.ensureViewer(ctx, ms); err != nil {
+			return api.Result{}, err
+		}
+	}
+
 	result, updated, err := s.debriefer.Open(ctx, ms, mode)
 
 	if result.PanesAdded > 0 {
@@ -209,6 +218,84 @@ func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode ap
 	}
 
 	return result, nil
+}
+
+// ensureViewer makes sure this host has a session to open for a mission the
+// paired q is running, starting one if it does not.
+//
+// A debrief is a tmux session with the agent in one pane and editors beside
+// it. This host has the code, mirrored, but not the agent. So the session it
+// opens runs, where the agent would be, the command that attaches to the
+// agent on the other machine.
+func (s *Service) ensureViewer(ctx context.Context, ms mission.Mission) (mission.Mission, error) {
+	snap := s.store.Snapshot()
+	host := snap.HostName(ms.Lease.Holder)
+
+	if s.remote == nil || s.messenger == nil {
+		return ms, fmt.Errorf("%w: %s is running on %s; open it from there", ErrConflict, ms.Name, host)
+	}
+
+	if ms.MissionDir == "" {
+		return ms, fmt.Errorf(
+			"%w: %s is running on %s and has not been mirrored here yet; try again in a moment",
+			ErrConflict, ms.Name, host)
+	}
+
+	if s.sessionAlive(ctx, ms) {
+		return ms, nil
+	}
+
+	operation, _ := snap.Operation(ms.OperationID)
+
+	if len(s.remote.AttachArgv(ms.ID)) == 0 {
+		return ms, fmt.Errorf("%w: there is no way to attach to an agent on %s", ErrConflict, host)
+	}
+
+	viewing, err := s.messenger.View(ctx, operation, ms)
+	if err != nil {
+		return ms, err
+	}
+
+	s.updateLocal(ms.ID, "mission.viewer", func(stored *mission.Mission) {
+		stored.TmuxSession = viewing.TmuxSession
+		stored.AgentPaneID = viewing.AgentPaneID
+	})
+
+	return viewing, nil
+}
+
+// AttachCommand returns the command that attaches a terminal to a mission's
+// agent on the paired host.
+//
+// It is asked for each time rather than baked into the viewer session, because
+// the answer changes: the mission may have come back to this host, or been
+// closed, since the session was opened.
+func (s *Service) AttachCommand(id mission.MissionID) (api.AttachCommand, error) {
+	snap := s.store.Snapshot()
+
+	ms, ok := snap.Mission(id)
+	if !ok {
+		return api.AttachCommand{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+	}
+
+	host := snap.HostName(ms.Lease.Holder)
+
+	switch {
+	case !ms.Running():
+		return api.AttachCommand{}, fmt.Errorf("%w: %s is not running anywhere", ErrConflict, ms.Name)
+	case s.holds(ms):
+		return api.AttachCommand{}, fmt.Errorf(
+			"%w: %s now runs on this machine; close this and open the mission again", ErrConflict, ms.Name)
+	case s.remote == nil:
+		return api.AttachCommand{}, fmt.Errorf("%w: %s is running on %s; open it from there", ErrConflict, ms.Name, host)
+	}
+
+	argv := s.remote.AttachArgv(id)
+	if len(argv) == 0 {
+		return api.AttachCommand{}, fmt.Errorf("%w: there is no way to attach to an agent on %s", ErrConflict, host)
+	}
+
+	return api.AttachCommand{Argv: argv, Host: host}, nil
 }
 
 // Resume continues a mission's agent, reviving the session first if it has died.

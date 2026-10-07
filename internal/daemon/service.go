@@ -87,6 +87,14 @@ type Service struct {
 	hostName string
 	version  string
 
+	// worktrees snapshots and mirrors mission worktrees; nil without git.
+	worktrees Worktrees
+	transfers transferLog
+	// captured is this host's report from the exchange in progress. A secondary
+	// takes it when the exchange arrives and settles against it a moment later,
+	// when the primary says the snapshots have landed.
+	captured []mission.RepoState
+
 	// self is this installation's host id, fixed for the life of the store. It
 	// is what every "do I run this mission" question is answered against.
 	self mission.HostID

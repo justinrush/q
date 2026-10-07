@@ -184,3 +184,22 @@ func TestPeerPassesUnreachableThrough(t *testing.T) {
 		t.Errorf("err = %v, want ErrUnreachable", err)
 	}
 }
+
+// The far end is q, not tmux: a non-interactive ssh session has no PATH to
+// find tmux on, and only the peer's q knows which session the mission is in.
+func TestAttachArgvAsksForATerminalAndRunsQOnThePeer(t *testing.T) {
+	cmd := Command{Argv: []string{sshBin, "mini.local"}, ControlDir: "/state"}
+
+	got := strings.Join(cmd.AttachArgv("ms_aabbccddeeff"), " ")
+	want := sshBin + " -o BatchMode=yes -o ConnectTimeout=5" +
+		" -o ControlMaster=auto -o ControlPath=/state/ssh-%C -o ControlPersist=10m" +
+		" -t mini.local ~/.local/bin/q attach ms_aabbccddeeff"
+
+	if got != want {
+		t.Errorf("AttachArgv:\n got %s\nwant %s", got, want)
+	}
+
+	if (Command{}).AttachArgv("ms_aabbccddeeff") != nil {
+		t.Error("an unconfigured command produced something to run")
+	}
+}

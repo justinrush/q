@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +45,15 @@ const (
 type Remote interface {
 	Sync(ctx context.Context, req api.SyncRequest) (api.SyncResponse, error)
 	SetStatus(ctx context.Context, id mission.MissionID, req api.SetStatusRequest) (mission.Mission, error)
+	// Settle tells the peer the snapshots it was sent have arrived, so it can
+	// bring its worktrees into line with them.
+	Settle(ctx context.Context, req api.SettleRequest) (api.SettleResponse, error)
+	// GitURL is the remote git should use to reach a repository on the peer,
+	// or empty when there is no way to.
+	GitURL(path string) string
+	// AttachArgv is the command that attaches a terminal to a mission's agent
+	// on the peer, or nil when there is no way to.
+	AttachArgv(id mission.MissionID) []string
 }
 
 // RepoLocator maps a repository between its origin and this machine's checkout
@@ -259,6 +269,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 
 	s.fillRepoURLs(ctx)
 
+	mine := s.captureWorktrees(ctx)
 	snap := s.store.Snapshot()
 
 	resp, err := s.remote.Sync(ctx, api.SyncRequest{
@@ -267,6 +278,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		Payload:       snap.Payload(),
 		TakeoverAfter: s.takeoverAfter,
 		Commands:      snap.Outbox,
+		Refs:          mine,
 	})
 	if err != nil {
 		return err
@@ -283,12 +295,83 @@ func (s *Service) SyncNow(ctx context.Context) error {
 	}
 
 	s.link.ok(s.now())
+	s.shareWorktrees(ctx, mine, resp.Refs)
 
 	if wasLinked != "" || snap.Peer == nil {
 		s.publishRemote()
 	}
 
 	return nil
+}
+
+// shareWorktrees is the code half of an exchange, run by the primary once the
+// records are merged: move the snapshots, let the peer settle, then settle
+// here.
+//
+// A failure in it is logged and left for the next exchange. The records have
+// already been exchanged successfully, and a card that is right about a
+// mission whose mirror is a few seconds behind is still a card that is right.
+func (s *Service) shareWorktrees(ctx context.Context, mine, theirs []mission.RepoState) {
+	if s.worktrees == nil || (len(mine) == 0 && len(theirs) == 0) {
+		return
+	}
+
+	// The merge may have just told this host about a mission the peer runs. Its
+	// repositories were not in the report taken before the exchange, and the
+	// peer's snapshots for them cannot be fetched without knowing where they go.
+	mine = s.withNewRepos(mine)
+
+	s.transferSnapshots(ctx, mine, theirs)
+
+	// The peer settles first and reports what it then holds. If it could not be
+	// asked, its earlier report is still true and is used instead.
+	if settled, err := s.remote.Settle(ctx, api.SettleRequest{Refs: mine}); err != nil {
+		s.warn("asking the paired q to settle its worktrees", "error", err)
+	} else {
+		theirs = settled.Refs
+	}
+
+	s.settleWorktrees(ctx, mine, theirs)
+}
+
+// withNewRepos adds to a report the repositories of running missions it does
+// not mention yet.
+func (s *Service) withNewRepos(states []mission.RepoState) []mission.RepoState {
+	known := indexStates(states)
+
+	for _, ms := range s.store.Snapshot().Missions {
+		if !ms.Running() {
+			continue
+		}
+
+		for _, repo := range ms.LaunchRepos {
+			key := mission.RepoKey{Mission: ms.ID, Repo: repo.Name}
+			if _, ok := known[key]; !ok {
+				states = append(states, mission.RepoState{Mission: ms.ID, Repo: repo.Name, Path: repo.Path})
+			}
+		}
+	}
+
+	return states
+}
+
+// SettleWorktrees is the secondary's half of sharing code: the primary has
+// moved the snapshots, and this host lays out the ones it should take.
+func (s *Service) SettleWorktrees(ctx context.Context, req api.SettleRequest) (api.SettleResponse, error) {
+	if s.remote != nil {
+		return api.SettleResponse{}, fmt.Errorf("%w: this q dials its peer and settles on its own", ErrConflict)
+	}
+
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+
+	// Only a worktree that was actually changed needs looking at again, and
+	// most exchanges change none.
+	if s.settleWorktrees(ctx, s.captured, req.Refs) {
+		s.captured = s.captureWorktrees(ctx)
+	}
+
+	return api.SettleResponse{Refs: s.captured}, nil
 }
 
 // SyncExchange answers the primary's half of an exchange with this daemon's.
@@ -329,11 +412,16 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 		s.publishRemote()
 	}
 
+	// Taken after the merge, so a mission the request just introduced is
+	// already reported with the path its snapshots should be sent to.
+	s.captured = s.captureWorktrees(ctx)
+
 	return api.SyncResponse{
 		Protocol: api.SyncProtocol,
 		Version:  s.version,
 		Payload:  s.store.Snapshot().Payload(),
 		Results:  results,
+		Refs:     s.captured,
 	}, nil
 }
 
@@ -534,7 +622,11 @@ func (s *Service) afterMerge(ctx context.Context, merge mission.Merge) {
 		s.reclaimLocal(ctx, ms)
 	}
 
-	for _, id := range merge.Lost {
+	// A lease that moved in either direction makes any session this host has for
+	// the mission stale. One it lost was running the agent, and there must not
+	// be two. One it gained was only ever a view of the agent elsewhere, and a
+	// message meant for the agent must not be typed into it.
+	for _, id := range slices.Concat(merge.Lost, merge.Gained) {
 		s.standDown(ctx, id)
 	}
 
