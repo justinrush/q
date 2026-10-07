@@ -110,6 +110,9 @@ func (s *Service) markLaunching(id mission.MissionID) error {
 		ms.AgentState = mission.AgentUnknown
 		ms.Badges = ms.WithBadge(mission.BadgeLaunching, "")
 		ms.LaunchError = ""
+		// Started by hand or by the scheduler, a mission is no longer waiting
+		// to be started.
+		ms.Queued = false
 		ms.UpdatedAt = s.now()
 		updated = ms
 		snap.PutMission(ms)

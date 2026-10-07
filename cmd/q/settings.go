@@ -5,6 +5,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/justinrush/q/internal/daemon"
 )
 
 // settings is the complete set of resolved options.
@@ -21,10 +23,18 @@ type settings struct {
 	Paths    pathsSettings
 	Cost     costSettings
 	TUI      tuiSettings
+	Queue    queueSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
 	Tools    map[string]string
 	LogLevel string
+}
+
+// queueSettings configures how the daemon works through queued missions.
+type queueSettings struct {
+	// MaxConcurrent is how many queued missions run at once on this machine. A
+	// mission started by hand is not held back by it, but does count against it.
+	MaxConcurrent int
 }
 
 // tuiSettings configures the terminal UI.
@@ -173,6 +183,7 @@ func defaultSettings() settings {
 		Editor:   editorSettings{Command: defaultEditorCommand()},
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
 		TUI:      tuiSettings{Mouse: true},
+		Queue:    queueSettings{MaxConcurrent: daemon.DefaultMaxConcurrent},
 		Tools:    map[string]string{},
 		LogLevel: "info",
 	}

@@ -90,6 +90,7 @@ var boardActions = map[string]boardAction{
 	"d":      (*Board).deleteMission,
 	"x":      (*Board).deleteMission,
 	"p":      (*Board).togglePlan,
+	"a":      (*Board).toggleQueued,
 	"/":      (*Board).filterByOperation,
 	"s":      (*Board).statusMenu,
 }

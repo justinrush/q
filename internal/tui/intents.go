@@ -39,6 +39,8 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		return a.handleFinishPlan(m), true
 	case togglePlanMsg:
 		return a.handleTogglePlan(m.Mission), true
+	case toggleQueuedMsg:
+		return a.handleToggleQueued(m.Mission), true
 	case moveMissionMsg:
 		return a.moveToLane(m.Mission, m.To), true
 	case resumePromptMsg:
@@ -254,6 +256,19 @@ func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
 	}
 
 	return a.setPlanMode(ms, !ms.PlanMode)
+}
+
+// handleToggleQueued flips whether q starts the mission on its own, explaining
+// when there is nothing left to queue.
+func (a *App) handleToggleQueued(ms mission.Mission) tea.Cmd {
+	if ms.Launched() {
+		return emit(toastMsg{
+			text: "only a mission still in briefing can be queued",
+			err:  true,
+		})
+	}
+
+	return a.setQueued(ms, !ms.Queued)
 }
 
 // handleReorder computes the mission's new position and sends it.

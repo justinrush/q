@@ -100,6 +100,12 @@ type CreateMissionRequest struct {
 	// off, and whether a mission should stop for approval is a decision for
 	// whoever launches it.
 	InheritFrom mission.MissionID `json:"inheritFrom,omitempty"`
+	// Queued asks the daemon to start the mission on its own once a slot is
+	// free. Without it a new mission waits in briefing for a human, as before.
+	Queued bool `json:"queued,omitempty"`
+	// Pin names the host the mission must run on: "local", "remote", or a
+	// host's name or id. Empty leaves the choice to q.
+	Pin string `json:"pin,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
@@ -116,6 +122,10 @@ type UpdateMissionRequest struct {
 	// clearing a repo's override is expressible.
 	BaseBranches *map[string]string `json:"baseBranches,omitempty"`
 	Order        *int               `json:"order,omitempty"`
+	// Queued and Pin say when and where an unlaunched mission starts; see
+	// [CreateMissionRequest]. An empty Pin clears it.
+	Queued *bool   `json:"queued,omitempty"`
+	Pin    *string `json:"pin,omitempty"`
 }
 
 // SetStatusRequest moves a mission between lanes.

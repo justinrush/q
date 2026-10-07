@@ -72,6 +72,10 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	// daemon exists: cards stay honest even when no board is open.
 	go svc.RunReconciler(ctx)
 
+	// Queued missions start without anyone asking, which is what lets a machine
+	// nobody is sitting at work through a backlog.
+	go svc.RunScheduler(ctx)
+
 	token, err := api.NewToken()
 	if err != nil {
 		return err

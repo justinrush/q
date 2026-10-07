@@ -46,6 +46,7 @@ const (
 	EnvOpencodeModel = "Q_OPENCODE_MODEL"
 	EnvLogLevel      = "Q_LOG_LEVEL"
 	EnvMouse         = "Q_MOUSE"
+	EnvMaxConcurrent = "Q_MAX_CONCURRENT"
 )
 
 // fileConfig is the JSON shape of ~/.q-config.json.
@@ -62,9 +63,15 @@ type fileConfig struct {
 	Paths    *pathsConfig    `json:"paths,omitempty"`
 	Cost     *costConfig     `json:"cost,omitempty"`
 	TUI      *tuiConfig      `json:"tui,omitempty"`
+	Queue    *queueConfig    `json:"queue,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
 	LogLevel string            `json:"logLevel,omitempty"`
+}
+
+// queueConfig configures how the daemon works through queued missions.
+type queueConfig struct {
+	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
 
 type tuiConfig struct {
@@ -286,6 +293,10 @@ func applyFile(out *settings, file fileConfig) {
 		out.TUI.Mouse = *t.Mouse
 	}
 
+	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
+		out.Queue.MaxConcurrent = q.MaxConcurrent
+	}
+
 	for name, path := range file.Tools {
 		out.Tools[name] = path
 	}
@@ -428,6 +439,12 @@ func applyEnv(out *settings) {
 			out.TUI.Mouse = b
 		}
 	}
+
+	if v := strings.TrimSpace(os.Getenv(EnvMaxConcurrent)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			out.Queue.MaxConcurrent = n
+		}
+	}
 }
 
 // expandSettings resolves ~ in every path-shaped value, so the rest of q never
@@ -539,6 +556,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
 		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse},
+		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
 		Tools:    s.Tools,
 		LogLevel: s.LogLevel,
 	}

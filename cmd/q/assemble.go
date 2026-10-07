@@ -51,6 +51,7 @@ func assembleService(
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
 		daemon.WithModelRefresh(s.Agents.ModelRefresh),
+		daemon.WithMaxConcurrent(s.Queue.MaxConcurrent),
 	}
 
 	// Metering runs off files the agent has already written, so it is wired

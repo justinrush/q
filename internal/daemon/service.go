@@ -67,6 +67,14 @@ type Service struct {
 	brancher Brancher
 	branches *branchCache
 
+	// maxConcurrent is how many queued missions this host runs at once.
+	maxConcurrent int
+	// role and takeoverAfter describe the pairing with another q installation.
+	// Both are zero when q runs alone, which makes every decision that consults
+	// them come out as "this host".
+	role          mission.Role
+	takeoverAfter time.Duration
+
 	// self is this installation's host id, fixed for the life of the store. It
 	// is what every "do I run this mission" question is answered against.
 	self mission.HostID
@@ -136,6 +144,8 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		models:    newCatalog(),
 		branches:  newBranchCache(),
 		approvals: make(map[mission.MissionID]approvalCandidate),
+
+		maxConcurrent: DefaultMaxConcurrent,
 	}
 
 	for _, opt := range opts {
@@ -395,6 +405,11 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		return zero, err
 	}
 
+	pin, err := resolveHost(snap, req.Pin)
+	if err != nil {
+		return zero, err
+	}
+
 	name := strings.TrimSpace(req.Name)
 
 	return mission.Mission{
@@ -408,7 +423,32 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		Effort:       req.Effort,
 		ExtraRepos:   normalizeRepos(req.ExtraRepos),
 		BaseBranches: normalizeBaseBranches(req.BaseBranches),
+		Queued:       req.Queued,
+		Pin:          pin,
 	}, nil
+}
+
+// resolveHost turns what a human typed for "which machine" into a host id.
+//
+// The two words that matter are relative: "local" is whichever host is asked
+// and "remote" is its peer, so the same command means the right thing on
+// either machine. A host's name or id is accepted too, and empty clears a pin.
+func resolveHost(snap *mission.Snapshot, value string) (mission.HostID, error) {
+	value = strings.TrimSpace(value)
+
+	switch {
+	case value == "":
+		return "", nil
+	case value == "local" || value == string(snap.Self.ID) || value == snap.Self.Name:
+		return snap.Self.ID, nil
+	case snap.Peer == nil:
+		return "", fmt.Errorf("%w: no host %q; this q is not paired with another", ErrInvalid, value)
+	case value == "remote" || value == string(snap.Peer.ID) || value == snap.Peer.Name:
+		return snap.Peer.ID, nil
+	default:
+		return "", fmt.Errorf("%w: no host %q (want local, remote, %s, or %s)",
+			ErrInvalid, value, snap.HostName(snap.Self.ID), snap.HostName(snap.Peer.ID))
+	}
 }
 
 // inheritDefaults copies from parent every field the caller left unset.
@@ -505,6 +545,10 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		ms.Order = *req.Order
 	}
 
+	if err := applyQueuePatch(snap, ms, req); err != nil {
+		return err
+	}
+
 	if err := applyWorktreePatch(ms, req); err != nil {
 		return err
 	}
@@ -556,6 +600,40 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
+	}
+
+	return nil
+}
+
+// applyQueuePatch applies the fields that say when and where a mission starts.
+//
+// Both only mean anything before launch. A running mission cannot be queued,
+// and where it runs is by then a matter of who holds its lease rather than of
+// a preference.
+func applyQueuePatch(snap *mission.Snapshot, ms *mission.Mission, req api.UpdateMissionRequest) error {
+	if req.Queued == nil && req.Pin == nil {
+		return nil
+	}
+
+	if ms.Launched() {
+		return fmt.Errorf("%w: mission %s has already been launched", ErrConflict, ms.ID)
+	}
+
+	if req.Queued != nil {
+		ms.Queued = *req.Queued
+
+		if ms.Queued {
+			ms.LaunchError = ""
+		}
+	}
+
+	if req.Pin != nil {
+		pin, err := resolveHost(snap, *req.Pin)
+		if err != nil {
+			return err
+		}
+
+		ms.Pin = pin
 	}
 
 	return nil

@@ -82,6 +82,7 @@ Press `?` for the full keymap. The essentials:
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
 | `m` | send a message to a running agent |
+| `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
 
@@ -100,6 +101,7 @@ q mission add tidy-imports --operation "$op" --prompt "Tidy them." --model haiku
 q mission add review-login --operation "$op" --prompt "Review it." --base weave=feat/login
 q models                       # what each agent offers, and the default a mission gets
 q mission move ms_… active     # launches the agent
+q mission queue ms_… ms_…      # or let q launch them as slots free up
 q mission list                 # the board, as text
 q open ms_…                    # open the debrief session
 q mission rm ms_… --dry-run    # what deleting would discard
@@ -131,7 +133,31 @@ instead of quietly widening them.
 approval is the launcher's decision, not the parent brief's.
 
 Created missions land in briefing either way. Nothing runs until a mission is
-moved to active.
+moved to active, or queued.
+
+### Letting q start missions
+
+A briefed mission waits for you by default. Queue it and the daemon starts it
+instead:
+
+```sh
+q mission add tidy-imports --operation "$op" --prompt "Tidy them." --queue
+q mission queue ms_… ms_…      # queue missions that already exist
+q mission unqueue ms_…
+```
+
+Queued missions start in board order, at most `queue.maxConcurrent` at a time.
+A slot is held only while a mission is in the active lane: one that stops to
+ask a question or finishes its turn frees it, so a queue keeps moving with
+nobody there to answer.
+
+A queued mission is started once. If the launch fails, the card goes back to
+briefing with the reason and is no longer queued, rather than being retried
+every few seconds.
+
+Queueing says nothing about order between missions beyond their position on
+the board. Two missions where the second builds on the first's unmerged work
+should not both be queued.
 
 ## Configuration
 
@@ -188,6 +214,7 @@ settings without writing anything.
 | `paths.stateDir` | overrides where the daemon handle, hook spool, and logs live |
 | `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
 | `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
+| `queue.maxConcurrent` | how many queued missions run at once on this machine. Defaults to `2` |
 | `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
@@ -252,6 +279,7 @@ one-off run can point q somewhere else without editing the file:
 | `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL`, `Q_AGY_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_MOUSE` | `tui.mouse` (enable/disable mouse with `true`/`false`) |
+| `Q_MAX_CONCURRENT` | `queue.maxConcurrent` |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
 The daemon reads the configuration when it starts, so after editing the file run

@@ -379,6 +379,22 @@ func (a *App) setPlanMode(ms mission.Mission, planMode bool) tea.Cmd {
 	}
 }
 
+// setQueued asks the daemon to start a mission on its own, or to stop doing so.
+func (a *App) setQueued(ms mission.Mission, queued bool) tea.Cmd {
+	return func() tea.Msg {
+		updated, err := a.client.UpdateMission(a.ctx(), ms.ID, api.UpdateMissionRequest{Queued: &queued})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		if updated.Queued {
+			return toastMsg{text: updated.Name + ": queued, starts when a slot is free"}
+		}
+
+		return toastMsg{text: updated.Name + ": no longer queued"}
+	}
+}
+
 // reorderMission changes a mission's position within its lane.
 func (a *App) reorderMission(ms mission.Mission, order int) tea.Cmd {
 	return func() tea.Msg {

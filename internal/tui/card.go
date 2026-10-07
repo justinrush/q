@@ -133,6 +133,12 @@ func metaLine(ms mission.Mission, width int) string {
 		parts = append(parts, "plan")
 	}
 
+	// Queued is a flag rather than a stored badge, since the brief owns it and
+	// the badges belong to the run.
+	if ms.Queued {
+		parts = append(parts, mission.BadgeQueued)
+	}
+
 	if n := countCreated(ms); n > 0 {
 		parts = append(parts, fmt.Sprintf("%dr", n))
 	}
@@ -141,7 +147,7 @@ func metaLine(ms mission.Mission, width int) string {
 		parts = append(parts, age)
 	}
 
-	for _, badge := range ms.Badges {
+	for _, badge := range ms.AllBadges() {
 		parts = append(parts, renderBadge(badge))
 	}
 

@@ -27,6 +27,8 @@ func buildMissionSubcommand() *cobra.Command {
 		buildMissionListSubcommand(),
 		buildMissionAddSubcommand(),
 		buildMissionMoveSubcommand(),
+		buildMissionQueueSubcommand(),
+		buildMissionUnqueueSubcommand(),
 		buildMissionRemoveSubcommand(),
 	)
 
@@ -90,12 +92,14 @@ func buildMissionAddSubcommand() *cobra.Command {
 		repos     []string
 		bases     []string
 		fromFlag  string
+		where     placement
 	)
 
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Create a mission in the briefing lane",
-		Long: "Create a mission in the briefing lane. Nothing launches until it is moved to active.\n\n" +
+		Long: "Create a mission in the briefing lane. Nothing launches until it is moved to active, " +
+			"unless --queue asks q to start it once a slot is free.\n\n" +
 			"Give --from a mission id to copy its operation, agent, model, effort, repositories, " +
 			"and base branches, so a mission that has just designed follow-up work can queue it " +
 			"without restating its own context. Anything passed here still wins.",
@@ -147,6 +151,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 				PlanMode:     planMode,
 				ExtraRepos:   parsedRepos,
 				BaseBranches: parsedBases,
+				Queued:       where.queued,
+				Pin:          where.pin,
 			})
 			if err != nil {
 				return err
@@ -178,6 +184,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&bases, "base", nil,
 		"Base a repo's worktree on a branch instead of its default; repeatable, accepts repo=branch. "+
 			"Replaces the inherited map")
+	where.register(cmd)
 
 	// --operation is deliberately not marked required. The daemon is the only
 	// place mission rules live, and "required unless --from names a mission that
@@ -188,6 +195,20 @@ func buildMissionAddSubcommand() *cobra.Command {
 	}
 
 	return cmd
+}
+
+// placement is when and where a new mission starts.
+type placement struct {
+	queued bool
+	pin    string
+}
+
+// register adds the placement flags to a command.
+func (p *placement) register(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&p.queued, "queue", false,
+		"Start the mission automatically once a slot is free, instead of waiting in briefing")
+	cmd.Flags().StringVar(&p.pin, "on", "",
+		"Run only on this host: local, remote, or a host name. Default: q decides")
 }
 
 func buildMissionMoveSubcommand() *cobra.Command {
@@ -237,6 +258,65 @@ func buildMissionMoveSubcommand() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Discard uncommitted changes when moving to closed")
 
 	return cmd
+}
+
+func buildMissionQueueSubcommand() *cobra.Command {
+	var pin string
+
+	cmd := &cobra.Command{
+		Use:   "queue <mission-id>...",
+		Short: "Start briefed missions automatically as slots free up",
+		Long: "Mark missions in the briefing lane to be started by q rather than by hand. " +
+			"They start in board order, as many at once as queue.maxConcurrent allows.\n\n" +
+			"With two paired machines, a queued mission runs on the primary when it is " +
+			"around and on the secondary when it is not. --on overrides that.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := api.UpdateMissionRequest{Queued: new(true)}
+			if cmd.Flags().Changed("on") {
+				req.Pin = &pin
+			}
+
+			return patchMissions(cmd, args, req, "queued")
+		},
+	}
+
+	cmd.Flags().StringVar(&pin, "on", "",
+		"Run only on this host: local, remote, or a host name. Empty clears a pin")
+
+	return cmd
+}
+
+func buildMissionUnqueueSubcommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unqueue <mission-id>...",
+		Short: "Leave briefed missions to be started by hand",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return patchMissions(cmd, args, api.UpdateMissionRequest{Queued: new(false)}, "not queued")
+		},
+	}
+}
+
+// patchMissions applies one patch to several missions, reporting each.
+func patchMissions(cmd *cobra.Command, ids []string, req api.UpdateMissionRequest, verb string) error {
+	c, err := connectDaemon(cmd.Context())
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		ms, err := c.UpdateMission(cmd.Context(), mission.MissionID(id), req)
+		if err != nil {
+			return err
+		}
+
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s is %s\n", ms.Name, verb); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func buildMissionRemoveSubcommand() *cobra.Command {
@@ -420,6 +500,10 @@ func missionDetail(ms mission.Mission) string {
 		parts = append(parts, "plan")
 	}
 
+	if ms.Queued {
+		parts = append(parts, mission.BadgeQueued)
+	}
+
 	if ms.AgentState != "" && ms.AgentState != mission.AgentUnknown {
 		parts = append(parts, ms.AgentState.String())
 	}
@@ -428,7 +512,7 @@ func missionDetail(ms mission.Mission) string {
 		parts = append(parts, ms.WaitingFor)
 	}
 
-	for _, b := range ms.Badges {
+	for _, b := range ms.AllBadges() {
 		if b.Detail != "" {
 			parts = append(parts, b.Kind+":"+b.Detail)
 

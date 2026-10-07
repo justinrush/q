@@ -233,7 +233,7 @@ func TestBoardActionsAreNoopsOnAnEmptyLane(t *testing.T) {
 
 	for _, action := range []func(*Board) tea.Cmd{
 		(*Board).openDebrief, (*Board).editMission, (*Board).deleteMission,
-		(*Board).togglePlan, (*Board).messageAgent, (*Board).moveCardRight,
+		(*Board).togglePlan, (*Board).toggleQueued, (*Board).messageAgent, (*Board).moveCardRight,
 	} {
 		if cmd := action(board); cmd != nil {
 			if msg := cmd(); msg != nil {
@@ -424,6 +424,7 @@ func TestEveryBoardBindingHasAHandler(t *testing.T) {
 		{"Edit", board.Edit},
 		{"Delete", board.Delete},
 		{"TogglePlan", board.TogglePlan},
+		{"Queue", board.Queue},
 		{"ToggleDone", board.ToggleDone},
 		{"Status", board.Status},
 		{"Filter", board.Filter},
