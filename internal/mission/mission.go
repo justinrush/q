@@ -244,6 +244,11 @@ type RepoWork struct {
 	// agreed on. It is the merge base when both sides have since changed, and
 	// what tells "the peer moved on" apart from "I did".
 	SyncBase string `json:"syncBase,omitempty" q:"local"`
+	// SyncIncludes is a snapshot of the peer's that this worktree has had merged
+	// into it, or been ruled to supersede. It is set when both hosts changed a
+	// worktree and this one resolved it, and is what tells the peer that taking
+	// this host's state loses nothing of its own.
+	SyncIncludes string `json:"syncIncludes,omitempty" q:"local"`
 }
 
 // Badge is a short marker rendered on a card to convey state the lanes cannot.

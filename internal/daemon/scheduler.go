@@ -86,7 +86,13 @@ func (s *Service) Schedule(ctx context.Context) {
 			continue
 		}
 
-		if free <= 0 {
+		// A mission this host cannot run stays queued and says why. It is not
+		// started and left to fail: a failed launch clears the queued flag, and
+		// the repository may be one clone away from making it runnable.
+		missing := unlocated(snap, ms)
+		s.markUnlocated(ms, missing)
+
+		if len(missing) > 0 || free <= 0 {
 			continue
 		}
 

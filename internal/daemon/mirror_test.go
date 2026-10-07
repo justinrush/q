@@ -506,3 +506,219 @@ func TestDeletingAMissionReclaimsItOnBothHosts(t *testing.T) {
 		t.Error("the mission is still on the machine that was running it")
 	}
 }
+
+// contents describes a worktree completely: its tip, what differs from it, and
+// the text of every difference. Two worktrees with equal contents are the same.
+func contents(t *testing.T, dir string) string {
+	t.Helper()
+
+	// Untracked files are staged as intent-to-add in a scratch index so their
+	// text shows up in the diff, without touching the worktree's own index.
+	index := filepath.Join(t.TempDir(), "index")
+
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+index)
+
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+
+		return string(out)
+	}
+
+	run("read-tree", "HEAD")
+	run("add", "--all", "--intent-to-add")
+
+	return gitIn(t, dir, "rev-parse", "HEAD") + "\n" + run("diff", "HEAD")
+}
+
+// settled runs exchanges until both hosts hold the same state of a mission's
+// worktree, failing if they have not after a few.
+func settled(t *testing.T, laptop, mini *host, id mission.MissionID) {
+	t.Helper()
+
+	for range 5 {
+		exchange(t, laptop.svc)
+
+		if contents(t, laptop.worktree(id)) == contents(t, mini.worktree(id)) {
+			return
+		}
+	}
+
+	t.Fatalf("the two worktrees never settled:\nlaptop:\n%s\nmini:\n%s",
+		contents(t, laptop.worktree(id)), contents(t, mini.worktree(id)))
+}
+
+// bothEdit launches a mission on the mini, lets the two hosts agree, ends the
+// agent's turn, and returns the two worktrees ready to be edited apart.
+func bothEdit(t *testing.T, name string) (laptop, mini *host, ms mission.Mission, mirror, source string) {
+	t.Helper()
+
+	laptop, mini = realPair(t)
+	ms = mini.launch(name)
+
+	source = mini.worktree(ms.ID)
+	writeFile(t, source, "shared.txt", "one\ntwo\nthree\n")
+
+	if _, err := mini.svc.SetStatus(ms.ID, mission.StatusDebrief); err != nil {
+		t.Fatal(err)
+	}
+
+	exchange(t, laptop.svc)
+	exchange(t, laptop.svc)
+
+	return laptop, mini, ms, laptop.worktree(ms.ID), source
+}
+
+// A human edits one file in the mirror and the agent's host has changed
+// another. Nobody has to choose: both worktrees end up with both.
+func TestEditsOnBothSidesAreMergedOnceTheAgentIsIdle(t *testing.T) {
+	laptop, mini, ms, mirror, source := bothEdit(t, "merge me")
+
+	writeFile(t, mirror, "human.txt", "from the human\n")
+	writeFile(t, source, "agent.txt", "from the agent\n")
+
+	settled(t, laptop, mini, ms.ID)
+
+	for name, dir := range map[string]string{"laptop": mirror, "mini": source} {
+		if got := readFile(t, dir, "human.txt") + readFile(t, dir, "agent.txt"); got != "from the human\nfrom the agent\n" {
+			t.Errorf("%s worktree has %q, want both edits", name, got)
+		}
+	}
+
+	got := laptop.mission(ms.ID)
+	if got.HasLocalBadge(mission.BadgeDiverged) || got.HasLocalBadge(mission.BadgeLocalEdits) {
+		t.Errorf("badges %v, want none after a clean merge", got.LocalBadges)
+	}
+
+	// The merge must not have moved the lease or added a commit nobody made.
+	if got.Lease.Holder != mini.svc.self {
+		t.Errorf("holder = %s, want the mini still", got.Lease.Holder)
+	}
+
+	if log := gitIn(t, mirror, "log", "--format=%s"); log != "first" {
+		t.Errorf("history = %q, want no new commits: nothing was committed by either side", log)
+	}
+
+	// And having settled, it stays settled. A merge that left the two hosts
+	// each believing the other had something new would run on every exchange.
+	exchange(t, laptop.svc)
+	exchange(t, laptop.svc)
+
+	before := []time.Time{laptop.svc.Snapshot().UpdatedAt, mini.svc.Snapshot().UpdatedAt}
+
+	exchange(t, laptop.svc)
+
+	after := []time.Time{laptop.svc.Snapshot().UpdatedAt, mini.svc.Snapshot().UpdatedAt}
+	if !before[0].Equal(after[0]) || !before[1].Equal(after[1]) {
+		t.Errorf("state is still being rewritten after the merge settled: %v -> %v", before, after)
+	}
+}
+
+// Both committed, to different files. The branch gets both commits.
+func TestCommitsOnBothSidesAreJoined(t *testing.T) {
+	laptop, mini, ms, mirror, source := bothEdit(t, "two commits")
+
+	writeFile(t, mirror, "human.txt", "from the human\n")
+	gitIn(t, mirror, "add", "-A")
+	gitIn(t, mirror, "commit", "-q", "-m", "human commit")
+
+	writeFile(t, source, "agent.txt", "from the agent\n")
+	gitIn(t, source, "add", "-A")
+	gitIn(t, source, "commit", "-q", "-m", "agent commit")
+
+	settled(t, laptop, mini, ms.ID)
+
+	for name, dir := range map[string]string{"laptop": mirror, "mini": source} {
+		log := gitIn(t, dir, "log", "--format=%s")
+		if !strings.Contains(log, "human commit") || !strings.Contains(log, "agent commit") {
+			t.Errorf("%s history lost a side:\n%s", name, log)
+		}
+	}
+}
+
+// Both changed the same line. q does not pick silently and does not lose
+// either: the laptop's version stays on the branch, the mini's is kept beside
+// it, and the card says where.
+func TestAConflictKeepsTheLaptopsVersionAndTheOtherOnABranch(t *testing.T) {
+	laptop, mini, ms, mirror, source := bothEdit(t, "conflict")
+
+	writeFile(t, mirror, "shared.txt", "one\ntwo, the human's way\nthree\n")
+	writeFile(t, source, "shared.txt", "one\ntwo, the agent's way\nthree\n")
+
+	settled(t, laptop, mini, ms.ID)
+
+	for name, dir := range map[string]string{"laptop": mirror, "mini": source} {
+		if got := readFile(t, dir, "shared.txt"); !strings.Contains(got, "the human's way") {
+			t.Errorf("%s worktree = %q, want the laptop's version", name, got)
+		}
+	}
+
+	kept := "laptop/conflict--mini"
+
+	if got := gitIn(t, laptop.clone, "show", kept+":shared.txt"); !strings.Contains(got, "the agent's way") {
+		t.Errorf("branch %s holds %q, want the mini's version", kept, got)
+	}
+
+	got := laptop.mission(ms.ID)
+	if !got.HasLocalBadge(mission.BadgeDiverged) {
+		t.Fatalf("badges %v, want the card to say the two diverged", got.LocalBadges)
+	}
+
+	for _, badge := range got.LocalBadges {
+		if badge.Kind == mission.BadgeDiverged && badge.Detail != kept {
+			t.Errorf("badge names %q, want the branch %q", badge.Detail, kept)
+		}
+	}
+}
+
+// The case that motivates all of this. The laptop slept mid-turn, the mini
+// took over, and both agents worked. When the laptop wakes it stands down, and
+// once the mini's agent is idle nothing either of them did is missing.
+func TestWorkFromBothAgentsSurvivesATakeover(t *testing.T) {
+	laptop, mini := realPair(t)
+	ms := laptop.launch("slept through it")
+
+	source := laptop.worktree(ms.ID)
+	writeFile(t, source, "before.txt", "before the lid closed\n")
+	exchange(t, laptop.svc)
+
+	mirror := mini.worktree(ms.ID)
+
+	// The mini takes the mission and its agent works. The laptop's agent, woken
+	// with the laptop, works too before the two have spoken.
+	mini.svc.updateLease(ms.ID, "test.takeover", func(stored *mission.Mission) bool {
+		stored.Lease = stored.Lease.Take(mini.svc.self)
+
+		return true
+	})
+
+	writeFile(t, mirror, "mini.txt", "by the agent that took over\n")
+	writeFile(t, source, "laptop.txt", "by the agent that woke up\n")
+
+	exchange(t, laptop.svc)
+
+	if got := laptop.mission(ms.ID).Lease.Holder; got != mini.svc.self {
+		t.Fatalf("holder on the laptop = %s, want it to accept the takeover", got)
+	}
+
+	// Mid-turn on the mini: nothing is merged under a working agent.
+	if got := readFile(t, mirror, "laptop.txt"); got != "<missing>" {
+		t.Errorf("the laptop's work was pushed into a busy agent's worktree: %q", got)
+	}
+
+	if _, err := mini.svc.SetStatus(ms.ID, mission.StatusDebrief); err != nil {
+		t.Fatal(err)
+	}
+
+	settled(t, laptop, mini, ms.ID)
+
+	for name, dir := range map[string]string{"laptop": source, "mini": mirror} {
+		got := readFile(t, dir, "before.txt") + readFile(t, dir, "mini.txt") + readFile(t, dir, "laptop.txt")
+		if got != "before the lid closed\nby the agent that took over\nby the agent that woke up\n" {
+			t.Errorf("%s worktree has %q, want all three pieces of work", name, got)
+		}
+	}
+}

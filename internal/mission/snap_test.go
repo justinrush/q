@@ -7,6 +7,13 @@ func state(snap, applied string) RepoState {
 	return RepoState{Snap: Snap{Head: snap, Commit: snap}, Applied: applied}
 }
 
+// including marks a report as having the given peer snapshot merged into it.
+func including(r RepoState, peerSnap string) RepoState {
+	r.Includes = peerSnap
+
+	return r
+}
+
 func TestSettle(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -32,6 +39,10 @@ func TestSettle(t *testing.T) {
 		// would swap states forever.
 		{"both unedited: the mirror follows", state("a", "a"), state("b", "b"), false, SettleTake},
 		{"both unedited: the holder stays", state("b", "b"), state("a", "a"), true, SettleNothing},
+		// One host merged the other's state into its own and says so.
+		{"the peer merged this state in: take the result", state("c", "a"), including(state("m", "a"), "c"), true, SettleTake},
+		{"this host merged the peer's state in: wait", including(state("m", "a"), "c"), state("c", "a"), false, SettleNothing},
+		{"the peer merged an older state: still diverged", state("d", "a"), including(state("m", "a"), "c"), true, SettleDiverged},
 	}
 
 	for _, tc := range cases {
@@ -54,18 +65,23 @@ func TestSettleNeverHasBothSidesTake(t *testing.T) {
 		for _, myApplied := range applied {
 			for _, theirSnap := range ids {
 				for _, theirApplied := range applied {
-					mine, theirs := state(mySnap, myApplied), state(theirSnap, theirApplied)
+					// Only the primary merges, so only one side ever reports having
+					// included the other's state.
+					for _, included := range applied {
+						mine := including(state(mySnap, myApplied), included)
+						theirs := state(theirSnap, theirApplied)
 
-					for _, iHold := range []bool{true, false} {
-						here := Settle(mine, theirs, iHold)
-						there := Settle(theirs, mine, !iHold)
+						for _, iHold := range []bool{true, false} {
+							here := Settle(mine, theirs, iHold)
+							there := Settle(theirs, mine, !iHold)
 
-						if here == SettleTake && there == SettleTake {
-							t.Errorf("both take: mine %+v theirs %+v, holder here %v", mine, theirs, iHold)
-						}
+							if here == SettleTake && there == SettleTake {
+								t.Errorf("both take: mine %+v theirs %+v, holder here %v", mine, theirs, iHold)
+							}
 
-						if (here == SettleDiverged) != (there == SettleDiverged) {
-							t.Errorf("only one side sees divergence: mine %+v theirs %+v", mine, theirs)
+							if (here == SettleDiverged) != (there == SettleDiverged) {
+								t.Errorf("only one side sees divergence: mine %+v theirs %+v", mine, theirs)
+							}
 						}
 					}
 				}

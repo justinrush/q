@@ -68,10 +68,11 @@ func (s *Service) takeOver(ctx context.Context, snap mission.Snapshot) {
 			continue
 		}
 
-		// Without a mirror there is nothing to start an agent in. That means the
-		// mission launched after the last exchange, so this host knows nothing
-		// of its work either.
-		if ms.MissionDir == "" {
+		// Without a complete mirror there is nowhere to start an agent. Either
+		// the mission launched after the last exchange, so this host knows
+		// nothing of its work, or one of its repositories is not checked out
+		// here, and an agent given the rest would be working with a piece missing.
+		if !mirrorComplete(ms) {
 			continue
 		}
 
@@ -341,6 +342,17 @@ func (s *Service) relaunch(ctx context.Context, id mission.MissionID, message st
 	operation, ok := snap.Operation(ms.OperationID)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
+	}
+
+	// A mission that arrived from the paired q is only resumable here once all
+	// of its worktrees are.
+	if snap.Peer != nil && len(ms.LaunchRepos) > 0 && !mirrorComplete(ms) {
+		if missing := unlocated(snap, ms); len(missing) > 0 {
+			return mission.Mission{}, errUnlocated(ms, missing)
+		}
+
+		return mission.Mission{}, fmt.Errorf(
+			"%w: %s is still being mirrored to this machine; try again in a moment", ErrConflict, ms.Name)
 	}
 
 	if !s.inflight.claim(id) {

@@ -78,6 +78,13 @@ func (s *Service) Start(ctx context.Context, id mission.MissionID) (mission.Miss
 		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
 	}
 
+	// Refused before anything is provisioned, with the repository named. Left to
+	// fail inside provisioning, this would surface as a git error about an
+	// empty path.
+	if missing := unlocated(snap, ms); len(missing) > 0 {
+		return mission.Mission{}, errUnlocated(ms, missing)
+	}
+
 	if !s.inflight.claim(id) {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
 	}

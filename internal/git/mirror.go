@@ -227,3 +227,20 @@ func (m *Mirrors) Provision(
 ) (mission.Mission, error) {
 	return m.provisioner.Mirror(ctx, operation, ms, starts)
 }
+
+// Merge combines this host's snapshot of a worktree with the peer's. See
+// [Client.MergeSnapshots].
+func (m *Mirrors) Merge(
+	ctx context.Context,
+	worktree string,
+	ours, theirs mission.Snap,
+	bases []string,
+) (mission.Snap, bool, error) {
+	return m.git.MergeSnapshots(ctx, worktree, ours, theirs, bases)
+}
+
+// Preserve keeps a commit under a branch of its own. See
+// [Client.PreserveBranch].
+func (m *Mirrors) Preserve(ctx context.Context, repo, branch, commit string) error {
+	return m.git.PreserveBranch(ctx, repo, branch, commit)
+}

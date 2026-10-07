@@ -37,6 +37,11 @@ type RepoState struct {
 	// hold too. A worktree whose Snap is still its Applied has not been edited
 	// here since, which is what makes it safe to overwrite.
 	Applied string `json:"applied,omitempty"`
+	// Includes is a snapshot of the peer's that this host has already combined
+	// with its own, set after it resolved a worktree both had changed. A peer
+	// still holding exactly that snapshot can take this host's state outright:
+	// everything it had is in there.
+	Includes string `json:"includes,omitempty"`
 }
 
 // Edited reports whether the worktree has changed since the two hosts last
@@ -77,6 +82,10 @@ const (
 // from an older state of the other, the host that is not running the mission
 // follows the one that is.
 //
+// Once one host has resolved a divergence it says so, by naming the peer
+// snapshot its state includes. That is what breaks the tie: without it the
+// peer would see two edited worktrees again and the pair would never settle.
+//
 // holds says whether this host runs the mission.
 func Settle(mine, theirs RepoState, holds bool) Settlement {
 	switch {
@@ -88,6 +97,13 @@ func Settle(mine, theirs RepoState, holds bool) Settlement {
 		}
 
 		return SettleAgreed
+	case theirs.Includes != "" && theirs.Includes == mine.Snap.Commit:
+		// The peer merged this exact state into its own. Nothing here is lost
+		// by taking the result, whatever this host has done since it last agreed.
+		return SettleTake
+	case mine.Includes != "" && mine.Includes == theirs.Snap.Commit:
+		// The mirror image: this host did the merging, and waits to be taken.
+		return SettleNothing
 	case mine.Edited() && theirs.Edited():
 		return SettleDiverged
 	case mine.Edited():

@@ -31,6 +31,13 @@ type Worktrees interface {
 	Fetch(ctx context.Context, repo, url string, peer mission.HostID) error
 	Push(ctx context.Context, repo, url string, self mission.HostID) error
 	Keep(ctx context.Context, repo string, host mission.HostID, id mission.MissionID, commit string) error
+	Merge(
+		ctx context.Context,
+		worktree string,
+		ours, theirs mission.Snap,
+		bases []string,
+	) (mission.Snap, bool, error)
+	Preserve(ctx context.Context, repo, branch, commit string) error
 	Provision(
 		ctx context.Context,
 		operation mission.Operation,
@@ -71,7 +78,7 @@ func (s *Service) captureWorktrees(ctx context.Context) []mission.RepoState {
 				if err != nil {
 					s.warn("snapshotting a worktree", "mission", ms.ID, "repo", repo.Name, "error", err)
 				} else {
-					state.Snap, state.Applied = snap, work.SyncBase
+					state.Snap, state.Applied, state.Includes = snap, work.SyncBase, work.SyncIncludes
 				}
 			}
 
@@ -357,7 +364,11 @@ func (s *Service) settleMission(
 		case mission.SettleTake:
 			took = s.takeSnapshot(ctx, ms, repo, work, mine, peer[key]) || took
 		case mission.SettleDiverged:
-			edited = true
+			if s.resolve(ctx, ms, repo, work, mine, peer[key]) {
+				took = true
+			} else {
+				edited = true
+			}
 		case mission.SettleNothing:
 			// Edited here and not yet matched by the peer: its turn to take it.
 			edited = edited || (mine.Edited() && mine.Snap.Commit != peer[key].Snap.Commit)
@@ -430,6 +441,8 @@ func (s *Service) recordAgreed(ctx context.Context, id mission.MissionID, repo m
 		}
 
 		work.SyncBase = commit
+		// Agreement supersedes any merge still waiting to be taken.
+		work.SyncIncludes = ""
 		ms.Work[repo.Name] = work
 	})
 }
@@ -445,6 +458,114 @@ func (s *Service) markEdited(ms mission.Mission, edited bool) {
 			stored.LocalBadges = stored.WithLocalBadge(mission.BadgeLocalEdits, "")
 		} else {
 			stored.LocalBadges = stored.WithoutLocalBadge(mission.BadgeLocalEdits)
+		}
+	})
+}
+
+// resolve deals with a worktree both hosts have changed, reporting whether it
+// did.
+//
+// Only the primary resolves. Two hosts merging the same pair of states at once
+// would each produce a result the other then had to merge, and they would chase
+// each other. And it waits for the agent to be idle, on whichever host it is:
+// the result replaces what is in the worktree, and that must not happen under
+// an agent part-way through a turn.
+//
+// A merge that comes out clean is laid out here, and the peer takes it on the
+// next exchange. One that does not is not attempted by halves. This host's
+// version stays where it is, the peer's is kept on a branch of its own beside
+// it, and the card says so; from there it is an ordinary merge for a person, or
+// an agent, to do.
+func (s *Service) resolve(
+	ctx context.Context,
+	ms mission.Mission,
+	repo mission.Repo,
+	work mission.RepoWork,
+	mine, theirs mission.RepoState,
+) bool {
+	if s.remote == nil || ms.Status == mission.StatusActive {
+		return false
+	}
+
+	if !s.worktrees.Has(ctx, work.WorktreePath, theirs.Snap.Commit) {
+		return false
+	}
+
+	// As when taking a snapshot: the report is seconds old, and what is about
+	// to be replaced must be what was judged.
+	now, err := s.worktrees.Capture(ctx, work.WorktreePath, s.self, ms.ID)
+	if err != nil || now.Commit != mine.Snap.Commit {
+		return false
+	}
+
+	bases := []string{mine.Applied, theirs.Applied, work.BaseSHA}
+
+	merged, clean, err := s.worktrees.Merge(ctx, work.WorktreePath, mine.Snap, theirs.Snap, bases)
+	if err != nil {
+		s.warn("merging the paired q's work", "mission", ms.ID, "repo", repo.Name, "error", err)
+
+		return false
+	}
+
+	if !clean {
+		return s.keepBoth(ctx, ms, repo, work, theirs)
+	}
+
+	if err := s.worktrees.Apply(ctx, work.WorktreePath, mine.Snap, merged); err != nil {
+		s.warn("applying a merge of the paired q's work", "mission", ms.ID, "repo", repo.Name, "error", err)
+
+		return false
+	}
+
+	if _, err := s.worktrees.Capture(ctx, work.WorktreePath, s.self, ms.ID); err != nil {
+		s.warn("recording a merge", "mission", ms.ID, "repo", repo.Name, "error", err)
+	}
+
+	s.logger.Info("merged work from both hosts", "mission", ms.ID, "repo", repo.Name)
+	s.recordIncluded(ms.ID, repo.Name, theirs.Snap.Commit, "")
+
+	return true
+}
+
+// keepBoth settles a conflict in the primary's favor without losing the other
+// side: the peer's state is kept on a branch named for it.
+func (s *Service) keepBoth(
+	ctx context.Context,
+	ms mission.Mission,
+	repo mission.Repo,
+	work mission.RepoWork,
+	theirs mission.RepoState,
+) bool {
+	snap := s.store.Snapshot()
+	branch := work.Branch + "--" + mission.Slug(snap.HostName(snap.PeerID()))
+
+	if err := s.worktrees.Preserve(ctx, work.WorktreePath, branch, theirs.Snap.Commit); err != nil {
+		s.warn("keeping the paired q's side of a conflict", "mission", ms.ID, "repo", repo.Name, "error", err)
+
+		return false
+	}
+
+	s.logger.Info("both hosts changed the same lines; kept the other side on a branch",
+		"mission", ms.ID, "repo", repo.Name, "branch", branch)
+	s.recordIncluded(ms.ID, repo.Name, theirs.Snap.Commit, branch)
+
+	return true
+}
+
+// recordIncluded notes that this host's worktree now accounts for a snapshot
+// of the peer's, and when that was by setting it aside, where it was put.
+func (s *Service) recordIncluded(id mission.MissionID, repo, commit, keptOn string) {
+	s.updateLocal(id, "mission.snapshot_merged", func(ms *mission.Mission) {
+		work, ok := ms.Work[repo]
+		if !ok {
+			return
+		}
+
+		work.SyncIncludes = commit
+		ms.Work[repo] = work
+
+		if keptOn != "" {
+			ms.LocalBadges = ms.WithLocalBadge(mission.BadgeDiverged, keptOn)
 		}
 	})
 }
