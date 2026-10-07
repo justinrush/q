@@ -40,7 +40,7 @@ func (s *Service) meterMission(id mission.MissionID) {
 	}
 
 	meter, ok := s.meters[ms.Tool]
-	if !ok {
+	if !ok || !s.holds(ms) {
 		return
 	}
 

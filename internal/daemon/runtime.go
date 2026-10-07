@@ -55,7 +55,7 @@ func (s *Service) RunRuntimeWatchers(ctx context.Context) {
 func (s *Service) pollRuntimes(ctx context.Context) {
 	for _, ms := range s.store.Snapshot().Missions {
 		runtime, ok := s.runtimes[ms.Tool]
-		if !ok || ms.Status == mission.StatusBriefing || ms.Status.Terminal() {
+		if !ok || ms.Status == mission.StatusBriefing || ms.Status.Terminal() || !s.holds(ms) {
 			continue
 		}
 

@@ -67,6 +67,10 @@ type Service struct {
 	brancher Brancher
 	branches *branchCache
 
+	// self is this installation's host id, fixed for the life of the store. It
+	// is what every "do I run this mission" question is answered against.
+	self mission.HostID
+
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
 	inflight   inflight
@@ -138,8 +142,17 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		opt(s)
 	}
 
+	s.self = store.Snapshot().Self.ID
+
 	return s
 }
+
+// holds reports whether this host runs the mission.
+//
+// Everything that observes or drives an agent asks this first. A mission the
+// peer runs has records and worktrees here but no session, and to the code that
+// watches sessions a missing one looks exactly like a dead agent.
+func (s *Service) holds(ms mission.Mission) bool { return ms.Lease.HeldBy(s.self) }
 
 // Hub returns the service's event hub, which the server publishes from.
 func (s *Service) Hub() *Hub { return s.hub }

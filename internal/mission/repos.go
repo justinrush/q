@@ -35,7 +35,9 @@ func CombineRepos(inherited, additional []Repo) ([]Repo, error) {
 			return nil, fmt.Errorf("repo name %q refers to both %s and %s", repo.Name, existing.Path, repo.Path)
 		}
 
-		if existing, ok := byPath[repo.Path]; ok {
+		// A repository a paired host has not located yet has no path. Two of
+		// those are two unknowns, not one checkout under two names.
+		if existing, ok := byPath[repo.Path]; ok && repo.Path != "" {
 			return nil, fmt.Errorf("repo path %s is named both %q and %q", repo.Path, existing.Name, repo.Name)
 		}
 

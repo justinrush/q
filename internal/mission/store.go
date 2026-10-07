@@ -52,7 +52,78 @@ func Open(dirs paths.Dirs, opts ...StoreOption) (*Store, error) {
 
 	s.snap = snap
 
+	if err := s.ensureIdentity(); err != nil {
+		return nil, err
+	}
+
 	return s, nil
+}
+
+// ensureIdentity gives this installation a host id the first time it is needed,
+// and hands it every mission that predates leases.
+//
+// The result is persisted at once rather than with the next mutation. An id
+// that changed between two starts of the daemon would orphan every mission its
+// peer believed this host was running.
+func (s *Store) ensureIdentity() error {
+	snap := s.snap.Clone()
+	if !adoptIdentity(&snap) {
+		return nil
+	}
+
+	if snap.Self.ID == "" {
+		id, err := NewHostID()
+		if err != nil {
+			return err
+		}
+
+		snap.Self.ID = id
+
+		adoptIdentity(&snap)
+	}
+
+	snap.UpdatedAt = s.now()
+
+	if err := s.persist(snap); err != nil {
+		return err
+	}
+
+	s.snap = snap
+
+	return nil
+}
+
+// adoptIdentity fills in the bookkeeping version 3 added, reporting whether
+// anything was missing. With no host id yet it only reports.
+func adoptIdentity(snap *Snapshot) bool {
+	if snap.Self.ID == "" {
+		return true
+	}
+
+	changed := false
+
+	for i := range snap.Operations {
+		if snap.Operations[i].Rev == 0 {
+			snap.Operations[i].Rev = 1
+			changed = true
+		}
+	}
+
+	for i := range snap.Missions {
+		ms := &snap.Missions[i]
+
+		if ms.SpecRev == 0 {
+			ms.SpecRev = 1
+			changed = true
+		}
+
+		if ms.Lease.Holder == "" {
+			ms.Lease = Lease{Holder: snap.Self.ID, Epoch: max(ms.Lease.Epoch, 1)}
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // Snapshot returns a deep copy of the current state.
@@ -70,6 +141,23 @@ func (s *Store) Snapshot() Snapshot {
 // multi-step change cannot leave half of it applied. label describes the change
 // for the event log.
 func (s *Store) Mutate(label string, fn func(*Snapshot) error) error {
+	return s.mutate(label, fn, true)
+}
+
+// Apply is Mutate for state that arrived already decided: a peer's merged
+// records, or a correction to this host's own copy of a mission it does not
+// run.
+//
+// Mutate assumes a change was made here and stamps it accordingly, bumping
+// revisions and settling leases. Doing that to state the peer wrote would count
+// its edit a second time and send it straight back as a newer one, which the
+// peer would count again.
+func (s *Store) Apply(label string, fn func(*Snapshot) error) error {
+	return s.mutate(label, fn, false)
+}
+
+// mutate is the single write path behind Mutate and Apply.
+func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -80,6 +168,13 @@ func (s *Store) Mutate(label string, fn func(*Snapshot) error) error {
 
 	next.SchemaVersion = SchemaVersion
 	next.UpdatedAt = s.now()
+
+	// A mutation may not rewrite who this host is.
+	next.Self.ID = s.snap.Self.ID
+
+	if stamped {
+		stamp(s.snap, &next, next.UpdatedAt)
+	}
 
 	if err := s.persist(next); err != nil {
 		return err
@@ -186,6 +281,14 @@ func migrate(snap Snapshot) Snapshot {
 	// recorded, and the next meter run fills the values in.
 	if snap.SchemaVersion < 2 {
 		snap.SchemaVersion = 2
+	}
+
+	// Version 3 added what two paired hosts need to share missions: a host
+	// identity, a lease and revision on every mission, and a revision on every
+	// operation. A version 2 snapshot has none of them, and the store fills them
+	// in when it opens, since minting an identity can fail and migrate cannot.
+	if snap.SchemaVersion < 3 {
+		snap.SchemaVersion = 3
 	}
 
 	return snap

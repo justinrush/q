@@ -84,6 +84,12 @@ func (s *Service) Reconcile(ctx context.Context) {
 			continue
 		}
 
+		// A mission the peer runs has no session on this host, which is not the
+		// same as its session having died.
+		if !s.holds(ms) {
+			continue
+		}
+
 		if updated, changed := s.reconcileMission(ctx, ms, readings, now); changed {
 			s.persistReconciled(updated)
 		}
