@@ -105,6 +105,8 @@ Press `?` for the full keymap. The essentials:
 | `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+g` sets base branches, `ctrl+s` saves, `ctrl+r` launches |
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
+| `l` | open the selected card’s full launch error; scroll with `j`/`k` or Page Up/Down, close with `esc` |
+| `←` / `→` | focus the previous/next lane |
 | `m` | send a message to a running agent |
 | `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `t` | take a mission from the paired host and run its agent here |

@@ -69,7 +69,7 @@ var boardActions = map[string]boardAction{
 	"left":   (*Board).focusPrevLane,
 	"h":      (*Board).focusPrevLane,
 	"right":  (*Board).focusNextLane,
-	"l":      (*Board).focusNextLane,
+	"l":      (*Board).showLog,
 	"up":     (*Board).selectPrev,
 	"k":      (*Board).selectPrev,
 	"down":   (*Board).selectNext,

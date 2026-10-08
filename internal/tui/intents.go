@@ -25,6 +25,10 @@ func (a *App) handleIntent(msg tea.Msg) tea.Cmd {
 // handleMissionIntent handles the intents concerning missions and the board.
 func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 	switch m := msg.(type) {
+	case missionLogMsg:
+		a.modal = newMissionLog(m.Mission)
+
+		return nil, true
 	case newMissionMsg:
 		return a.showMissionForm(mission.Mission{}), true
 	case editMissionMsg:
