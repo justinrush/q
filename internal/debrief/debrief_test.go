@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"io"
 
@@ -588,5 +589,27 @@ func TestOpenReturnsPanesCreatedBeforeSplitFailure(t *testing.T) {
 
 	if updated.Work["weave"].DebriefPaneID != "" {
 		t.Errorf("failed pane was recorded: %+v", updated.Work["weave"])
+	}
+}
+
+// A mission received from a peer has a launch history but no local tmux session.
+func TestOpenHandedOffMissionNeedsRelaunch(t *testing.T) {
+	opener, fake := newTestOpener(t)
+	ms := debriefMission(t)
+	now := time.Now()
+	ms.StartedAt = &now
+	ms.TmuxSession = ""
+	result, updated, err := opener.Open(t.Context(), ms, api.ModeAttach)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if !result.NeedsRelaunch {
+		t.Fatal("handed-off mission should request relaunch")
+	}
+	if updated.StartedAt == nil {
+		t.Fatal("launch history was lost")
+	}
+	if fake.Transcript() != "" {
+		t.Fatalf("must not start or attach an agent: %s", fake.Transcript())
 	}
 }

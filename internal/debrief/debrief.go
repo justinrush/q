@@ -69,6 +69,11 @@ func New(gitc *git.Client, tmux *terminal.Tmux, window terminal.Opener, opts ...
 // which the caller persists so a second open does not duplicate them.
 func (o *Opener) Open(ctx context.Context, ms mission.Mission, mode api.Mode) (api.Result, mission.Mission, error) {
 	if ms.TmuxSession == "" {
+		if ms.Launched() {
+			// A handoff preserves the run but has no local session yet.
+			return api.Result{NeedsRelaunch: true}, ms, nil
+		}
+
 		return api.Result{}, ms, fmt.Errorf("mission %s has never been launched", ms.ID)
 	}
 
