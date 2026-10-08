@@ -255,6 +255,8 @@ type SyncRequest struct {
 	// anything, so a primary pointed at the wrong machine cannot leave it
 	// believing in a pairing the primary itself is about to reject.
 	Expect mission.HostID `json:"expect,omitempty"`
+	// Witness names the witness the primary consults, empty when it has none.
+	Witness string `json:"witness,omitempty"`
 }
 
 // SyncResponse is the secondary's half.
@@ -267,6 +269,8 @@ type SyncResponse struct {
 	Results []CommandResult `json:"results,omitempty"`
 	// Refs reports the secondary's worktrees.
 	Refs []mission.RepoState `json:"refs,omitempty"`
+	// Witness names the witness the secondary consults, empty when it has none.
+	Witness string `json:"witness,omitempty"`
 }
 
 // CommandResult is what became of one queued command.
@@ -290,7 +294,32 @@ type RemoteStatus struct {
 	Error string `json:"error,omitempty"`
 	// Pending counts commands waiting to reach the peer.
 	Pending int `json:"pending,omitempty"`
+	// Witness is nil when neither host of the pair consults one.
+	Witness *WitnessStatus `json:"witness,omitempty"`
 }
+
+// WitnessStatus describes this daemon's dealings with the pair's witness.
+type WitnessStatus struct {
+	// Name is the witness this host is configured with, empty when it has none.
+	Name string `json:"name,omitempty"`
+	// PeerName is the witness the paired host said it uses. The two must match
+	// for either to rely on it.
+	PeerName string `json:"peerName,omitempty"`
+	// Holder is the host the witness named when it was last asked, empty when
+	// it has not answered since this daemon started.
+	Holder mission.HostID `json:"holder,omitempty"`
+	// Standby reports that this host is not running its unpinned missions,
+	// because it can reach neither its peer nor a witness that vouches for it.
+	Standby bool `json:"standby,omitempty"`
+	// AskedAt is when the witness was last asked.
+	AskedAt time.Time `json:"askedAt,omitzero"`
+	// Error is why the witness could not be asked, empty when it answered.
+	Error string `json:"error,omitempty"`
+}
+
+// Mismatched reports whether the two hosts name different witnesses, one of
+// them possibly none.
+func (w WitnessStatus) Mismatched() bool { return w.Name != w.PeerName }
 
 // Linked reports whether an exchange has completed and the latest one worked.
 func (r RemoteStatus) Linked() bool { return !r.LastSyncAt.IsZero() && r.Error == "" }

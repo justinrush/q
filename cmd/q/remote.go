@@ -40,6 +40,7 @@ func buildRemoteSubcommand() *cobra.Command {
 		buildRemoteStatusSubcommand(),
 		buildRemoteSyncSubcommand(),
 		buildRemoteForgetSubcommand(),
+		buildRemoteWitnessSubcommand(),
 	)
 
 	return cmd
@@ -305,7 +306,7 @@ func buildRemoteStatusSubcommand() *cobra.Command {
 	var asJSON bool
 
 	cmd := &cobra.Command{
-		Use:   "status",
+		Use:   useStatus,
 		Short: "Show which machine this q is paired with and when they last spoke",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -438,6 +439,10 @@ func describeRemote(rep *report, status api.RemoteStatus) {
 
 	if status.Pending > 0 {
 		rep.row("pending\t%d request(s) waiting to reach the other machine", status.Pending)
+	}
+
+	if status.Witness != nil {
+		describeWitness(rep, status)
 	}
 }
 

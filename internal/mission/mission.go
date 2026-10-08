@@ -301,6 +301,11 @@ const (
 	// not been able to confirm with its peer for long enough that the peer may
 	// have taken it over.
 	BadgeUnconfirmed = "unconfirmed"
+	// BadgeStandby marks a mission whose agent this host stopped because it
+	// could reach neither its peer nor the witness, and so could not tell
+	// whether the peer had taken the mission over. The agent is started again
+	// when one of them answers and the mission is still this host's.
+	BadgeStandby = "standby"
 )
 
 // AllBadges returns the holder's badges followed by this host's own.

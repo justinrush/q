@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os/exec"
@@ -10,11 +11,13 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/agy"
+	"github.com/justinrush/q/internal/azure"
 	"github.com/justinrush/q/internal/claude"
 	"github.com/justinrush/q/internal/codex"
 	"github.com/justinrush/q/internal/daemon"
 	"github.com/justinrush/q/internal/debrief"
 	"github.com/justinrush/q/internal/git"
+	"github.com/justinrush/q/internal/k8s"
 	"github.com/justinrush/q/internal/launch"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/opencode"
@@ -162,7 +165,57 @@ func pairingOptions(
 		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
 	}
 
+	witness, err := witnessFor(s)
+	if err != nil {
+		return nil, err
+	}
+
+	if witness != nil {
+		opts = append(opts, daemon.WithWitness(witness))
+	}
+
 	return opts, nil
+}
+
+// witnessFor builds the pair's witness, or nil when none is configured.
+//
+// A witness that cannot be built is an error and not a warning. A daemon that
+// started without the one it was told to consult would take over, or carry on,
+// in exactly the case the witness was configured to prevent.
+func witnessFor(s settings) (daemon.Witness, error) {
+	w := s.Remote.Witness
+
+	switch {
+	case w.Kubernetes != nil && w.Azure != nil:
+		return nil, errors.New("remote.witness names both kubernetes and azure; a pair has one witness")
+	case w.Kubernetes != nil:
+		cfg := *w.Kubernetes
+
+		if cfg.Kubeconfig != "" {
+			path, err := absPath(cfg.Kubeconfig)
+			if err != nil {
+				return nil, fmt.Errorf("remote.witness.kubernetes.kubeconfig: %w", err)
+			}
+
+			cfg.Kubeconfig = path
+		}
+
+		lease, err := k8s.New(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("remote.witness.kubernetes: %w", err)
+		}
+
+		return lease, nil
+	case w.Azure != nil:
+		blob, err := azure.New(*w.Azure)
+		if err != nil {
+			return nil, fmt.Errorf("remote.witness.azure: %w", err)
+		}
+
+		return blob, nil
+	default:
+		return nil, nil
+	}
 }
 
 // remoteFor builds the connection to the paired q, or nil when this machine

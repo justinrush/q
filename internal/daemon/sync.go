@@ -130,7 +130,8 @@ func (l *link) ok(now time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.lastSync, l.err = now, ""
+	// Kept as wall time: how long ago this was has to include time spent asleep.
+	l.lastSync, l.err = wall(now), ""
 }
 
 // fail records why an exchange did not complete, reporting whether that is news.
@@ -199,6 +200,11 @@ func (s *Service) takeoverWindow(snap mission.Snapshot) time.Duration {
 // peerSeen reports whether an exchange completed recently enough that the peer
 // should be treated as present.
 func (s *Service) peerSeen(snap mission.Snapshot, now time.Time) bool {
+	return s.peerSeenWithin(snap, now, s.takeoverWindow(snap))
+}
+
+// peerSeenWithin reports whether an exchange completed within the given time.
+func (s *Service) peerSeenWithin(snap mission.Snapshot, now time.Time, window time.Duration) bool {
 	if snap.Peer == nil {
 		return false
 	}
@@ -211,7 +217,7 @@ func (s *Service) peerSeen(snap mission.Snapshot, now time.Time) bool {
 		last = s.started
 	}
 
-	return !last.IsZero() && now.Sub(last) <= s.takeoverWindow(snap)
+	return !last.IsZero() && wall(now).Sub(wall(last)) <= window
 }
 
 // RunSync exchanges state with the peer on an interval, and at once whenever
@@ -284,6 +290,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		Commands:      snap.Outbox,
 		Refs:          mine,
 		Expect:        snap.PeerID(),
+		Witness:       s.witnessName(),
 	})
 	if err != nil {
 		return err
@@ -295,7 +302,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 
 	_, wasLinked := s.link.state()
 
-	if err := s.applyPeer(ctx, resp.Payload, 0, resp.Results); err != nil {
+	if err := s.applyPeer(ctx, resp.Payload, 0, resp.Witness, resp.Results); err != nil {
 		return err
 	}
 
@@ -412,7 +419,7 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 
 	_, wasLinked := s.link.state()
 
-	if err := s.applyPeer(ctx, req.Payload, window, nil); err != nil {
+	if err := s.applyPeer(ctx, req.Payload, window, req.Witness, nil); err != nil {
 		return api.SyncResponse{}, err
 	}
 
@@ -432,6 +439,7 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 		Payload:  s.store.Snapshot().Payload(),
 		Results:  results,
 		Refs:     s.captured,
+		Witness:  s.witnessName(),
 	}, nil
 }
 
@@ -446,11 +454,13 @@ func protocolMismatch(protocol int, version string) error {
 // applyPeer merges the peer's payload and does what follows from it.
 //
 // takeoverAfter is what the primary asked for, zero on the primary itself.
-// results are the peer's answers to commands this side had queued.
+// witness names the witness the peer consults. results are the peer's answers
+// to commands this side had queued.
 func (s *Service) applyPeer(
 	ctx context.Context,
 	payload mission.Payload,
 	takeoverAfter time.Duration,
+	witness string,
 	results []api.CommandResult,
 ) error {
 	var (
@@ -462,7 +472,7 @@ func (s *Service) applyPeer(
 	primary := s.remote != nil
 
 	err := s.store.Apply("sync.merge", func(snap *mission.Snapshot) error {
-		paired, err := pair(snap, payload.From, takeoverAfter)
+		paired, err := pair(snap, payload.From, takeoverAfter, witness)
 		if err != nil {
 			return err
 		}
@@ -504,7 +514,7 @@ func (s *Service) applyPeer(
 // access to the machine, so this is not a defense against an attacker; it is a
 // defense against pointing a second laptop at a machine that is already
 // another's secondary and having the two fight over its missions.
-func pair(snap *mission.Snapshot, from mission.HostInfo, takeoverAfter time.Duration) (bool, error) {
+func pair(snap *mission.Snapshot, from mission.HostInfo, takeoverAfter time.Duration, witness string) (bool, error) {
 	if !from.ID.Valid() {
 		return false, fmt.Errorf("%w: the paired q sent no host id", ErrInvalid)
 	}
@@ -516,7 +526,7 @@ func pair(snap *mission.Snapshot, from mission.HostInfo, takeoverAfter time.Dura
 	}
 
 	if snap.Peer == nil {
-		snap.Peer = &mission.Peer{HostInfo: from, TakeoverAfter: takeoverAfter}
+		snap.Peer = &mission.Peer{HostInfo: from, TakeoverAfter: takeoverAfter, Witness: witness}
 
 		return true, nil
 	}
@@ -535,6 +545,12 @@ func pair(snap *mission.Snapshot, from mission.HostInfo, takeoverAfter time.Dura
 
 	if takeoverAfter > 0 && snap.Peer.TakeoverAfter != takeoverAfter {
 		snap.Peer.TakeoverAfter, changed = takeoverAfter, true
+	}
+
+	// Unlike the two above this is taken even when empty. A peer that stops
+	// consulting the witness has to be seen to have stopped.
+	if snap.Peer.Witness != witness {
+		snap.Peer.Witness, changed = witness, true
 	}
 
 	return changed, nil
@@ -792,6 +808,7 @@ func (s *Service) RemoteStatus() api.RemoteStatus {
 	if snap.Peer != nil {
 		peer := snap.Peer.HostInfo
 		status.Peer = &peer
+		status.Witness = s.witnessStatus(snap)
 	}
 
 	return status
@@ -880,6 +897,15 @@ func orphan(ms *mission.Mission, now time.Time) {
 		ms.Status = mission.StatusDebrief
 		ms.StatusChangedAt = now
 	}
+}
+
+// witnessName names this host's witness for the peer, empty when it has none.
+func (s *Service) witnessName() string {
+	if s.witness == nil {
+		return ""
+	}
+
+	return s.witness.Name()
 }
 
 // publishRemote tells open boards the pairing changed.
