@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/justinrush/q/internal/api"
@@ -16,6 +18,7 @@ import (
 	"github.com/justinrush/q/internal/k8s"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/runner"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +27,13 @@ const useStatus = "status"
 
 // witnessProbeTimeout bounds the check a witness command makes before saving.
 const witnessProbeTimeout = 20 * time.Second
+
+// peerWitnessTimeout bounds the same command run on the other machine, which
+// makes that check and then restarts its daemon.
+const peerWitnessTimeout = 90 * time.Second
+
+// flagLocal is the flag that keeps a witness command to this machine.
+const flagLocal = "local"
 
 func buildRemoteWitnessSubcommand() *cobra.Command {
 	cmd := &cobra.Command{
@@ -41,12 +51,13 @@ func buildRemoteWitnessSubcommand() *cobra.Command {
 			"witness nor the other machine, stands by: it stops the agents the other " +
 			"machine would have taken over and starts them again, or accepts the " +
 			"takeover, once the two have spoken.\n\n" +
-			"Each machine reaches the witness with its own credentials, so it is set up " +
-			"on both, naming the same record:\n\n" +
-			"  q remote witness kubernetes --namespace q        # on each machine\n" +
+			"Both machines consult it, naming the same record. Set it up from the " +
+			"laptop and the same command is run on the other machine over ssh:\n\n" +
+			"  q remote witness kubernetes --namespace q\n" +
 			"  q remote witness azure mystorageaccount          # or\n\n" +
-			"Until both name the same witness, nothing is taken over at all, and " +
-			"`q remote status` says so.",
+			"Each machine reaches the witness with its own credentials, and each checks " +
+			"that it can before saving anything. Until both name the same witness, " +
+			"nothing is taken over at all, and `q remote status` says so.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
@@ -63,7 +74,11 @@ func buildRemoteWitnessSubcommand() *cobra.Command {
 }
 
 func buildWitnessKubernetesSubcommand() *cobra.Command {
-	var k kubernetesWitnessConfig
+	var (
+		k     kubernetesWitnessConfig
+		peer  kubernetesWitnessConfig
+		local bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "kubernetes",
@@ -71,17 +86,27 @@ func buildWitnessKubernetesSubcommand() *cobra.Command {
 		Long: "Use a coordination.k8s.io Lease as the witness, reached with this machine's " +
 			"kubeconfig. The Lease is read and written back once to prove the " +
 			"credentials can do both, and nothing is saved if they cannot.\n\n" +
-			"The namespace and lease name must be the same on both machines. The " +
-			"kubeconfig and context are this machine's own and need not be.\n\n" +
+			"Run on the primary, this sets the other machine up too, with the same " +
+			"namespace and lease name. The kubeconfig and context are each machine's " +
+			"own: the other uses its defaults unless --peer-kubeconfig or " +
+			"--peer-context say otherwise. --local leaves the other machine alone.\n\n" +
 			"The credentials need get, create and update on leases in that namespace " +
 			"and nothing else.",
 		Example: "  q remote witness kubernetes\n" +
 			"  q remote witness kubernetes --context home --namespace q --lease laptop-and-mini",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return setWitness(cmd, witnessConfig{Kubernetes: &k})
+			peer.Namespace, peer.Lease = k.Namespace, k.Lease
+
+			return setWitness(cmd, witnessConfig{Kubernetes: &k}, witnessConfig{Kubernetes: &peer}, local)
 		},
 	}
+
+	cmd.Flags().StringVar(&peer.Kubeconfig, "peer-kubeconfig", "",
+		"Kubeconfig file on the other machine (default its own search)")
+	cmd.Flags().StringVar(&peer.Context, "peer-context", "",
+		"Kubeconfig context on the other machine (default its current one)")
+	cmd.Flags().BoolVar(&local, flagLocal, false, "Set up this machine only")
 
 	cmd.Flags().StringVar(&k.Kubeconfig, "kubeconfig", "",
 		"Kubeconfig file (default $KUBECONFIG, then ~/.kube/config, then the pod's service account)")
@@ -93,7 +118,10 @@ func buildWitnessKubernetesSubcommand() *cobra.Command {
 }
 
 func buildWitnessAzureSubcommand() *cobra.Command {
-	var a azureWitnessConfig
+	var (
+		a     azureWitnessConfig
+		local bool
+	)
 
 	cmd := &cobra.Command{
 		Use:   "azure <storage-account>",
@@ -102,7 +130,9 @@ func buildWitnessAzureSubcommand() *cobra.Command {
 			"`az login` on a laptop, a managed identity on a VM, or the AZURE_* " +
 			"environment variables. The blob is read and written back once to prove " +
 			"the identity can do both, and nothing is saved if it cannot.\n\n" +
-			"The account, container and blob must be the same on both machines. The " +
+			"Run on the primary, this sets the other machine up too, naming the same " +
+			"account, container and blob and signing in as whoever `az login` says it " +
+			"is there. --local leaves the other machine alone. The " +
 			"container has to exist already, and the identity needs the Storage Blob " +
 			"Data Contributor role on it.",
 		Example: "  q remote witness azure mystorageaccount\n" +
@@ -111,9 +141,11 @@ func buildWitnessAzureSubcommand() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			a.Account = args[0]
 
-			return setWitness(cmd, witnessConfig{Azure: &a})
+			return setWitness(cmd, witnessConfig{Azure: &a}, witnessConfig{Azure: &a}, local)
 		},
 	}
+
+	cmd.Flags().BoolVar(&local, flagLocal, false, "Set up this machine only")
 
 	cmd.Flags().StringVar(&a.Container, "container", azure.DefaultContainer, "Container holding the blob")
 	cmd.Flags().StringVar(&a.Blob, "blob", azure.DefaultBlob, "Name of the blob")
@@ -124,8 +156,9 @@ func buildWitnessAzureSubcommand() *cobra.Command {
 }
 
 // setWitness proves a witness works from this machine, saves it, and restarts
-// the daemon to consult it.
-func setWitness(cmd *cobra.Command, w witnessConfig) error {
+// the daemon to consult it. On a primary it then has the other machine do the
+// same with forPeer, unless local says not to.
+func setWitness(cmd *cobra.Command, w, forPeer witnessConfig, local bool) error {
 	path := configPath()
 
 	probe := cfg
@@ -158,6 +191,10 @@ func setWitness(cmd *cobra.Command, w witnessConfig) error {
 		return fmt.Errorf("the configuration is saved, but the daemon did not restart: %w", err)
 	}
 
+	if !local {
+		tellPeer(cmd, rep, peerWitnessArgs(forPeer))
+	}
+
 	status, err := remoteStatus(cmd.Context())
 	if err != nil {
 		return err
@@ -181,6 +218,99 @@ func setWitness(cmd *cobra.Command, w witnessConfig) error {
 	_, err = io.WriteString(cmd.OutOrStdout(), rep.String())
 
 	return err
+}
+
+// peerWitnessArgs is the q command that sets a witness up on the other machine,
+// or clears it when w names none. It always carries --local: the other machine
+// is being told, and has nobody to tell in turn.
+func peerWitnessArgs(w witnessConfig) []string {
+	args := []string{"remote", "witness"}
+
+	flag := func(name, value string) {
+		if value != "" {
+			args = append(args, "--"+name, value)
+		}
+	}
+
+	switch {
+	case w.Kubernetes != nil:
+		args = append(args, "kubernetes")
+		flag("namespace", w.Kubernetes.Namespace)
+		flag("lease", w.Kubernetes.Lease)
+		flag("kubeconfig", w.Kubernetes.Kubeconfig)
+		flag("context", w.Kubernetes.Context)
+	case w.Azure != nil:
+		args = append(args, "azure")
+		flag("container", w.Azure.Container)
+		flag("blob", w.Azure.Blob)
+		flag("endpoint", w.Azure.Endpoint)
+		// After the flags: an account name is the one thing here a person
+		// chose freely, and it must not be read as a flag.
+		args = append(args, "--"+flagLocal, "--", w.Azure.Account)
+
+		return args
+	default:
+		args = append(args, "clear")
+	}
+
+	return append(args, "--"+flagLocal)
+}
+
+// manualCommand renders a command sent to the other machine as a person would
+// type it there.
+func manualCommand(args []string) string {
+	typed := slices.DeleteFunc(slices.Clone(args), func(arg string) bool {
+		return arg == "--"+flagLocal || arg == "--"
+	})
+
+	return "q " + strings.Join(typed, " ")
+}
+
+// tellPeer runs a witness command on the other machine and reports how it
+// went, reporting whether it was carried out there.
+//
+// Only a primary has a way to reach its peer, so anywhere else this does
+// nothing. A failure is reported and not returned: this machine's own change
+// is already made, and a pair that disagrees about its witness takes nothing
+// over, which is the safe way to be left until the command is run there.
+func tellPeer(cmd *cobra.Command, rep *report, args []string) bool {
+	if len(cfg.Remote.SSH) == 0 {
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), peerWitnessTimeout)
+	defer cancel()
+
+	err := func() error {
+		dirs, err := paths.Resolve(pathOverrides())
+		if err != nil {
+			return err
+		}
+
+		link, err := remoteFor(cfg, dirs, runner.OS{})
+		if err != nil {
+			return err
+		}
+
+		_, err = link.Exec(ctx, args...)
+
+		return err
+	}()
+	if err != nil {
+		rep.line("the other machine was not changed: %v", err)
+		rep.line("run `%s` there", manualCommand(args))
+
+		return false
+	}
+
+	rep.line("did the same on the other machine")
+
+	// An exchange is how each learns what the other now consults.
+	if c, err := connectDaemon(ctx); err == nil {
+		_, _ = c.RemoteSync(ctx)
+	}
+
+	return true
 }
 
 // probeWitness reads a witness's record and writes it back unchanged, which is
@@ -350,12 +480,15 @@ func buildWitnessTakeSubcommand() *cobra.Command {
 }
 
 func buildWitnessClearSubcommand() *cobra.Command {
-	return &cobra.Command{
+	var local bool
+
+	cmd := &cobra.Command{
 		Use:   "clear",
-		Short: "Stop consulting a witness on this machine",
-		Long: "Remove remote.witness from the config file and restart the daemon. Run it " +
-			"on both machines: while only one consults a witness, neither takes over " +
-			"from the other. The record itself is left where it is.",
+		Short: "Stop consulting a witness",
+		Long: "Remove remote.witness from the config file and restart the daemon. Run on " +
+			"the primary, this does the same on the other machine; --local leaves it " +
+			"alone. While only one consults a witness, neither takes over from the " +
+			"other. The record itself is left where it is.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			path := configPath()
@@ -379,13 +512,26 @@ func buildWitnessClearSubcommand() *cobra.Command {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(),
-				"removed remote.witness from %s and restarted the daemon\n"+
-					"run `q remote witness clear` on the other machine too\n", path)
+			rep := newReport()
+			rep.line("removed remote.witness from %s and restarted the daemon", path)
+
+			switch {
+			case local:
+			case len(cfg.Remote.SSH) == 0:
+				rep.line("run `q remote witness clear` on the other machine too")
+			default:
+				tellPeer(cmd, rep, peerWitnessArgs(witnessConfig{}))
+			}
+
+			_, err = io.WriteString(cmd.OutOrStdout(), rep.String())
 
 			return err
 		},
 	}
+
+	cmd.Flags().BoolVar(&local, flagLocal, false, "Change this machine only")
+
+	return cmd
 }
 
 // remoteStatus asks the daemon about its pairing.

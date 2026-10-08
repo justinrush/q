@@ -271,11 +271,12 @@ missions:
   It accepts whatever was taken over, takes the claim back, and restarts its
   own agent, in the conversation it had, for anything that was not.
 
-Two stores are supported. Each machine reaches the witness with its own
-credentials, so this is run on **both**, naming the same record:
+Two stores are supported. Both machines consult the witness, naming the same
+record. Run the command on the laptop and it runs the same one on the other
+machine over ssh, so one command sets up the pair:
 
 ```sh
-# a Kubernetes Lease, with this machine's kubeconfig
+# a Kubernetes Lease, with each machine's own kubeconfig
 q remote witness kubernetes --namespace q --lease laptop-and-mini
 
 # or a blob in an Azure storage account, with `az login` or a managed identity
@@ -283,8 +284,14 @@ q remote witness azure mystorageaccount --container q
 
 q remote witness status   # who the witness names, read live
 q remote witness take     # claim it for this machine regardless
-q remote witness clear    # stop consulting it; run on both
+q remote witness clear    # stop consulting it, on both machines
 ```
+
+Each machine reaches the witness with its own credentials. The other machine
+uses its default kubeconfig and context unless `--peer-kubeconfig` or
+`--peer-context` name others, and whatever `az login` says there. `--local`
+changes this machine only; if the other machine could not be reached or could
+not use the witness, the command says so and prints what to run there.
 
 Either command reads the record and writes it back before saving anything, so
 missing permissions are found then and not at the first closed lid. For

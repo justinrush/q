@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +246,98 @@ func TestDescribeRemoteExplainsTheWitness(t *testing.T) {
 				if !strings.Contains(rep.String(), want) {
 					t.Errorf("output lacks %q:\n%s", want, rep.String())
 				}
+			}
+		})
+	}
+}
+
+// The other machine is told with the same command a person would run there,
+// carrying what the two must agree on and nothing that is this machine's own.
+func TestPeerWitnessArgs(t *testing.T) {
+	cases := []struct {
+		name       string
+		witness    witnessConfig
+		want       []string
+		wantManual string
+	}{
+		{
+			name: "a lease is named, and the peer's own way of reaching it",
+			witness: witnessConfig{Kubernetes: &kubernetesWitnessConfig{
+				Namespace: "q", Lease: "laptop-and-mini", Context: "home",
+			}},
+			want: []string{
+				"remote", "witness", "kubernetes",
+				"--namespace", "q", "--lease", "laptop-and-mini", "--context", "home", "--local",
+			},
+			wantManual: "q remote witness kubernetes --namespace q --lease laptop-and-mini --context home",
+		},
+		{
+			name: "an account that looks like a flag is still an account",
+			witness: witnessConfig{Azure: &azureWitnessConfig{
+				Account: "-odd", Container: "q", Blob: "pair.json",
+			}},
+			want: []string{
+				"remote", "witness", "azure", "--container", "q", "--blob", "pair.json", "--local", "--", "-odd",
+			},
+			wantManual: "q remote witness azure --container q --blob pair.json -odd",
+		},
+		{
+			name:       "no witness clears it",
+			witness:    witnessConfig{},
+			want:       []string{"remote", "witness", "clear", "--local"},
+			wantManual: "q remote witness clear",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := peerWitnessArgs(tc.witness)
+
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("args:\n got %q\nwant %q", got, tc.want)
+			}
+
+			if manual := manualCommand(got); manual != tc.wantManual {
+				t.Errorf("manual:\n got %s\nwant %s", manual, tc.wantManual)
+			}
+		})
+	}
+}
+
+// Every flag sent to the other machine has to be one its q accepts.
+func TestPeerWitnessArgsParse(t *testing.T) {
+	cases := []struct {
+		name    string
+		witness witnessConfig
+	}{
+		{name: "kubernetes", witness: witnessConfig{Kubernetes: &kubernetesWitnessConfig{
+			Kubeconfig: "/k", Context: "home", Namespace: "q", Lease: "pair",
+		}}},
+		{name: "azure", witness: witnessConfig{Azure: &azureWitnessConfig{
+			Account: "acct", Container: "q", Blob: "pair.json", Endpoint: "https://example.test",
+		}}},
+		{name: "clear", witness: witnessConfig{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := peerWitnessArgs(tc.witness)
+
+			sub, rest, err := buildRemoteSubcommand().Find(args[1:])
+			if err != nil {
+				t.Fatalf("Find: %v", err)
+			}
+
+			if sub.Name() != args[2] {
+				t.Fatalf("resolved %q, want %q", sub.Name(), args[2])
+			}
+
+			if err := sub.ParseFlags(rest); err != nil {
+				t.Fatalf("ParseFlags(%q): %v", rest, err)
+			}
+
+			if local, err := sub.Flags().GetBool(flagLocal); err != nil || !local {
+				t.Errorf("--local = %v, %v; the other machine would try to tell its own peer", local, err)
 			}
 		})
 	}

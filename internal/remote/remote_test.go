@@ -203,3 +203,78 @@ func TestAttachArgvAsksForATerminalAndRunsQOnThePeer(t *testing.T) {
 		t.Error("an unconfigured command produced something to run")
 	}
 }
+
+// A config change on the peer is a command there, not a request to its daemon.
+// Its arguments reach a shell, so each is quoted; the binary is not, or its ~
+// would not expand.
+func TestExecRunsQOnThePeer(t *testing.T) {
+	const prefix = sshBin + " -o BatchMode=yes -o ConnectTimeout=5" +
+		" -o ControlMaster=auto -o ControlPath=/state/ssh-%C -o ControlPersist=10m" +
+		" mini.local ~/.local/bin/q "
+
+	cases := []struct {
+		name        string
+		args        []string
+		exit        int
+		stderr      string
+		wantArgv    string
+		wantErr     string
+		unreachable bool
+	}{
+		{
+			name:     "arguments are quoted for the peer's shell",
+			args:     []string{"remote", "witness", "azure", "my account", "--local"},
+			wantArgv: prefix + "'remote' 'witness' 'azure' 'my account' '--local'",
+		},
+		{
+			name:     "q refusing on the peer is its error, not an unreachable peer",
+			args:     []string{"remote", "witness", "clear"},
+			exit:     1,
+			stderr:   "Error: the lease cannot be written",
+			wantArgv: prefix + "'remote' 'witness' 'clear'",
+			wantErr:  "Error: the lease cannot be written",
+		},
+		{
+			name:        "ssh failing to connect is an unreachable peer",
+			args:        []string{"remote", "witness", "clear"},
+			exit:        255,
+			stderr:      "ssh: connect to host mini.local port 22: Operation timed out",
+			wantArgv:    prefix + "'remote' 'witness' 'clear'",
+			wantErr:     "Operation timed out",
+			unreachable: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := runner.NewFake()
+			fake.Default = runner.Result{Stdout: []byte("done\n")}
+
+			if tc.exit != 0 {
+				fake.ExpectExit(tc.wantArgv, tc.exit, tc.stderr)
+			}
+
+			out, err := sshCommand(fake).Exec(t.Context(), tc.args...)
+
+			if got := fake.Calls()[0].String(); got != tc.wantArgv {
+				t.Errorf("argv:\n got %s\nwant %s", got, tc.wantArgv)
+			}
+
+			if tc.wantErr == "" {
+				if err != nil || out != "done\n" {
+					t.Fatalf("out = %q, err = %v", out, err)
+				}
+
+				return
+			}
+
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err = %v, want it to carry %q", err, tc.wantErr)
+			}
+
+			if errors.Is(err, ErrUnreachable) != tc.unreachable {
+				t.Errorf("unreachable = %v, want %v", errors.Is(err, ErrUnreachable), tc.unreachable)
+			}
+		})
+	}
+}
