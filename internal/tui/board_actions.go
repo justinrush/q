@@ -10,6 +10,8 @@ import (
 // Keeping the view free of I/O is what lets every keypress handler stay a few lines and
 // be tested by asserting the message it produces, with no server involved.
 type (
+	// missionLogMsg opens the full retained launch diagnostics.
+	missionLogMsg struct{ Mission mission.Mission }
 	// openDebriefMsg asks to open a mission's debrief session.
 	openDebriefMsg struct{ Mission mission.Mission }
 	// messagePromptMsg asks for the dialog that sends text to a live agent.
@@ -197,3 +199,9 @@ func (b *Board) reorder(delta int) tea.Cmd {
 
 // reorderDown moves the focused mission later in its lane.
 func (b *Board) reorderDown() tea.Cmd { return b.reorder(1) }
+
+func (b *Board) showLog() tea.Cmd {
+	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		return emit(missionLogMsg{Mission: ms})
+	})
+}

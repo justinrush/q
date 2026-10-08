@@ -59,6 +59,7 @@ type Board struct {
 	First      key.Binding
 	Last       key.Binding
 	Open       key.Binding
+	Log        key.Binding
 	Message    key.Binding
 	New        key.Binding
 	Edit       key.Binding
@@ -76,7 +77,7 @@ type Board struct {
 func NewBoard() Board {
 	return Board{
 		Left:       key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "lane")),
-		Right:      key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "lane")),
+		Right:      key.NewBinding(key.WithKeys("right"), key.WithHelp("→", "lane")),
 		Up:         key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "card")),
 		Down:       key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "card")),
 		MoveLeft:   key.NewBinding(key.WithKeys("H"), key.WithHelp("H/L", "move card")),
@@ -87,6 +88,7 @@ func NewBoard() Board {
 		First:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g/G", "first/last")),
 		Last:       key.NewBinding(key.WithKeys("G")),
 		Open:       key.NewBinding(key.WithKeys("enter", "ctrl+o"), key.WithHelp("enter", "open debrief")),
+		Log:        key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "launch log")),
 		Message:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "message agent")),
 		New:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new mission")),
 		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
@@ -103,14 +105,14 @@ func NewBoard() Board {
 
 // ShortHelp implements help.KeyMap.
 func (b Board) ShortHelp() []key.Binding {
-	return []key.Binding{b.Left, b.Down, b.MoveLeft, b.Status, b.Open, b.New}
+	return []key.Binding{b.Left, b.Down, b.MoveLeft, b.Status, b.Open, b.Log, b.New}
 }
 
 // FullHelp implements help.KeyMap.
 func (b Board) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{b.Left, b.Right, b.Up, b.Down, b.Lane, b.First},
-		{b.MoveLeft, b.ReorderUp, b.Open, b.Message},
+		{b.MoveLeft, b.ReorderUp, b.Open, b.Log, b.Message},
 		{b.New, b.Edit, b.Delete, b.TogglePlan, b.Queue},
 		{b.Status, b.ToggleDone, b.Filter, b.Take},
 	}
