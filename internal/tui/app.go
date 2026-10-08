@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
@@ -501,7 +502,39 @@ func (a *App) header() string {
 
 	left := styles.Title.Render("q ") + strings.Join(tabs, " ")
 
-	return lipgloss.JoinVertical(lipgloss.Left, left+"  "+a.status(), "")
+	host := a.snapshot.Self.Name
+	if host == "" {
+		host = string(a.snapshot.Self.ID)
+	}
+	if host == "" {
+		host = "connecting…"
+	}
+
+	// Keep the tabs in place so their mouse targets do not move. Center the
+	// local host when there is room, and use the spare header row for status
+	// when it would collide with the badge.
+	width := max(a.width, 1)
+	leftWidth := lipgloss.Width(left)
+	badgeWidth := min(lipgloss.Width(host)+2, max(width-leftWidth-1, 3))
+	badge := styles.HostBadge.Render(ansi.Truncate(host, badgeWidth-2, "…"))
+	start := max(leftWidth+1, (width-lipgloss.Width(badge))/2)
+	line := left + strings.Repeat(" ", start-leftWidth) + badge
+	status := a.status()
+	second := ""
+	if status != "" {
+		room := width - lipgloss.Width(line) - 2
+		if lipgloss.Width(status) <= room {
+			line += strings.Repeat(" ", width-lipgloss.Width(line)-lipgloss.Width(status)) + status
+		} else {
+			second = ansi.Truncate(status, width, "…")
+		}
+	}
+	// Extremely narrow terminals still keep the host visible on the second row.
+	if lipgloss.Width(line) > width {
+		line = ansi.Truncate(left, width, "…")
+		second = styles.HostBadge.Render(ansi.Truncate(host, max(width-2, 0), "…"))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, line, ansi.Truncate(second, width, "…"))
 }
 
 // status renders the right-hand side of the header.
