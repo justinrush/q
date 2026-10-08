@@ -51,7 +51,7 @@ func panesReply(paneID, command string, dead bool) string {
 }
 
 // listPanesArgv is the argv the launcher uses to inspect a session's panes.
-var listPanesArgv = tmuxBin + " list-panes -t =" + testSession +
+var listPanesArgv = tmuxBin + " list-panes -s -t =" + testSession +
 	" -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
 
 // This is the most dangerous path in q. If the agent has exited and its pane

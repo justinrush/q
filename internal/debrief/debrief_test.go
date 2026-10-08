@@ -102,7 +102,7 @@ func expectTouched(fake *runner.Fake, ms mission.Mission, repo, status, count st
 }
 
 // listPanesArgv is the argv used to inspect the session's panes.
-var listPanesArgv = tmuxBin + " list-panes -t =" + session +
+var listPanesArgv = tmuxBin + " list-panes -s -t =" + session +
 	" -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
 
 // An untouched repo gets no pane. That is the entire point of the check: a debrief

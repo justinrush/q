@@ -210,7 +210,7 @@ func TestSplitWindowUsesModernSizeFlag(t *testing.T) {
 func TestListPanesParsesFields(t *testing.T) {
 	tmux, fake := newTestTmux()
 	fake.Expect(
-		tmuxBin+" list-panes -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
+		tmuxBin+" list-panes -s -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
 		"%13\t0\tclaude\t/missions/t\n%14\t1\tzsh\t/missions/t/weave",
 	)
 
@@ -231,6 +231,45 @@ func TestListPanesParsesFields(t *testing.T) {
 	// message-sending guard depends on noticing it.
 	if !panes[1].Dead {
 		t.Errorf("second pane should be dead: %+v", panes[1])
+	}
+}
+
+// A session target has to list every window. tmux otherwise answers with the
+// session's current window alone, and a pane in another window reads as closed.
+func TestListPanesScope(t *testing.T) {
+	const format = " -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
+
+	cases := []struct {
+		name   string
+		target Target
+		argv   string
+	}{
+		{
+			name:   "session covers every window",
+			target: Session("q-mission"),
+			argv:   tmuxBin + " list-panes -s -t =q-mission" + format,
+		},
+		{
+			name:   "window stays within itself",
+			target: Window("q-mission", "agent"),
+			argv:   tmuxBin + " list-panes -t =q-mission:agent" + format,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmux, fake := newTestTmux()
+			fake.Expect(tc.argv, "%13\t0\tclaude\t/missions/t")
+
+			panes, err := tmux.ListPanes(t.Context(), tc.target)
+			if err != nil {
+				t.Fatalf("ListPanes: %v", err)
+			}
+
+			if len(panes) != 1 {
+				t.Fatalf("len = %d, want 1", len(panes))
+			}
+		})
 	}
 }
 
