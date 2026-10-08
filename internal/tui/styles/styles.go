@@ -63,6 +63,8 @@ var (
 var (
 	// App wraps the whole screen.
 	App = lipgloss.NewStyle().Padding(0, 1)
+	// HostBadge identifies the local q host in the top bar.
+	HostBadge = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#B91C1C")).Bold(true).Padding(0, 1)
 	// Title is the application title in the tab bar.
 	Title = lipgloss.NewStyle().Foreground(Accent).Bold(true)
 	// TabActive is the selected tab.

@@ -223,10 +223,20 @@ func (s *Service) settleWorktrees(ctx context.Context, mine, theirs []mission.Re
 			continue
 		}
 
+		missing := map[string]bool{}
+		for _, repo := range ms.LaunchRepos {
+			_, have := liveWork(ms, repo.Name)
+			missing[repo.Name] = !have
+		}
 		mirrored := s.provisionMirror(ctx, ms, peer)
-		created := mirrored.MissionDir != ms.MissionDir || len(mirrored.Work) != len(ms.Work)
+		created := map[string]bool{}
+		for _, repo := range mirrored.LaunchRepos {
+			if _, have := liveWork(mirrored, repo.Name); have && missing[repo.Name] {
+				created[repo.Name] = true
+			}
+		}
 
-		if s.settleMission(ctx, mirrored, own, peer) || created {
+		if s.settleMission(ctx, mirrored, own, peer, created) || len(created) > 0 {
 			changed = true
 		}
 	}
@@ -251,7 +261,9 @@ func (s *Service) provisionMirror(
 	ms mission.Mission,
 	peer map[mission.RepoKey]mission.RepoState,
 ) mission.Mission {
-	if s.holds(ms) {
+	// A handoff can arrive before this host has every worktree. Complete it
+	// while idle, before relaunch, without touching existing worktrees.
+	if s.holds(ms) && (ms.MovedFrom == "" || ms.Status == mission.StatusActive) {
 		return ms
 	}
 
@@ -330,6 +342,7 @@ func (s *Service) settleMission(
 	ctx context.Context,
 	ms mission.Mission,
 	own, peer map[mission.RepoKey]mission.RepoState,
+	created map[string]bool,
 ) bool {
 	holds := s.holds(ms)
 	edited, took := false, false
@@ -358,7 +371,7 @@ func (s *Service) settleMission(
 			}
 		}
 
-		switch mission.Settle(mine, peer[key], holds) {
+		switch mission.Settle(mine, peer[key], holds && !created[repo.Name]) {
 		case mission.SettleAgreed:
 			s.recordAgreed(ctx, ms.ID, repo, mine.Snap.Commit)
 		case mission.SettleTake:
