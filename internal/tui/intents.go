@@ -25,6 +25,17 @@ func (a *App) handleIntent(msg tea.Msg) tea.Cmd {
 // handleMissionIntent handles the intents concerning missions and the board.
 func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 	switch m := msg.(type) {
+	case copyMissionLogMsg:
+		return a.copyMissionLog(m.Log), true
+	case troubleshootMissionMsg:
+		return a.troubleshootMission(m.Log), true
+	case missionLogResultMsg:
+		m.Log.status = m.Text
+		if m.Troubleshoot {
+			m.Log.queuing = false
+			m.Log.queued = !m.Err
+		}
+		return emit(toastMsg{text: m.Text, err: m.Err}), true
 	case missionLogMsg:
 		a.modal = newMissionLog(m.Mission)
 

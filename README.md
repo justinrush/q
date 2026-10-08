@@ -105,13 +105,15 @@ Press `?` for the full keymap. The essentials:
 | `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+g` sets base branches, `ctrl+s` saves, `ctrl+r` launches |
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
-| `l` | open the selected card’s full launch error; scroll with `j`/`k` or Page Up/Down, close with `esc` |
+| `l` | open the selected card’s full launch error; scroll with `j`/`k` or Page Up/Down, `c` copies the full log, `t` queues a troubleshooting mission with the source brief and diagnostics, close with `esc` |
 | `←` / `→` | focus the previous/next lane |
 | `m` | send a message to a running agent |
 | `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `t` | take a mission from the paired host and run its agent here |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
+
+Log copying uses the native clipboard on a local Mac and tmux’s `load-buffer -w` over SSH inside tmux. Elsewhere it sends OSC 52 to the viewing terminal. Remote copying requires terminal clipboard support; tmux supports `set-clipboard external` or `on`. Troubleshooting missions inherit the source operation, agent, model, effort, extra repos, and base branches.
 
 Mouse is supported out of the box:
 - **Click** a mission card to shift focus to it. Click a lane header or lane column to focus that lane.
