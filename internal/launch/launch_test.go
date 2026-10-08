@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 const (
@@ -430,10 +431,36 @@ func TestLaunchPinsSessionOptions(t *testing.T) {
 		"allow-rename off",
 		"window-size latest",
 		"remain-on-exit on",
+		"pane-border-status top",
+		"pane-border-format #[bold] q · executor:",
 	} {
 		if !strings.Contains(transcript, want) {
 			t.Errorf("missing tmux option %q:\n%s", want, transcript)
 		}
+	}
+}
+
+func TestExecutorBannerUsesLiteralHostNamesAndHandoff(t *testing.T) {
+	launcher, _, _ := newTestLauncher(t)
+	launcher.now = func() time.Time { return time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC) }
+	launcher.hostSnapshot = func() mission.Snapshot {
+		return mission.Snapshot{
+			Self: mission.HostInfo{ID: "here", Name: "mini#(command)\n"},
+			Peer: &mission.Peer{HostInfo: mission.HostInfo{ID: "there", Name: "laptop"}},
+		}
+	}
+	ms := testMission()
+	ms.MovedFrom = "there"
+	ms.Lease.Epoch = 3
+	got := launcher.executorBanner(ms)
+	for _, want := range []string{"executor: mini##(command) ", "from: laptop", "ownership: 3", "started: " + launcher.now().Format(time.RFC3339)} {
+		if !strings.Contains(got, want) {
+			t.Errorf("banner %q missing %q", got, want)
+		}
+	}
+	ms.MovedFrom = ""
+	if got := launcher.executorBanner(ms); strings.Contains(got, "from:") {
+		t.Errorf("local launch claims a handoff: %q", got)
 	}
 }
 

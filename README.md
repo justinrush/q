@@ -249,6 +249,11 @@ worktrees, with the agent's pane attached to the other machine over ssh. Press
 `t`, or run `q mission take`, to bring a mission here without waiting for a
 turn to end.
 
+The agent pane has a persistent banner showing its executor's machine name,
+ownership number, and session start time. After a handoff it also names the
+previous machine. The banner travels with the live pane when viewed over ssh
+and stays visible when the agent redraws its terminal.
+
 ### A witness for split networks
 
 Silence is all the secondary can observe, and it has two causes. A closed lid

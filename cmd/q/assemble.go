@@ -100,7 +100,7 @@ func assembleService(
 
 	opts = append(append(opts, daemon.WithBrancher(gitc)), pairing...)
 
-	launchOpts := []launch.Option{launch.WithLogger(logger)}
+	launchOpts := []launch.Option{launch.WithLogger(logger), launch.WithHostSnapshot(store.Snapshot)}
 	for _, agent := range agentsFor(s) {
 		launchOpts = append(launchOpts, launch.WithAgent(agent))
 	}

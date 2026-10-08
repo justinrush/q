@@ -44,12 +44,18 @@ type Workspace interface {
 // start the session — and delegates each step: worktrees to a [Workspace], the
 // invocation to a [mission.Agent], and the session itself to tmux.
 type Launcher struct {
-	dirs      paths.Dirs
-	workspace Workspace
-	tmux      *terminal.Tmux
-	agents    map[mission.Tool]mission.Agent
-	logger    *slog.Logger
-	now       func() time.Time
+	dirs         paths.Dirs
+	workspace    Workspace
+	tmux         *terminal.Tmux
+	agents       map[mission.Tool]mission.Agent
+	logger       *slog.Logger
+	now          func() time.Time
+	hostSnapshot func() mission.Snapshot
+}
+
+// WithHostSnapshot supplies the current machine names for the executor banner.
+func WithHostSnapshot(snapshot func() mission.Snapshot) Option {
+	return func(l *Launcher) { l.hostSnapshot = snapshot }
 }
 
 // Option configures a Launcher.
