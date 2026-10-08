@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justinrush/q/internal/azure"
+	"github.com/justinrush/q/internal/k8s"
 	"github.com/justinrush/q/internal/paths"
 )
 
@@ -93,6 +95,32 @@ type remoteConfig struct {
 	// Interval and TakeoverAfter are duration strings, e.g. "15s" and "5m".
 	Interval      string `json:"interval,omitempty"`
 	TakeoverAfter string `json:"takeoverAfter,omitempty"`
+	// Witness is where the pair keeps its claim. Unlike the rest of this
+	// section it is set on both machines, each with its own way of reaching
+	// the same record.
+	Witness *witnessConfig `json:"witness,omitempty"`
+}
+
+// witnessConfig names the pair's witness. Exactly one kind is set.
+type witnessConfig struct {
+	Kubernetes *kubernetesWitnessConfig `json:"kubernetes,omitempty"`
+	Azure      *azureWitnessConfig      `json:"azure,omitempty"`
+}
+
+// kubernetesWitnessConfig keeps the claim in a Lease.
+type kubernetesWitnessConfig struct {
+	Kubeconfig string `json:"kubeconfig,omitempty"`
+	Context    string `json:"context,omitempty"`
+	Namespace  string `json:"namespace,omitempty"`
+	Lease      string `json:"lease,omitempty"`
+}
+
+// azureWitnessConfig keeps the claim in a blob in a storage account.
+type azureWitnessConfig struct {
+	Account   string `json:"account,omitempty"`
+	Container string `json:"container,omitempty"`
+	Blob      string `json:"blob,omitempty"`
+	Endpoint  string `json:"endpoint,omitempty"`
 }
 
 type tuiConfig struct {
@@ -348,6 +376,20 @@ func applyRemote(out *settings, r *remoteConfig) {
 
 	if d, ok := parseRefresh(r.TakeoverAfter); ok {
 		out.Remote.TakeoverAfter = d
+	}
+
+	if w := r.Witness; w != nil {
+		if k := w.Kubernetes; k != nil {
+			out.Remote.Witness.Kubernetes = &k8s.Config{
+				Kubeconfig: k.Kubeconfig, Context: k.Context, Namespace: k.Namespace, Name: k.Lease,
+			}
+		}
+
+		if a := w.Azure; a != nil {
+			out.Remote.Witness.Azure = &azure.Config{
+				Account: a.Account, Container: a.Container, Blob: a.Blob, Endpoint: a.Endpoint,
+			}
+		}
 	}
 }
 
@@ -616,6 +658,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 			Name:          s.Remote.Name,
 			Interval:      refreshString(s.Remote.Interval),
 			TakeoverAfter: refreshString(s.Remote.TakeoverAfter),
+			Witness:       witnessFile(s.Remote.Witness),
 		},
 		Tools:    s.Tools,
 		LogLevel: s.LogLevel,
@@ -625,6 +668,30 @@ func writeSampleConfig(w io.Writer, s settings) error {
 	enc.SetIndent("", "  ")
 
 	return enc.Encode(file)
+}
+
+// witnessFile renders the witness settings as the config file writes them, nil
+// when there is no witness.
+func witnessFile(w witnessSettings) *witnessConfig {
+	if w.Kubernetes == nil && w.Azure == nil {
+		return nil
+	}
+
+	out := &witnessConfig{}
+
+	if k := w.Kubernetes; k != nil {
+		out.Kubernetes = &kubernetesWitnessConfig{
+			Kubeconfig: k.Kubeconfig, Context: k.Context, Namespace: k.Namespace, Lease: k.Name,
+		}
+	}
+
+	if a := w.Azure; a != nil {
+		out.Azure = &azureWitnessConfig{
+			Account: a.Account, Container: a.Container, Blob: a.Blob, Endpoint: a.Endpoint,
+		}
+	}
+
+	return out
 }
 
 // branchPrefixOrUser resolves the branch prefix the way the launcher will, so a

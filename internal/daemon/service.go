@@ -81,6 +81,10 @@ type Service struct {
 	syncMu   sync.Mutex
 	syncKick chan struct{}
 	link     link
+	// witness is where the pair's claim is kept, nil when there is none. vouch
+	// is what it last said.
+	witness Witness
+	vouch   vouch
 	// started is when this service was built, which a secondary treats as the
 	// last time it heard from its primary until an exchange says otherwise.
 	started  time.Time

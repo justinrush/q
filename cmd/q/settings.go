@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/justinrush/q/internal/azure"
 	"github.com/justinrush/q/internal/daemon"
+	"github.com/justinrush/q/internal/k8s"
 	"github.com/justinrush/q/internal/remote"
 )
 
@@ -55,6 +57,15 @@ type remoteSettings struct {
 	// TakeoverAfter is how long the peer waits, having not heard from this
 	// machine, before running its missions.
 	TakeoverAfter time.Duration
+	// Witness is where the pair keeps the claim each consults before acting on
+	// the other's silence. Both machines set it.
+	Witness witnessSettings
+}
+
+// witnessSettings names the pair's witness: at most one of these is set.
+type witnessSettings struct {
+	Kubernetes *k8s.Config
+	Azure      *azure.Config
 }
 
 // tuiSettings configures the terminal UI.

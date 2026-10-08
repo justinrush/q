@@ -169,6 +169,41 @@ func (c Command) Call(ctx context.Context, req Request) (Response, error) {
 	return parseResponse(res.Stdout)
 }
 
+// Exec runs q on the peer with the given arguments and returns what it printed.
+//
+// It is for the few things that are a command on the peer and not a request to
+// its daemon: a change to the peer's own config file, which its daemon does
+// not own and is restarted by. Arguments are quoted for the peer's shell, which
+// is what ssh hands the joined command line to; the binary is not, so that a
+// leading ~ still expands.
+func (c Command) Exec(ctx context.Context, args ...string) (string, error) {
+	argv := c.shellArgv()
+	if len(argv) == 0 {
+		return "", fmt.Errorf("%w: no command configured to reach it", ErrUnreachable)
+	}
+
+	remote := []string{c.bin()}
+	for _, arg := range args {
+		remote = append(remote, shellQuote(arg))
+	}
+
+	res, err := c.Run.Run(ctx, runner.Spec{Name: argv[0], Args: append(argv[1:], remote...)})
+	if err != nil {
+		// 255 is ssh's own failure; any other status is q's, on the peer.
+		if res.ExitCode != sshFailed && filepath.Base(argv[0]) == "ssh" {
+			return string(res.Stdout), errors.New(failure(res, err))
+		}
+
+		return "", fmt.Errorf("%w: %s", ErrUnreachable, failure(res, err))
+	}
+
+	return string(res.Stdout), nil
+}
+
+// sshFailed is the status ssh exits with when it could not connect or
+// authenticate, as distinct from the status of the command it ran.
+const sshFailed = 255
+
 // failure describes why the command did not produce an answer, preferring what
 // it printed over the bare exit status.
 func failure(res runner.Result, err error) string {

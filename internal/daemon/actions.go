@@ -510,6 +510,9 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		// The agent now starting works from the branch as it stands, which is
 		// the moment a note about a conflict set aside stops being news.
 		stored.LocalBadges = stored.WithoutLocalBadge(mission.BadgeDiverged)
+		// However it came to be started, an agent is running: by q once the
+		// standby was over, or by a person who did not want to wait for that.
+		stored.LocalBadges = stored.WithoutLocalBadge(mission.BadgeStandby)
 		stored.UpdatedAt = now
 
 		updated = stored

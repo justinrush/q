@@ -139,7 +139,7 @@ func buildDaemonRunSubcommand() *cobra.Command {
 
 func buildDaemonStatusSubcommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "status",
+		Use:   useStatus,
 		Short: "Report whether the daemon is running",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {

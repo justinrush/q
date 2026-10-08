@@ -6,7 +6,9 @@
 //
 // The primary is preferred. It is the machine with the power and the human, so
 // a mission runs there whenever it can. The secondary runs a mission only when
-// the primary has gone quiet for long enough to be considered away, and gives
+// the primary has gone quiet for long enough to be considered away — and, when
+// the pair has a witness, the witness agrees it is away and not merely out of
+// reach (see witness.go) — and gives
 // it back at the first moment that costs nothing: when the agent has finished a
 // turn and is waiting for a person anyway.
 
@@ -23,19 +25,34 @@ import (
 // scheduler's tick.
 func (s *Service) tendLeases(ctx context.Context) {
 	snap := s.store.Snapshot()
-	now := s.now()
+	now := wall(s.now())
+
+	// Only a primary with a witness ever stands by. The other cases still end
+	// one, for a host that was standing by when its configuration changed
+	// under it and would otherwise leave those agents stopped for good.
+	standby := false
 
 	switch s.roleOf(snap) {
 	case mission.RoleSecondary:
-		if s.peerSeen(snap, now) {
+		switch {
+		case s.peerSeen(snap, now):
+			s.vouch.forget()
 			s.handBack(ctx, snap)
-		} else {
+		case s.primaryAway(ctx, snap, now):
 			s.takeOver(ctx, snap)
 		}
 	case mission.RolePrimary:
-		s.markUnconfirmed(snap, !s.peerSeen(snap, now))
+		seen := s.peerSeen(snap, now)
+		standby = s.keepClaim(ctx, snap, now, seen)
+
+		// With a witness the doubt this badge expresses is settled one way or
+		// the other: the claim stands and the missions are this host's, or it
+		// does not and they have been stopped.
+		s.markUnconfirmed(snap, !seen && !s.witnessed(snap))
 	case mission.RoleStandalone:
 	}
+
+	s.tendStandby(ctx, standby)
 }
 
 // takeOver runs, on the secondary, missions the primary was running when it

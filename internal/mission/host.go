@@ -104,6 +104,11 @@ type Peer struct {
 	// primary, before running the primary's missions itself. The primary sets
 	// it and sends it with every exchange, so only one machine is configured.
 	TakeoverAfter time.Duration `json:"takeoverAfter,omitempty"`
+	// Witness names the witness the peer consults, empty when it has none. Each
+	// host is configured with its own way of reaching the witness, so each
+	// tells the other which record it means, and a pair that disagrees finds
+	// out from the exchange rather than from two agents on one mission.
+	Witness string `json:"witness,omitempty"`
 }
 
 // Tombstone records that an entity was deleted.

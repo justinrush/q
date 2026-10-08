@@ -130,7 +130,7 @@ func (s *Service) runnerFor(snap mission.Snapshot, ms mission.Mission, now time.
 		return ms.Pin
 	}
 
-	if s.roleOf(snap) == mission.RoleSecondary && s.peerSeen(snap, now) {
+	if s.roleOf(snap) == mission.RoleSecondary && !s.away(snap, now) {
 		return snap.Peer.ID
 	}
 
@@ -138,9 +138,14 @@ func (s *Service) runnerFor(snap mission.Snapshot, ms mission.Mission, now time.
 }
 
 // unconfirmed reports whether this host is a primary whose peer may have taken
-// over its missions without it knowing.
+// over its missions without it knowing. A witness that still names this host
+// is knowing: the peer takes nothing until that claim has lapsed.
 func (s *Service) unconfirmed(snap mission.Snapshot, now time.Time) bool {
-	return s.roleOf(snap) == mission.RolePrimary && !s.peerSeen(snap, now)
+	if s.roleOf(snap) != mission.RolePrimary || s.peerSeen(snap, now) {
+		return false
+	}
+
+	return !s.witnessed(snap) || !s.vouch.valid(wall(now))
 }
 
 // passLease hands an unlaunched mission to the host that should run it.

@@ -157,3 +157,17 @@ func Continuation(from, lastMessage, message string) string {
 
 	return b.String()
 }
+
+// Resumption is what an agent is told when q starts it again after stopping it
+// to stand by.
+//
+// Nothing else worked on the mission in between, which is the difference from
+// [Continuation]: the agent's own conversation is still the whole story, and
+// it only needs to know why it was interrupted and that it may carry on.
+func Resumption() string {
+	return "q stopped this session because this machine could reach neither its paired q " +
+		"nor the witness, and could not tell whether the mission had been taken over. " +
+		"It has now confirmed that it was not: nothing else worked on this mission while " +
+		"you were stopped. Check `git status` for anything left half-done by the " +
+		"interruption, then carry on from where you were.\n"
+}

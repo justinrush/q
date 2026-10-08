@@ -234,6 +234,7 @@ worktree per repository. What moves between them is which one runs the agent.
 |---|---|
 | the laptop is awake | on the laptop |
 | the laptop has been silent for `remote.takeoverAfter` | on the secondary, including a mission whose agent was mid-turn |
+| the same, with a [witness](#a-witness-for-split-networks) that says the laptop is still awake | on the laptop |
 | the laptop is back, and an agent on the secondary finishes a turn | the next turn runs on the laptop |
 | a mission was created with `--on remote`, or `--on local` | where it was pinned, always |
 
@@ -243,6 +244,74 @@ the machine running the agent; `enter` opens editors on this machine's own
 worktrees, with the agent's pane attached to the other machine over ssh. Press
 `t`, or run `q mission take`, to bring a mission here without waiting for a
 turn to end.
+
+### A witness for split networks
+
+Silence is all the secondary can observe, and it has two causes. A closed lid
+should be covered for. A laptop that is awake on a network the secondary is not
+on, say off the VPN, should not be, and a laptop that wakes there should not
+carry on with missions the secondary took while it slept. Without help the
+secondary cannot tell these apart, and both machines run the same missions.
+
+A witness is a third place both can reach when they cannot reach each other.
+It holds one small record naming which machine is answerable for the pair's
+missions:
+
+- The laptop renews its claim every `remote.interval` while it is awake. The
+  claim lasts `remote.takeoverAfter`.
+- The secondary takes over only once it has gone that long without an exchange
+  **and** the laptop's claim has lapsed, at which point it replaces it with its
+  own. If it cannot reach the witness, it takes nothing.
+- A laptop that finds the secondary's claim there, or that can reach neither
+  the witness nor the secondary for long enough that the secondary may have
+  acted, **stands by**. It stops the agents of the missions the secondary
+  would have taken (mid-turn and not pinned `--on local`), marks them
+  `standby`, and starts no queued ones.
+- Standing by ends when the laptop completes an exchange with the secondary.
+  It accepts whatever was taken over, takes the claim back, and restarts its
+  own agent, in the conversation it had, for anything that was not.
+
+Two stores are supported. Both machines consult the witness, naming the same
+record. Run the command on the laptop and it runs the same one on the other
+machine over ssh, so one command sets up the pair:
+
+```sh
+# a Kubernetes Lease, with each machine's own kubeconfig
+q remote witness kubernetes --namespace q --lease laptop-and-mini
+
+# or a blob in an Azure storage account, with `az login` or a managed identity
+q remote witness azure mystorageaccount --container q
+
+q remote witness status   # who the witness names, read live
+q remote witness take     # claim it for this machine regardless
+q remote witness clear    # stop consulting it, on both machines
+```
+
+Each machine reaches the witness with its own credentials. The other machine
+uses its default kubeconfig and context unless `--peer-kubeconfig` or
+`--peer-context` name others, and whatever `az login` says there. `--local`
+changes this machine only; if the other machine could not be reached or could
+not use the witness, the command says so and prints what to run there.
+
+Either command reads the record and writes it back before saving anything, so
+missing permissions are found then and not at the first closed lid. For
+Kubernetes that is `get`, `create` and `update` on `leases` in the namespace;
+for Azure, Storage Blob Data Contributor on a container that already exists.
+
+Until both machines name the same witness nothing is taken over in either
+direction, and `q remote status` says which machine is missing it. That is
+deliberate: a check only one side makes protects nothing.
+
+`q remote witness take` is the override for when you know better: the other
+machine is gone for good, or you are off its network on purpose and want the
+work here. The other machine is not told, so if it is running the same missions
+both now are, and their work is merged as in
+[When both machines changed something](#when-both-machines-changed-something).
+
+The witness has to be reachable from wherever the laptop might be without the
+VPN, or the laptop stands by whenever it is away from both. The two machines'
+clocks need to agree to well within a tenth of `remote.takeoverAfter`, which
+NTP does.
 
 ### How the code gets across
 
@@ -293,10 +362,13 @@ that same note.
 
 ### Limits
 
-- A laptop that is awake but cannot reach the other machine keeps running its
-  missions, marked `unconfirmed`, and starts no queued ones. If the other
-  machine has taken a mission over in the meantime, the work is done twice and
-  merged when they next speak.
+- Without a [witness](#a-witness-for-split-networks), a laptop that is awake
+  but cannot reach the other machine keeps running its missions, marked
+  `unconfirmed`, and starts no queued ones. If the other machine has taken a
+  mission over in the meantime, the work is done twice and merged when they
+  next speak.
+- With one, a laptop waking after a long sleep has its agents running for the
+  few seconds it takes the daemon to notice and stop them.
 - A takeover loses at most `remote.interval` of the laptop's work until the
   laptop returns with it.
 - Both machines must run the same q. A mismatch stops the exchange and says so
@@ -365,6 +437,8 @@ settings without writing anything.
 | `remote.name` | what this machine is called on cards. Defaults to its hostname |
 | `remote.interval` | how often the primary exchanges state with its pair. Defaults to `15s` |
 | `remote.takeoverAfter` | how long the pair waits for a silent primary before running its missions. Defaults to `5m` |
+| `remote.witness.kubernetes` | keep the pair's claim in a Lease: `namespace` and `lease` (the same on both machines), and this machine's `kubeconfig` and `context`. Set with `q remote witness kubernetes` |
+| `remote.witness.azure` | keep it in a blob instead: `account`, `container`, `blob`, and optionally `endpoint`. Set with `q remote witness azure` |
 | `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
@@ -882,6 +956,8 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 | `internal/api` | the daemon protocol: wire types, the handle, and the client |
 | `internal/daemon` | the service rules, the HTTP server, hook intake, the reconciler, the scheduler, and the exchange with a paired q |
 | `internal/remote` | reaching the q daemon on another machine over ssh |
+| `internal/k8s` | the pair's witness as a Kubernetes Lease |
+| `internal/azure` | the pair's witness as a blob in an Azure storage account |
 | `internal/claude` | running missions with `claude`, and reading its session registry |
 | `internal/agy` | running Antigravity missions and discovering its models |
 | `internal/opencode` | running OpenCode missions, its status plugin, and model discovery |

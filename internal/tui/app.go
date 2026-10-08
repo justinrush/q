@@ -589,6 +589,12 @@ func (a *App) linkLabel() string {
 		label += fmt.Sprintf(" (%d pending)", a.remote.Pending)
 	}
 
+	// Standing by changes what this machine is doing, not just what it knows,
+	// so it is said in place of how long the link has been down.
+	if w := a.remote.Witness; w != nil && w.Standby {
+		return styles.CardError.Render(label + " standing by")
+	}
+
 	if a.remote.Linked() {
 		return styles.CardDetail.Render(label)
 	}
