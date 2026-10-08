@@ -653,9 +653,9 @@ func (s *Service) afterMerge(ctx context.Context, merge mission.Merge) {
 		s.noteMoved(id, s.store.Snapshot().PeerID())
 	}
 
-	if merge.Changed() {
-		s.locateRepos(ctx)
-	}
+	// A checkout may have appeared since the last exchange even when the
+	// shared records are unchanged. The locator caches expensive scans.
+	s.locateRepos(ctx)
 
 	s.reclaimStale(ctx)
 }

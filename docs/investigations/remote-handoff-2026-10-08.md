@@ -54,3 +54,28 @@ acceptance. Regression coverage should include missing repositories and
 incomplete/failed mirrors at the destination.
 
 Live task state was not modified during this investigation.
+
+## Follow-up: cloning alone did not recover the mission
+
+The user confirmed Enter in debrief still reports "never been launched" on
+unpatched q. Inspection confirmed the laptop clones now exist with matching
+SSH origins, while the task still has no local session and three missing
+worktrees. The earlier advice that cloning plus syncing would suffice was
+incomplete:
+
+- `afterMerge` only retried repository discovery when shared records changed,
+  so an otherwise quiet board could fail to notice new clones indefinitely.
+- `provisionMirror` skipped the lease holder, even when it had just received
+  an incomplete handoff and needed worktrees before it could resume.
+
+The follow-up fix retries cached discovery on every exchange and allows an
+idle holder with `MovedFrom` recorded to provision missing worktrees. Only
+worktrees actually created in that exchange follow the peer regardless of
+ownership, ensuring their uncommitted snapshot contents are recovered too.
+Existing worktrees retain the normal edit/conflict protections. Active holders
+are excluded from provisioning.
+
+A real-git regression reproduces a missing checkout, handback, and a later
+clone becoming discoverable without a shared-state edit; it verifies the new
+holder gets a complete mirror including an uncommitted file. This enables
+recovery after cloning, but does not prevent the original premature handback.

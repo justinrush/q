@@ -722,3 +722,42 @@ func TestWorkFromBothAgentsSurvivesATakeover(t *testing.T) {
 		}
 	}
 }
+
+// Cloning a missing repo after handback must complete the new holder's mirror,
+// including uncommitted files, without requiring another shared-state edit.
+func TestHandedOffMissionFindsNewCheckoutAndCompletesMirror(t *testing.T) {
+	laptop, mini := realPair(t)
+	ms := mini.launch("late checkout")
+	source := mini.worktree(ms.ID)
+	writeFile(t, source, "draft.go", "package widget // retained work\n")
+	laptop.svc.apply(WithLocator(fixedLocator{path: ""}))
+	exchange(t, laptop.svc)
+	if laptop.worktree(ms.ID) != "" {
+		t.Fatal("unexpected mirror before checkout was located")
+	}
+	mini.svc.updateLocal(ms.ID, "test.turn_end", func(m *mission.Mission) {
+		m.Status = mission.StatusDebrief
+		m.TurnEnded = true
+		m.AgentState = mission.AgentIdle
+	})
+	if !mini.svc.release(t.Context(), mini.mission(ms.ID), laptop.svc.self, "test.return") {
+		t.Fatal("release failed")
+	}
+	exchange(t, laptop.svc)
+	if !laptop.svc.holds(laptop.mission(ms.ID)) {
+		t.Fatal("laptop did not receive lease")
+	}
+	laptop.svc.apply(WithLocator(fixedLocator{path: laptop.clone}))
+	exchange(t, laptop.svc)
+	exchange(t, laptop.svc)
+	mirror := laptop.worktree(ms.ID)
+	if mirror == "" {
+		t.Fatal("new holder never completed its mirror")
+	}
+	if got := readFile(t, mirror, "draft.go"); got != "package widget // retained work\n" {
+		t.Fatalf("recovered content = %q", got)
+	}
+	if !mirrorComplete(laptop.mission(ms.ID)) {
+		t.Fatal("mission is still not resumable")
+	}
+}
