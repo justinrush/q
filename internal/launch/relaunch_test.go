@@ -166,6 +166,14 @@ func TestRelaunchResumesTheSession(t *testing.T) {
 
 	dir := t.TempDir()
 	ms := launchedMission(t, dir)
+	ms.MovedFrom = "there"
+	ms.Lease.Epoch = 4
+	launcher.hostSnapshot = func() mission.Snapshot {
+		return mission.Snapshot{
+			Self: mission.HostInfo{ID: "here", Name: "mini"},
+			Peer: &mission.Peer{HostInfo: mission.HostInfo{ID: "there", Name: "laptop"}},
+		}
+	}
 
 	// The old session is gone, so nothing needs killing before the new one starts.
 	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
@@ -174,6 +182,10 @@ func TestRelaunchResumesTheSession(t *testing.T) {
 	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "keep going")
 	if err != nil {
 		t.Fatalf("Relaunch: %v", err)
+	}
+
+	if transcript := fake.Transcript(); !strings.Contains(transcript, "executor: mini · from: laptop · ownership: 4") {
+		t.Errorf("relaunch lacks the new executor and handoff: %s", transcript)
 	}
 
 	// The epoch increments so a late hook from the previous incarnation is dropped
@@ -393,6 +405,10 @@ func TestViewRunsQInTheAgentWindow(t *testing.T) {
 	transcript := fake.Transcript()
 	if !strings.Contains(transcript, " view "+string(ms.ID)) || !strings.Contains(transcript, "-n agent") {
 		t.Errorf("the agent window should run `q view`:\n%s", transcript)
+	}
+
+	if strings.Contains(transcript, "pane-border-format") {
+		t.Errorf("remote view must display the executing session's banner without adding a local executor: %s", transcript)
 	}
 
 	ms.MissionDir = ""

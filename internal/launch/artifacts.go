@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
@@ -265,6 +267,7 @@ func (l *Launcher) startSession(ctx context.Context, operation mission.Operation
 	ms.AgentPaneID = paneID
 
 	l.applySessionOptions(ctx, ms)
+	l.applyExecutorBanner(ctx, *ms)
 
 	return nil
 }
@@ -296,4 +299,50 @@ func (l *Launcher) applySessionOptions(ctx context.Context, ms *mission.Mission)
 	if err := l.tmux.SetPaneOption(ctx, terminal.Pane(ms.AgentPaneID), "remain-on-exit", "on"); err != nil {
 		l.logger.Warn("setting remain-on-exit", "pane", ms.AgentPaneID, "error", err)
 	}
+}
+
+// Only the executing session gets a banner. A remote view displays that session's
+// border over ssh, so adding one locally would name the wrong executor.
+func (l *Launcher) applyExecutorBanner(ctx context.Context, ms mission.Mission) {
+	window := terminal.Window(ms.TmuxSession, agentWindow)
+	// A pane border survives agents clearing or redrawing their terminal,
+	// and leaves the user's session status bar intact.
+	for name, value := range map[string]string{
+		"pane-border-status": "top",
+		"pane-border-format": "#[bold] " + l.executorBanner(ms) + " #[default]",
+	} {
+		if err := l.tmux.SetWindowOption(ctx, window, name, value); err != nil {
+			l.logger.Warn("setting executor banner", "option", name, "session", ms.TmuxSession, "error", err)
+		}
+	}
+}
+
+func (l *Launcher) executorBanner(ms mission.Mission) string {
+	host, _ := os.Hostname()
+	from := ""
+	if l.hostSnapshot != nil {
+		snap := l.hostSnapshot()
+		if name := snap.HostName(snap.Self.ID); name != "" {
+			host = name
+		}
+		if ms.MovedFrom != "" {
+			from = snap.HostName(ms.MovedFrom)
+		}
+	}
+	// tmux formats interpret # sequences, including shell substitutions.
+	// Treat host names as literal text and keep controls out of the border.
+	literal := func(s string) string {
+		s = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, s)
+		return strings.ReplaceAll(s, "#", "##")
+	}
+	banner := "q · executor: " + literal(host)
+	if from != "" {
+		banner += " · from: " + literal(from)
+	}
+	return fmt.Sprintf("%s · ownership: %d · started: %s", banner, ms.Lease.Epoch, l.now().Format(time.RFC3339))
 }

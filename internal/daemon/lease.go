@@ -106,6 +106,7 @@ func (s *Service) continueHere(ctx context.Context, ms mission.Mission, from str
 			return false
 		}
 
+		stored.MovedFrom = stored.Lease.Holder
 		stored.Lease = stored.Lease.Take(s.self)
 
 		// Until the agent is up, the card must not claim one is working.
