@@ -120,4 +120,3 @@ func TestOpencodeHooksDriveLifecycle(t *testing.T) {
 		t.Fatal("expected error on malformed json")
 	}
 }
-

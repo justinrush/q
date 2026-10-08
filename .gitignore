@@ -1,5 +1,9 @@
 # Build output from install.sh.
 bin/
+dist/
+
+# Release-version test imports.
+__pycache__/
 
 # Go coverage and test artifacts.
 *.out
