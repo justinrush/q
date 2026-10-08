@@ -194,6 +194,11 @@ func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode ap
 		return api.Result{}, fmt.Errorf("%w: this daemon cannot open debrief sessions", ErrConflict)
 	}
 
+	// Two opens that overlap would both read the mission before either recorded
+	// its panes, and each would add an editor for the same repo.
+	s.debriefMu.Lock()
+	defer s.debriefMu.Unlock()
+
 	ms, err := s.requireLaunched(id)
 	if err != nil {
 		return api.Result{}, err

@@ -56,12 +56,13 @@ func NewTmux(bin string, run runner.Runner) *Tmux {
 // Construct one with [Session], [Window], or [Pane]; the zero value is not
 // usable. Its String method emits the exact-match form.
 type Target struct {
-	value string
-	exact bool
+	value   string
+	exact   bool
+	session bool
 }
 
 // Session targets a session by name, matched exactly.
-func Session(name string) Target { return Target{value: name, exact: true} }
+func Session(name string) Target { return Target{value: name, exact: true, session: true} }
 
 // Window targets a named window within a session, matched exactly.
 func Window(session, window string) Target {
@@ -236,7 +237,15 @@ type PaneInfo struct {
 func (t *Tmux) ListPanes(ctx context.Context, target Target) ([]PaneInfo, error) {
 	const format = "#{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
 
-	res, err := t.exec(ctx, "list-panes", "-t", target.String(), "-F", format)
+	args := []string{"list-panes"}
+
+	// Without -s tmux reads a session target as that session's current window,
+	// so panes in any other window would go unreported.
+	if target.session {
+		args = append(args, "-s")
+	}
+
+	res, err := t.exec(ctx, append(args, "-t", target.String(), "-F", format)...)
 	if err != nil {
 		return nil, fmt.Errorf("listing panes of %s: %w", target, err)
 	}

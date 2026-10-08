@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +109,70 @@ func TestOpenDebriefPersistsPanesCreatedBeforeFailure(t *testing.T) {
 
 	if stored.Work["repo"].DebriefPaneID != "%21" {
 		t.Errorf("partial pane was not persisted: %+v", stored.Work["repo"])
+	}
+}
+
+// recordingDebriefer adds a pane only for a repo with none recorded, the way the
+// real opener does, and lingers so that overlapping opens would both get that far.
+type recordingDebriefer struct {
+	created atomic.Int32
+}
+
+func (r *recordingDebriefer) Open(
+	_ context.Context,
+	ms mission.Mission,
+	_ api.Mode,
+) (api.Result, mission.Mission, error) {
+	work := ms.Work["repo"]
+	if work.DebriefPaneID != "" {
+		return api.Result{}, ms, nil
+	}
+
+	time.Sleep(20 * time.Millisecond)
+
+	work.DebriefPaneID = "%21"
+	ms.Work["repo"] = work
+	r.created.Add(1)
+
+	return api.Result{PanesAdded: 1}, ms, nil
+}
+
+func (*recordingDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
+	return nil, nil
+}
+
+func TestOpenDebriefDoesNotDuplicatePanes(t *testing.T) {
+	cases := []struct {
+		name  string
+		opens int
+	}{
+		{name: "a second open reuses the pane", opens: 2},
+		{name: "a burst of opens adds one pane", opens: 8},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t)
+			ms := launchedServiceMission(t, svc)
+			debriefer := &recordingDebriefer{}
+			svc.apply(WithDebriefer(debriefer))
+
+			var wg sync.WaitGroup
+
+			for range tc.opens {
+				wg.Go(func() {
+					if _, err := svc.OpenDebrief(t.Context(), ms.ID, api.ModePrepare); err != nil {
+						t.Errorf("OpenDebrief: %v", err)
+					}
+				})
+			}
+
+			wg.Wait()
+
+			if got := debriefer.created.Load(); got != 1 {
+				t.Errorf("panes created = %d, want 1", got)
+			}
+		})
 	}
 }
 

@@ -103,6 +103,9 @@ type Service struct {
 	// is what every "do I run this mission" question is answered against.
 	self mission.HostID
 
+	// debriefMu makes arranging a debrief's panes and recording them one step.
+	debriefMu sync.Mutex
+
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
 	inflight   inflight
