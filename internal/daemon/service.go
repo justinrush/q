@@ -67,6 +67,38 @@ type Service struct {
 	brancher Brancher
 	branches *branchCache
 
+	// maxConcurrent is how many queued missions this host runs at once.
+	maxConcurrent int
+
+	// remote is the paired daemon this one dials. It is nil unless this host is
+	// the primary of a pair, and its presence is what makes it one.
+	remote  Remote
+	locator RepoLocator
+	// syncInterval and takeoverAfter are the primary's settings for the pair.
+	syncInterval  time.Duration
+	takeoverAfter time.Duration
+	// syncMu allows one exchange at a time, and syncKick asks for one soon.
+	syncMu   sync.Mutex
+	syncKick chan struct{}
+	link     link
+	// started is when this service was built, which a secondary treats as the
+	// last time it heard from its primary until an exchange says otherwise.
+	started  time.Time
+	hostName string
+	version  string
+
+	// worktrees snapshots and mirrors mission worktrees; nil without git.
+	worktrees Worktrees
+	transfers transferLog
+	// captured is this host's report from the exchange in progress. A secondary
+	// takes it when the exchange arrives and settles against it a moment later,
+	// when the primary says the snapshots have landed.
+	captured []mission.RepoState
+
+	// self is this installation's host id, fixed for the life of the store. It
+	// is what every "do I run this mission" question is answered against.
+	self mission.HostID
+
 	approvalMu sync.Mutex
 	approvals  map[mission.MissionID]approvalCandidate
 	inflight   inflight
@@ -132,14 +164,30 @@ func NewService(store *mission.Store, hub *Hub, dirs paths.Dirs, opts ...Option)
 		models:    newCatalog(),
 		branches:  newBranchCache(),
 		approvals: make(map[mission.MissionID]approvalCandidate),
+
+		maxConcurrent: DefaultMaxConcurrent,
+		syncInterval:  DefaultSyncInterval,
+		takeoverAfter: DefaultTakeoverAfter,
+		syncKick:      make(chan struct{}, 1),
 	}
 
 	for _, opt := range opts {
 		opt(s)
 	}
 
+	s.self = store.Snapshot().Self.ID
+	s.started = s.now()
+	s.adoptHostName()
+
 	return s
 }
+
+// holds reports whether this host runs the mission.
+//
+// Everything that observes or drives an agent asks this first. A mission the
+// peer runs has records and worktrees here but no session, and to the code that
+// watches sessions a missing one looks exactly like a dead agent.
+func (s *Service) holds(ms mission.Mission) bool { return ms.Lease.HeldBy(s.self) }
 
 // Hub returns the service's event hub, which the server publishes from.
 func (s *Service) Hub() *Hub { return s.hub }
@@ -332,7 +380,7 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 	}
 
 	stored, _ := s.store.Snapshot().Mission(id)
-	s.publishMission(stored)
+	s.announce(stored)
 
 	return stored, nil
 }
@@ -382,6 +430,11 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		return zero, err
 	}
 
+	pin, err := resolveHost(snap, req.Pin)
+	if err != nil {
+		return zero, err
+	}
+
 	name := strings.TrimSpace(req.Name)
 
 	return mission.Mission{
@@ -395,7 +448,32 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		Effort:       req.Effort,
 		ExtraRepos:   normalizeRepos(req.ExtraRepos),
 		BaseBranches: normalizeBaseBranches(req.BaseBranches),
+		Queued:       req.Queued,
+		Pin:          pin,
 	}, nil
+}
+
+// resolveHost turns what a human typed for "which machine" into a host id.
+//
+// The two words that matter are relative: "local" is whichever host is asked
+// and "remote" is its peer, so the same command means the right thing on
+// either machine. A host's name or id is accepted too, and empty clears a pin.
+func resolveHost(snap *mission.Snapshot, value string) (mission.HostID, error) {
+	value = strings.TrimSpace(value)
+
+	switch {
+	case value == "":
+		return "", nil
+	case value == "local" || value == string(snap.Self.ID) || value == snap.Self.Name:
+		return snap.Self.ID, nil
+	case snap.Peer == nil:
+		return "", fmt.Errorf("%w: no host %q; this q is not paired with another", ErrInvalid, value)
+	case value == "remote" || value == string(snap.Peer.ID) || value == snap.Peer.Name:
+		return snap.Peer.ID, nil
+	default:
+		return "", fmt.Errorf("%w: no host %q (want local, remote, %s, or %s)",
+			ErrInvalid, value, snap.HostName(snap.Self.ID), snap.HostName(snap.Peer.ID))
+	}
 }
 
 // inheritDefaults copies from parent every field the caller left unset.
@@ -459,7 +537,7 @@ func (s *Service) UpdateMission(id mission.MissionID, req api.UpdateMissionReque
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }
@@ -490,6 +568,10 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 
 	if req.Order != nil {
 		ms.Order = *req.Order
+	}
+
+	if err := applyQueuePatch(snap, ms, req); err != nil {
+		return err
 	}
 
 	if err := applyWorktreePatch(ms, req); err != nil {
@@ -543,6 +625,40 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrInvalid, err)
 		}
+	}
+
+	return nil
+}
+
+// applyQueuePatch applies the fields that say when and where a mission starts.
+//
+// Both only mean anything before launch. A running mission cannot be queued,
+// and where it runs is by then a matter of who holds its lease rather than of
+// a preference.
+func applyQueuePatch(snap *mission.Snapshot, ms *mission.Mission, req api.UpdateMissionRequest) error {
+	if req.Queued == nil && req.Pin == nil {
+		return nil
+	}
+
+	if ms.Launched() {
+		return fmt.Errorf("%w: mission %s has already been launched", ErrConflict, ms.ID)
+	}
+
+	if req.Queued != nil {
+		ms.Queued = *req.Queued
+
+		if ms.Queued {
+			ms.LaunchError = ""
+		}
+	}
+
+	if req.Pin != nil {
+		pin, err := resolveHost(snap, *req.Pin)
+		if err != nil {
+			return err
+		}
+
+		ms.Pin = pin
 	}
 
 	return nil
@@ -607,7 +723,7 @@ func (s *Service) setStatus(
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }
@@ -706,6 +822,20 @@ func (s *Service) publishOperation(t mission.Operation) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventOperation, t)
 	}
+
+	s.kickSync()
+}
+
+// announce publishes a mission changed by a deliberate act — created, edited,
+// launched, moved — and asks for an exchange with the paired q soon.
+//
+// The distinction from publishMission is the exchange. An agent's hooks change
+// a mission several times a second and the peer can wait for the next tick to
+// hear of those; a human's change is one the other machine may be about to act
+// on, and a laptop lid can close in less time than a tick takes.
+func (s *Service) announce(t mission.Mission) {
+	s.publishMission(t)
+	s.kickSync()
 }
 
 func (s *Service) publishMission(t mission.Mission) {
@@ -718,6 +848,8 @@ func (s *Service) publishDeleted(kind, id string) {
 	if s.hub != nil {
 		s.hub.Broadcast(api.EventDeleted, api.Deleted{Kind: kind, ID: id})
 	}
+
+	s.kickSync()
 }
 
 func (s *Service) publishLimits(limits []mission.Limit) {

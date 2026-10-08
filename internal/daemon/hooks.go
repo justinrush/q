@@ -40,6 +40,13 @@ func (s *Service) ApplyHook(req api.HookRequest) {
 		return
 	}
 
+	// A hook for a mission the peer now runs comes from an agent this host has
+	// already been told to stop, or from one that woke with a sleeping laptop.
+	// Either way it no longer speaks for the mission.
+	if !s.holds(ms) {
+		return
+	}
+
 	// An epoch older than the mission's means this hook belongs to a session q
 	// already gave up on and relaunched past.
 	if req.HookEpoch > 0 && req.HookEpoch < ms.HookEpoch {

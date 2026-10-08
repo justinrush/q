@@ -100,6 +100,12 @@ type CreateMissionRequest struct {
 	// off, and whether a mission should stop for approval is a decision for
 	// whoever launches it.
 	InheritFrom mission.MissionID `json:"inheritFrom,omitempty"`
+	// Queued asks the daemon to start the mission on its own once a slot is
+	// free. Without it a new mission waits in briefing for a human, as before.
+	Queued bool `json:"queued,omitempty"`
+	// Pin names the host the mission must run on: "local", "remote", or a
+	// host's name or id. Empty leaves the choice to q.
+	Pin string `json:"pin,omitempty"`
 }
 
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
@@ -116,6 +122,10 @@ type UpdateMissionRequest struct {
 	// clearing a repo's override is expressible.
 	BaseBranches *map[string]string `json:"baseBranches,omitempty"`
 	Order        *int               `json:"order,omitempty"`
+	// Queued and Pin say when and where an unlaunched mission starts; see
+	// [CreateMissionRequest]. An empty Pin clears it.
+	Queued *bool   `json:"queued,omitempty"`
+	Pin    *string `json:"pin,omitempty"`
 }
 
 // SetStatusRequest moves a mission between lanes.
@@ -216,3 +226,108 @@ const (
 	KindOperation = "operation"
 	KindMission   = "mission"
 )
+
+// SyncProtocol is the version of the exchange two paired daemons speak.
+//
+// It is checked on every exchange rather than negotiated. The two machines are
+// one person's, upgraded together, so a mismatch means one was missed, and the
+// useful response is to say so rather than to guess at a common subset.
+const SyncProtocol = 1
+
+// SyncRequest is the primary's half of an exchange.
+type SyncRequest struct {
+	Protocol int `json:"protocol"`
+	// Version is the sender's q version, reported when the protocols disagree
+	// so the error names what to upgrade.
+	Version string          `json:"version,omitempty"`
+	Payload mission.Payload `json:"payload"`
+	// TakeoverAfter is how long the secondary should wait, having not heard
+	// from the primary, before running the primary's missions itself. It
+	// travels with the exchange so the secondary needs no configuration.
+	TakeoverAfter time.Duration `json:"takeoverAfter,omitempty"`
+	// Commands are requests for missions the secondary runs that could not be
+	// delivered when they were made.
+	Commands []mission.Command `json:"commands,omitempty"`
+	// Refs reports the primary's worktrees. See [mission.RepoState].
+	Refs []mission.RepoState `json:"refs,omitempty"`
+	// Expect is the host the primary believes it is calling, empty on a first
+	// exchange. A secondary that is not that host refuses before recording
+	// anything, so a primary pointed at the wrong machine cannot leave it
+	// believing in a pairing the primary itself is about to reject.
+	Expect mission.HostID `json:"expect,omitempty"`
+}
+
+// SyncResponse is the secondary's half.
+type SyncResponse struct {
+	Protocol int             `json:"protocol"`
+	Version  string          `json:"version,omitempty"`
+	Payload  mission.Payload `json:"payload"`
+	// Results answers each command by id. A command with no result was not
+	// attempted and is retried on the next exchange.
+	Results []CommandResult `json:"results,omitempty"`
+	// Refs reports the secondary's worktrees.
+	Refs []mission.RepoState `json:"refs,omitempty"`
+}
+
+// CommandResult is what became of one queued command.
+type CommandResult struct {
+	ID string `json:"id"`
+	// Error is why the peer refused, empty on success.
+	Error string `json:"error,omitempty"`
+}
+
+// RemoteStatus describes this daemon's pairing with another, for q remote
+// status and the board's header.
+type RemoteStatus struct {
+	Self mission.HostInfo `json:"self"`
+	Role mission.Role     `json:"role,omitempty"`
+	// Peer is nil until the first exchange has told each side who the other is.
+	Peer *mission.HostInfo `json:"peer,omitempty"`
+	// LastSyncAt is the last completed exchange, zero if there has been none
+	// since this daemon started.
+	LastSyncAt time.Time `json:"lastSyncAt,omitzero"`
+	// Error is why the most recent exchange failed, empty when it succeeded.
+	Error string `json:"error,omitempty"`
+	// Pending counts commands waiting to reach the peer.
+	Pending int `json:"pending,omitempty"`
+}
+
+// Linked reports whether an exchange has completed and the latest one worked.
+func (r RemoteStatus) Linked() bool { return !r.LastSyncAt.IsZero() && r.Error == "" }
+
+// SettleRequest tells a secondary that the snapshots named in an exchange have
+// been transferred, and carries the primary's report to settle against.
+//
+// It is a second request rather than part of the exchange because of ordering.
+// The exchange tells each host what the other has; only then can the primary
+// move the snapshots; and only after that can the secondary lay one out.
+type SettleRequest struct {
+	Refs []mission.RepoState `json:"refs,omitempty"`
+}
+
+// SettleResponse reports the secondary's worktrees as they stand once it has
+// settled, which is what the primary then settles its own against. Without it
+// the primary would judge by a report taken before the secondary acted, and
+// spend one more exchange believing an edit it had just delivered was still
+// waiting.
+type SettleResponse struct {
+	Refs []mission.RepoState `json:"refs,omitempty"`
+}
+
+// AttachCommand is how to attach a terminal to a mission's agent on the paired
+// host.
+type AttachCommand struct {
+	// Argv is the command to run, with this terminal as its own.
+	Argv []string `json:"argv"`
+	// Host names the machine the agent is on, for messages.
+	Host string `json:"host"`
+}
+
+// Forgotten reports what ending a pairing did.
+type Forgotten struct {
+	// Peer is the host that was forgotten, nil if there was none.
+	Peer *mission.HostInfo `json:"peer,omitempty"`
+	// PeerTold reports that the other host was reached and ended the pairing on
+	// its side too. When false, it still believes in the pairing.
+	PeerTold bool `json:"peerTold,omitempty"`
+}

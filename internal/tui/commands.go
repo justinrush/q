@@ -117,6 +117,8 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 			Operations []mission.Operation `json:"operations"`
 			Missions   []mission.Mission   `json:"missions"`
 			Limits     []mission.Limit     `json:"limits"`
+			Self       mission.HostInfo    `json:"self"`
+			Peer       *mission.Peer       `json:"peer"`
 		}
 
 		if err := event.Decode(&snap); err != nil {
@@ -126,6 +128,8 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 		a.snapshot.Operations = snap.Operations
 		a.snapshot.Missions = snap.Missions
 		a.snapshot.Limits = snap.Limits
+		a.snapshot.Self = snap.Self
+		a.snapshot.Peer = snap.Peer
 	case api.EventLimits:
 		var limits api.Limits
 		if err := event.Decode(&limits); err != nil {
@@ -133,6 +137,13 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 		}
 
 		a.snapshot.Limits = limits.Limits
+	case api.EventRemote:
+		var status api.RemoteStatus
+		if err := event.Decode(&status); err != nil {
+			return nil
+		}
+
+		a.adoptRemote(status)
 	case api.EventMission:
 		var ms mission.Mission
 		if err := event.Decode(&ms); err != nil {
@@ -163,6 +174,26 @@ func (a *App) applyEvent(event api.Event) tea.Cmd {
 	}
 
 	return a.applySnapshot(a.snapshot)
+}
+
+// adoptRemote records the state of the pairing.
+//
+// The peer's identity is copied into the snapshot as well. It normally arrives
+// with one, but a pairing made while the board is open is announced only by
+// this event, and without the name every card the peer runs would be labeled
+// with a bare host id until the next reconnect.
+func (a *App) adoptRemote(status api.RemoteStatus) {
+	a.remote = status
+	a.snapshot.Self = status.Self
+
+	switch {
+	case status.Peer == nil:
+		a.snapshot.Peer = nil
+	case a.snapshot.Peer == nil:
+		a.snapshot.Peer = &mission.Peer{HostInfo: *status.Peer}
+	default:
+		a.snapshot.Peer.HostInfo = *status.Peer
+	}
 }
 
 // setStatus moves a mission to another lane.
@@ -376,6 +407,34 @@ func (a *App) setPlanMode(ms mission.Mission, planMode bool) tea.Cmd {
 		}
 
 		return toastMsg{text: updated.Name + ": plan mode off"}
+	}
+}
+
+// setQueued asks the daemon to start a mission on its own, or to stop doing so.
+func (a *App) setQueued(ms mission.Mission, queued bool) tea.Cmd {
+	return func() tea.Msg {
+		updated, err := a.client.UpdateMission(a.ctx(), ms.ID, api.UpdateMissionRequest{Queued: &queued})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		if updated.Queued {
+			return toastMsg{text: updated.Name + ": queued, starts when a slot is free"}
+		}
+
+		return toastMsg{text: updated.Name + ": no longer queued"}
+	}
+}
+
+// takeMission asks the daemon to bring a mission to this machine.
+func (a *App) takeMission(ms mission.Mission) tea.Cmd {
+	return func() tea.Msg {
+		taken, err := a.client.TakeMission(a.ctx(), ms.ID)
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: taken.Name + ": now runs here"}
 	}
 }
 

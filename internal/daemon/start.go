@@ -78,6 +78,13 @@ func (s *Service) Start(ctx context.Context, id mission.MissionID) (mission.Miss
 		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
 	}
 
+	// Refused before anything is provisioned, with the repository named. Left to
+	// fail inside provisioning, this would surface as a git error about an
+	// empty path.
+	if missing := unlocated(snap, ms); len(missing) > 0 {
+		return mission.Mission{}, errUnlocated(ms, missing)
+	}
+
 	if !s.inflight.claim(id) {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s is already starting", ErrConflict, id)
 	}
@@ -110,6 +117,9 @@ func (s *Service) markLaunching(id mission.MissionID) error {
 		ms.AgentState = mission.AgentUnknown
 		ms.Badges = ms.WithBadge(mission.BadgeLaunching, "")
 		ms.LaunchError = ""
+		// Started by hand or by the scheduler, a mission is no longer waiting
+		// to be started.
+		ms.Queued = false
 		ms.UpdatedAt = s.now()
 		updated = ms
 		snap.PutMission(ms)
@@ -195,7 +205,7 @@ func (s *Service) commitLaunch(launched mission.Mission) (mission.Mission, error
 		return mission.Mission{}, err
 	}
 
-	s.publishMission(updated)
+	s.announce(updated)
 
 	return updated, nil
 }

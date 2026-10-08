@@ -5,6 +5,9 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/justinrush/q/internal/daemon"
+	"github.com/justinrush/q/internal/remote"
 )
 
 // settings is the complete set of resolved options.
@@ -21,10 +24,37 @@ type settings struct {
 	Paths    pathsSettings
 	Cost     costSettings
 	TUI      tuiSettings
+	Queue    queueSettings
+	Remote   remoteSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
 	Tools    map[string]string
 	LogLevel string
+}
+
+// queueSettings configures how the daemon works through queued missions.
+type queueSettings struct {
+	// MaxConcurrent is how many queued missions run at once on this machine. A
+	// mission started by hand is not held back by it, but does count against it.
+	MaxConcurrent int
+}
+
+// remoteSettings pairs this q with one on another machine.
+type remoteSettings struct {
+	// SSH is the argv that gets a shell on the peer. Setting it is what makes
+	// this machine the primary of the pair: it dials, it is preferred for
+	// running agents, and it wins ties. Empty means q is not a primary.
+	SSH []string
+	// Bin is the q binary on the peer, as the peer's shell would resolve it. It
+	// is deliberately not expanded here: a leading ~ means the peer's home.
+	Bin string
+	// Name is what this machine is called on cards and to its peer.
+	Name string
+	// Interval is how often the primary exchanges state with its peer.
+	Interval time.Duration
+	// TakeoverAfter is how long the peer waits, having not heard from this
+	// machine, before running its missions.
+	TakeoverAfter time.Duration
 }
 
 // tuiSettings configures the terminal UI.
@@ -173,9 +203,29 @@ func defaultSettings() settings {
 		Editor:   editorSettings{Command: defaultEditorCommand()},
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
 		TUI:      tuiSettings{Mouse: true},
+		Queue:    queueSettings{MaxConcurrent: daemon.DefaultMaxConcurrent},
+		Remote: remoteSettings{
+			Bin:           remote.DefaultBin,
+			Name:          defaultHostName(),
+			Interval:      daemon.DefaultSyncInterval,
+			TakeoverAfter: daemon.DefaultTakeoverAfter,
+		},
 		Tools:    map[string]string{},
 		LogLevel: "info",
 	}
+}
+
+// defaultHostName is the machine's own name without its domain, which is how a
+// person refers to it: "mini", not "mini.local".
+func defaultHostName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+
+	short, _, _ := strings.Cut(name, ".")
+
+	return short
 }
 
 // defaultTerminalMode picks the mode that works out of the box on this OS.

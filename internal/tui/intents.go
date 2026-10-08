@@ -39,6 +39,10 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		return a.handleFinishPlan(m), true
 	case togglePlanMsg:
 		return a.handleTogglePlan(m.Mission), true
+	case toggleQueuedMsg:
+		return a.handleToggleQueued(m.Mission), true
+	case takeMissionMsg:
+		return a.handleTake(m.Mission), true
 	case moveMissionMsg:
 		return a.moveToLane(m.Mission, m.To), true
 	case resumePromptMsg:
@@ -254,6 +258,32 @@ func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
 	}
 
 	return a.setPlanMode(ms, !ms.PlanMode)
+}
+
+// handleToggleQueued flips whether q starts the mission on its own, explaining
+// when there is nothing left to queue.
+func (a *App) handleToggleQueued(ms mission.Mission) tea.Cmd {
+	if ms.Launched() {
+		return emit(toastMsg{
+			text: "only a mission still in briefing can be queued",
+			err:  true,
+		})
+	}
+
+	return a.setQueued(ms, !ms.Queued)
+}
+
+// handleTake brings a mission to this machine, explaining when there is
+// nothing to take.
+func (a *App) handleTake(ms mission.Mission) tea.Cmd {
+	if a.snapshot.Elsewhere(ms) == "" || !ms.Launched() {
+		return emit(toastMsg{
+			text: ms.Name + " is not running on the paired machine",
+			err:  true,
+		})
+	}
+
+	return a.takeMission(ms)
 }
 
 // handleReorder computes the mission's new position and sends it.

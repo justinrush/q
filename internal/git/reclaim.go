@@ -173,6 +173,14 @@ func (p *Provisioner) reclaimRepos(
 
 		unlock := p.git.Lock(commonDir)
 		p.reclaimOne(ctx, commonDir, disposition, force, &report)
+
+		// The snapshots q exchanged for this mission go with its worktree. They
+		// hold nothing the branch does not, and leaving them would grow the
+		// repository by one hidden ref per mission forever.
+		if err := p.git.ForgetMission(ctx, commonDir, ms.ID); err != nil {
+			p.logger.Warn("removing a mission's snapshots", "repo", commonDir, "error", err)
+		}
+
 		unlock()
 	}
 

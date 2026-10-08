@@ -64,6 +64,8 @@ type Board struct {
 	Edit       key.Binding
 	Delete     key.Binding
 	TogglePlan key.Binding
+	Queue      key.Binding
+	Take       key.Binding
 	ToggleDone key.Binding
 	Status     key.Binding
 	Filter     key.Binding
@@ -90,6 +92,8 @@ func NewBoard() Board {
 		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:     key.NewBinding(key.WithKeys("d", "x"), key.WithHelp("d", "delete")),
 		TogglePlan: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle plan mode")),
+		Queue:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "queue to auto-start")),
+		Take:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "take from the paired machine")),
 		ToggleDone: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "expand closed")),
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "move to lane…")),
 		Filter:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter by operation")),
@@ -107,8 +111,8 @@ func (b Board) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{b.Left, b.Right, b.Up, b.Down, b.Lane, b.First},
 		{b.MoveLeft, b.ReorderUp, b.Open, b.Message},
-		{b.New, b.Edit, b.Delete, b.TogglePlan},
-		{b.Status, b.ToggleDone, b.Filter},
+		{b.New, b.Edit, b.Delete, b.TogglePlan, b.Queue},
+		{b.Status, b.ToggleDone, b.Filter, b.Take},
 	}
 }
 

@@ -82,6 +82,7 @@ Press `?` for the full keymap. The essentials:
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
 | `m` | send a message to a running agent |
+| `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
 
@@ -100,6 +101,7 @@ q mission add tidy-imports --operation "$op" --prompt "Tidy them." --model haiku
 q mission add review-login --operation "$op" --prompt "Review it." --base weave=feat/login
 q models                       # what each agent offers, and the default a mission gets
 q mission move ms_… active     # launches the agent
+q mission queue ms_… ms_…      # or let q launch them as slots free up
 q mission list                 # the board, as text
 q open ms_…                    # open the debrief session
 q mission rm ms_… --dry-run    # what deleting would discard
@@ -131,7 +133,145 @@ instead of quietly widening them.
 approval is the launcher's decision, not the parent brief's.
 
 Created missions land in briefing either way. Nothing runs until a mission is
-moved to active.
+moved to active, or queued.
+
+### Letting q start missions
+
+A briefed mission waits for you by default. Queue it and the daemon starts it
+instead:
+
+```sh
+q mission add tidy-imports --operation "$op" --prompt "Tidy them." --queue
+q mission queue ms_… ms_…      # queue missions that already exist
+q mission unqueue ms_…
+```
+
+Queued missions start in board order, at most `queue.maxConcurrent` at a time.
+A slot is held only while a mission is in the active lane: one that stops to
+ask a question or finishes its turn frees it, so a queue keeps moving with
+nobody there to answer.
+
+A queued mission is started once. If the launch fails, the card goes back to
+briefing with the reason and is no longer queued, rather than being retried
+every few seconds.
+
+Queueing says nothing about order between missions beyond their position on
+the board. Two missions where the second builds on the first's unmerged work
+should not both be queued.
+
+## Two machines
+
+q can share its missions between the machine you sit at and one that is always
+on, so a queue keeps moving after a laptop lid closes and the code is still
+local when it opens again.
+
+```sh
+# on the laptop, once
+q remote setup mini.local
+q remote status
+```
+
+The arguments to `setup` are whatever you would give `ssh` to get a shell on
+the other machine. That machine needs q installed and its daemon running, and
+nothing else: it learns it is half of a pair when the laptop first calls. Its
+daemon should run as a service so it survives a reboot, because q will not
+start one over ssh. A daemon started that way would hand the bare environment
+of a non-interactive session to every agent it launched.
+
+A machine has one peer. `setup` asks the other machine who it is before saving
+anything, and refuses if either one is already paired with a third. To pair the
+laptop with a different machine:
+
+```sh
+q remote forget          # tells the old one too, and removes the saved address
+q remote setup vm.work
+```
+
+If the old machine cannot be reached when you forget it, the command says so.
+Run `q remote forget` there as well: a machine left believing in the pairing
+waits out `remote.takeoverAfter` and then starts running the laptop's missions.
+
+### What each machine does
+
+The laptop is the **primary** and the always-on machine the **secondary**. The
+roles are not configured; the machine told how to reach the other is the
+primary, because dialing is what a primary does.
+
+Every mission is on both machines: its card, and once it has launched, a real
+worktree per repository. What moves between them is which one runs the agent.
+
+| situation | where the agent runs |
+|---|---|
+| the laptop is awake | on the laptop |
+| the laptop has been silent for `remote.takeoverAfter` | on the secondary, including a mission whose agent was mid-turn |
+| the laptop is back, and an agent on the secondary finishes a turn | the next turn runs on the laptop |
+| a mission was created with `--on remote`, or `--on local` | where it was pinned, always |
+
+A card for a mission the other machine is running is marked `@mini`. Everything
+you can do to a card still works. Messages and lane moves are carried out by
+the machine running the agent; `enter` opens editors on this machine's own
+worktrees, with the agent's pane attached to the other machine over ssh. Press
+`t`, or run `q mission take`, to bring a mission here without waiting for a
+turn to end.
+
+### How the code gets across
+
+q does not push anything, and does not ask the agent to. On every exchange,
+each machine records its worktrees as commits under `refs/q/` in your
+repository. Those are not branches: they appear in no branch listing, reach no
+forge, and are removed with the mission. A recorded state includes uncommitted
+and untracked files, and is made without touching the worktree, the index, or
+the branch. The laptop then moves those commits between the two repositories
+with git, over the same command it reaches the other machine by.
+
+The machine not running the agent lays each state out in its own worktree, on
+the same commit, with the same changes still uncommitted. Ignored files are
+never carried, so a `.env` or a build directory belongs to each machine
+separately.
+
+Repositories are matched by their `origin`, not by path, so
+`~/dev/weave` on one machine and `/srv/src/weave` on the other are the same
+repository as long as both are clones of the same remote and both sit under
+`repos.roots`. A mission is not started, taken over, or resumed on a machine
+that is missing one of its repositories; its card says which.
+
+### When both machines changed something
+
+A worktree is only ever overwritten when it has not been edited since the two
+machines last agreed. If you fix something in the laptop's copy while the
+agent is busy on the other machine, the card shows `local-edits` and the fix
+waits until the agent is idle, then goes across.
+
+If both sides changed, the laptop merges them once the agent is idle. Work
+that was uncommitted stays uncommitted, and commits made on both sides are
+joined by a merge commit. If the two changed the same lines, q does not pick
+quietly: the laptop's version stays on the branch, the other machine's is kept
+on `<branch>--<host>`, and the card shows `diverged` with that branch's name.
+
+The usual way to get there is a laptop that slept mid-turn. Its agent is frozen
+rather than dead, and wakes with it. The laptop then finds its mission was
+taken over, stops its own agent, and whatever that agent did in the meantime
+is merged like any other edit.
+
+### What does not come across
+
+The agent's conversation. An agent started on a machine the mission has just
+arrived at is told that it is continuing from another machine, shown the last
+thing the previous agent said, and pointed at `git status` and `git log`. If
+the mission ran on this machine before, its earlier session is resumed with
+that same note.
+
+### Limits
+
+- A laptop that is awake but cannot reach the other machine keeps running its
+  missions, marked `unconfirmed`, and starts no queued ones. If the other
+  machine has taken a mission over in the meantime, the work is done twice and
+  merged when they next speak.
+- A takeover loses at most `remote.interval` of the laptop's work until the
+  laptop returns with it.
+- Both machines must run the same q. A mismatch stops the exchange and says so
+  in `q remote status`.
+- Merging needs git 2.40 or newer on the laptop.
 
 ## Configuration
 
@@ -188,6 +328,12 @@ settings without writing anything.
 | `paths.stateDir` | overrides where the daemon handle, hook spool, and logs live |
 | `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
 | `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
+| `queue.maxConcurrent` | how many queued missions run at once on this machine. Defaults to `2` |
+| `remote.ssh` | the command that gets a shell on the paired machine, e.g. `["ssh", "mini.local"]`. Setting it makes this machine the primary |
+| `remote.bin` | the q binary on the paired machine. Defaults to `~/.local/bin/q` |
+| `remote.name` | what this machine is called on cards. Defaults to its hostname |
+| `remote.interval` | how often the primary exchanges state with its pair. Defaults to `15s` |
+| `remote.takeoverAfter` | how long the pair waits for a silent primary before running its missions. Defaults to `5m` |
 | `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
@@ -252,6 +398,9 @@ one-off run can point q somewhere else without editing the file:
 | `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL`, `Q_AGY_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_MOUSE` | `tui.mouse` (enable/disable mouse with `true`/`false`) |
+| `Q_MAX_CONCURRENT` | `queue.maxConcurrent` |
+| `Q_REMOTE_SSH` | `remote.ssh`, split on spaces |
+| `Q_HOST_NAME` | `remote.name` |
 | `Q_<TOOL>_BIN` | one tool's path, e.g. `Q_CODEX_BIN` |
 
 The daemon reads the configuration when it starts, so after editing the file run
@@ -546,8 +695,8 @@ applies to the hook fallback when app-server status cannot be read.
 
 ## Security
 
-q runs entirely on one machine and sends nothing anywhere except what the agents
-themselves send.
+q sends nothing anywhere except what the agents themselves send, unless you
+pair it with a second machine of your own.
 
 The daemon listens on an ephemeral loopback port and requires a bearer token compared in
 constant time, a loopback peer, and a q-specific header. The token lives only in
@@ -557,6 +706,18 @@ environments in plaintext and `ps -E` can expose them; children are told the pat
 file and read it themselves.
 
 Everything q writes is owner-only. State holds mission prompts.
+
+Pairing two machines opens no port on either. The primary reaches the secondary
+by running a command, ssh by default, whose far end is `q rpc`: it reads one
+request, relays it to that machine's own loopback daemon with the token from
+that machine's own handle file, and exits. So the access q relies on is the
+shell access you already have, and the daemon's promise to accept connections
+only from its own host holds on both sides. A machine remembers the first peer
+that pairs with it and refuses a different one until told to `q remote forget`.
+
+Worktree states travel between the two repositories as git objects under
+`refs/q/`, over the same command. q allows git's `ext` transport for those
+invocations only, with a URL it builds from your configuration.
 
 q reads claude's session registry to recover from missed hooks. That directory also holds
 credential files, so the scan reads only `*.json`, and a test plants a decoy key file to
@@ -610,7 +771,8 @@ Packages are cut by domain, and every arrow in the import graph points inward to
 | `cmd/q` | the command tree, `~/.q-config.json`, tool resolution, and all wiring |
 | `internal/mission` | operations, missions, lanes, the state machine, the store, and the interfaces the rest implement |
 | `internal/api` | the daemon protocol: wire types, the handle, and the client |
-| `internal/daemon` | the service rules, the HTTP server, hook intake, and the reconciler |
+| `internal/daemon` | the service rules, the HTTP server, hook intake, the reconciler, the scheduler, and the exchange with a paired q |
+| `internal/remote` | reaching the q daemon on another machine over ssh |
 | `internal/claude` | running missions with `claude`, and reading its session registry |
 | `internal/codex` | running missions with `codex`, and its app-server client |
 | `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |

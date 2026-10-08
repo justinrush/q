@@ -22,6 +22,7 @@ package git
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,20 @@ func (g *Client) Lock(commonDir string) func() {
 // exec runs git with the given arguments in dir.
 func (g *Client) exec(ctx context.Context, dir string, args ...string) (runner.Result, error) {
 	spec := runner.Spec{Name: g.bin, Args: args}
+	if dir != "" {
+		spec.Args = append([]string{"-C", dir}, args...)
+	}
+
+	return g.run.Run(ctx, spec)
+}
+
+// execWith is exec with variables added to the inherited environment.
+//
+// A runner spec's environment replaces the process's own when set, so the
+// inherited one is passed along explicitly: git needs HOME to find the user's
+// configuration and PATH to find its helpers.
+func (g *Client) execWith(ctx context.Context, dir string, env []string, args ...string) (runner.Result, error) {
+	spec := runner.Spec{Name: g.bin, Args: args, Env: append(os.Environ(), env...)}
 	if dir != "" {
 		spec.Args = append([]string{"-C", dir}, args...)
 	}

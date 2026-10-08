@@ -22,6 +22,11 @@ type (
 	deleteMissionMsg struct{ Mission mission.Mission }
 	// togglePlanMsg asks to flip an unlaunched mission's plan-mode flag.
 	togglePlanMsg struct{ Mission mission.Mission }
+	// toggleQueuedMsg asks to flip whether q starts an unlaunched mission on
+	// its own.
+	toggleQueuedMsg struct{ Mission mission.Mission }
+	// takeMissionMsg asks to bring a mission the paired machine runs to this one.
+	takeMissionMsg struct{ Mission mission.Mission }
 	// filterPromptMsg asks for the operation filter picker.
 	filterPromptMsg struct{}
 	// statusMenuMsg asks for the lane picker for a mission.
@@ -102,6 +107,20 @@ func (b *Board) deleteMission() tea.Cmd {
 func (b *Board) togglePlan() tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
 		return emit(togglePlanMsg{Mission: ms})
+	})
+}
+
+// toggleQueued flips whether the focused mission starts on its own.
+func (b *Board) toggleQueued() tea.Cmd {
+	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		return emit(toggleQueuedMsg{Mission: ms})
+	})
+}
+
+// takeMission brings the focused mission to this machine.
+func (b *Board) takeMission() tea.Cmd {
+	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		return emit(takeMissionMsg{Mission: ms})
 	})
 }
 

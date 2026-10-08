@@ -307,3 +307,97 @@ func TestPaneRunsAgent(t *testing.T) {
 		})
 	}
 }
+
+// A mission that arrives from another machine has worktrees here and no
+// conversation. The agent started for it has seen nothing, so it must be given
+// the brief as well as what to do next, and a session id of its own so the
+// relaunch after this one can resume.
+func TestRelaunchWithNoSessionGivesAFreshAgentTheBrief(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	fake.Default = runner.Result{Stdout: []byte("%77")}
+	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+	ms := launchedMission(t, t.TempDir())
+	ms.AgentSessionID = ""
+
+	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "use the v2 API")
+	if err != nil {
+		t.Fatalf("Relaunch: %v", err)
+	}
+
+	prompt := readArtifact(t, got, "prompt.md")
+
+	for _, want := range []string{"## Mission: " + ms.Name, ms.Prompt, "use the v2 API"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("a fresh agent's prompt lacks %q:\n%s", want, prompt)
+		}
+	}
+
+	if strings.Index(prompt, "use the v2 API") < strings.Index(prompt, ms.Prompt) {
+		t.Errorf("the follow-up should come after the brief it follows up on:\n%s", prompt)
+	}
+
+	if got.AgentSessionID == "" {
+		t.Fatal("claude was not given a session id, so the next relaunch could not resume")
+	}
+
+	script := readArtifact(t, got, "launch.sh")
+	if !strings.Contains(script, "--session-id") || strings.Contains(script, "--resume") {
+		t.Errorf("a fresh agent should start a new session, not resume one:\n%s", script)
+	}
+}
+
+// Stop ends the agent and nothing else: the worktrees are the mirror now.
+func TestStopKillsOnlyALiveSession(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+	ms := launchedMission(t, t.TempDir())
+
+	if err := launcher.Stop(t.Context(), ms); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if strings.Contains(fake.Transcript(), "kill-session") {
+		t.Errorf("there was no session to kill:\n%s", fake.Transcript())
+	}
+
+	fake.Expect(tmuxBin+" has-session -t ="+testSession, "")
+
+	if err := launcher.Stop(t.Context(), ms); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+
+	if !strings.Contains(fake.Transcript(), "kill-session -t ="+testSession) {
+		t.Errorf("a live session should be killed:\n%s", fake.Transcript())
+	}
+}
+
+// The viewer pane runs q, not ssh, so it survives the connection it carries.
+func TestViewRunsQInTheAgentWindow(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	fake.Default = runner.Result{Stdout: []byte("%88")}
+	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+	ms := launchedMission(t, t.TempDir())
+
+	got, err := launcher.View(t.Context(), testOperation("/dev/weave"), ms)
+	if err != nil {
+		t.Fatalf("View: %v", err)
+	}
+
+	if got.TmuxSession != testSession || got.AgentPaneID != "%88" {
+		t.Errorf("session %q pane %q, want the mission's own session name", got.TmuxSession, got.AgentPaneID)
+	}
+
+	transcript := fake.Transcript()
+	if !strings.Contains(transcript, " view "+string(ms.ID)) || !strings.Contains(transcript, "-n agent") {
+		t.Errorf("the agent window should run `q view`:\n%s", transcript)
+	}
+
+	ms.MissionDir = ""
+
+	if _, err := launcher.View(t.Context(), testOperation("/dev/weave"), ms); err == nil {
+		t.Error("a mission with no worktrees here has nothing to view beside")
+	}
+}

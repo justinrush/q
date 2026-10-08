@@ -115,8 +115,15 @@ func TestMutateRollsBackOnError(t *testing.T) {
 		t.Error("failed mutation must not be applied in memory")
 	}
 
-	if _, statErr := os.Stat(dirs.StateFile()); !os.IsNotExist(statErr) {
-		t.Error("failed mutation must not write a state file")
+	// Opening a store mints its host identity and writes it at once, so a state
+	// file exists either way. What must not be in it is the refused change.
+	reopened, err := Open(dirs)
+	if err != nil {
+		t.Fatalf("reopening: %v", err)
+	}
+
+	if len(reopened.Snapshot().Operations) != 0 {
+		t.Error("failed mutation must not reach the state file")
 	}
 }
 

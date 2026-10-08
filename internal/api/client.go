@@ -374,3 +374,77 @@ func IsNotFound(err error) bool {
 
 	return ok && statusErr.NotFound()
 }
+
+// Raw sends a request whose body is already encoded and returns the response
+// undecoded, status and all.
+//
+// It exists for the relay behind `q rpc`, which carries a paired daemon's
+// request to this one. The relay has no business understanding what it
+// carries: decoding and re-encoding each endpoint would mean a second copy of
+// the protocol that has to be kept in step with the first.
+func (c *Client) Raw(
+	ctx context.Context,
+	method, path string,
+	body []byte,
+	timeout time.Duration,
+) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var payload any
+	if len(body) > 0 {
+		payload = json.RawMessage(body)
+	}
+
+	req, err := c.newRequest(ctx, method, path, payload)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("%s %s: %w", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("reading %s %s response: %w", method, path, err)
+	}
+
+	return resp.StatusCode, data, nil
+}
+
+// RemoteStatus reports the daemon's pairing with another q.
+func (c *Client) RemoteStatus(ctx context.Context) (RemoteStatus, error) {
+	return get[RemoteStatus](ctx, c, "/v1/remote")
+}
+
+// RemoteSync runs an exchange with the paired q now and reports how it went.
+//
+// It is bounded by the peer rather than by this daemon, which may have to wake
+// a connection and wait on the other machine's git.
+func (c *Client) RemoteSync(ctx context.Context) (RemoteStatus, error) {
+	return sendWithin[RemoteStatus](ctx, c, http.MethodPost, "/v1/remote/sync", struct{}{}, refreshTimeout)
+}
+
+// RemoteForget ends the pairing on this side.
+//
+// On a primary this also asks the other host to forget, which is a round trip
+// to it, so the call is given as long as an exchange.
+func (c *Client) RemoteForget(ctx context.Context) (Forgotten, error) {
+	return sendWithin[Forgotten](ctx, c, http.MethodDelete, "/v1/remote", nil, refreshTimeout)
+}
+
+// AttachCommand asks how to attach to a mission's agent on the paired host.
+func (c *Client) AttachCommand(ctx context.Context, id mission.MissionID) (AttachCommand, error) {
+	return get[AttachCommand](ctx, c, "/v1/missions/"+string(id)+"/attach")
+}
+
+// TakeMission brings a mission the paired q is running to this host.
+//
+// It can take as long as an exchange does, since the other host is asked to
+// stop its agent and its final state is fetched before this returns.
+func (c *Client) TakeMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/take", struct{}{}, refreshTimeout)
+}

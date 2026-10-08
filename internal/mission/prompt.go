@@ -117,3 +117,43 @@ func shortSHA(sha string) string {
 
 	return sha
 }
+
+// Continuation is what an agent is told when it picks up a mission that was
+// last worked on by an agent on another machine.
+//
+// The worktrees came across; the conversation did not. An agent resumed into
+// its own earlier session remembers a tree that has since changed under it, and
+// one started fresh remembers nothing at all. Either way the honest thing is to
+// say so, and to point it at the one source of truth that did make the trip.
+//
+// from names the other machine. lastMessage is what the agent there last said,
+// which for a mission that stopped to ask a question is the question. message
+// is what the human wants next, and may be empty.
+func Continuation(from, lastMessage, message string) string {
+	var b strings.Builder
+
+	b.WriteString("## Continuing from another machine\n\n")
+	fmt.Fprintf(&b, "This mission was last worked on by an agent on %s. ", from)
+	b.WriteString("Its work is in the worktrees here, including changes it had not committed, ")
+	b.WriteString("but none of that conversation is available to you. ")
+	b.WriteString("Read `git status`, `git diff`, and `git log` in each repository before acting, ")
+	b.WriteString("and treat what you find there as the current state of the work.\n")
+
+	if last := strings.TrimSpace(lastMessage); last != "" {
+		b.WriteString("\nThe last thing that agent said was:\n\n")
+
+		for line := range strings.SplitSeq(last, "\n") {
+			b.WriteString("> " + line + "\n")
+		}
+	}
+
+	b.WriteString("\n## What to do now\n\n")
+
+	if next := strings.TrimSpace(message); next != "" {
+		b.WriteString(next + "\n")
+	} else {
+		b.WriteString("Continue the mission from where the work in the tree leaves off.\n")
+	}
+
+	return b.String()
+}

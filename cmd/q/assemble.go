@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/justinrush/q/internal/agy"
@@ -16,6 +19,7 @@ import (
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/opencode"
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/remote"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/justinrush/q/internal/terminal"
 	"github.com/justinrush/q/internal/usage"
@@ -51,6 +55,11 @@ func assembleService(
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
 		daemon.WithModelRefresh(s.Agents.ModelRefresh),
+		daemon.WithMaxConcurrent(s.Queue.MaxConcurrent),
+		daemon.WithHostName(s.Remote.Name),
+		daemon.WithVersion(version),
+		daemon.WithSyncInterval(s.Remote.Interval),
+		daemon.WithTakeoverAfter(s.Remote.TakeoverAfter),
 	}
 
 	// Metering runs off files the agent has already written, so it is wired
@@ -76,12 +85,17 @@ func assembleService(
 		return nil, nil, err
 	}
 
-	opts = append(opts, daemon.WithBrancher(gitc))
-
 	workspace := git.NewProvisioner(dirs, gitc, tmux,
 		git.WithLogger(logger),
 		git.WithBranchPrefix(s.Git.BranchPrefix),
 	)
+
+	pairing, err := pairingOptions(s, dirs, run, gitc, workspace)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	opts = append(append(opts, daemon.WithBrancher(gitc)), pairing...)
 
 	launchOpts := []launch.Option{launch.WithLogger(logger)}
 	for _, agent := range agentsFor(s) {
@@ -116,6 +130,65 @@ func assembleService(
 	)
 
 	return daemon.NewService(store, hub, dirs, opts...), stop, nil
+}
+
+// pairingOptions wires what sharing missions with another machine needs.
+//
+// All of it is harmless on a q that is never paired. Locating repositories and
+// snapshotting worktrees are only ever asked for by an exchange, and an
+// exchange only happens when one side has been told how to reach the other.
+func pairingOptions(
+	s settings,
+	dirs paths.Dirs,
+	run runner.Runner,
+	gitc *git.Client,
+	workspace *git.Provisioner,
+) ([]daemon.Option, error) {
+	opts := []daemon.Option{
+		daemon.WithLocator(git.NewLocator(gitc, git.ScanOptions{
+			Roots:    s.Repos.Roots,
+			MaxDepth: s.Repos.MaxDepth,
+			Skip:     s.Repos.Skip,
+		})),
+		daemon.WithWorktrees(git.NewMirrors(gitc, workspace)),
+	}
+
+	link, err := remoteFor(s, dirs, run)
+	if err != nil {
+		return nil, err
+	}
+
+	if link != nil {
+		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
+	}
+
+	return opts, nil
+}
+
+// remoteFor builds the connection to the paired q, or nil when this machine
+// does not dial one.
+//
+// The command's first element is resolved here, once, for the same reason every
+// other tool is: the daemon may not have the PATH an interactive shell does,
+// and a pairing that works from a terminal and fails from the daemon is the
+// hardest kind of broken to notice.
+func remoteFor(s settings, dirs paths.Dirs, run runner.Runner) (*remote.Command, error) {
+	if len(s.Remote.SSH) == 0 {
+		return nil, nil
+	}
+
+	argv := slices.Clone(s.Remote.SSH)
+
+	if !filepath.IsAbs(argv[0]) {
+		resolved, err := exec.LookPath(argv[0])
+		if err != nil {
+			return nil, fmt.Errorf("remote.ssh: %q was not found on PATH: %w", argv[0], err)
+		}
+
+		argv[0] = resolved
+	}
+
+	return &remote.Command{Argv: argv, Bin: s.Remote.Bin, ControlDir: dirs.State, Run: run}, nil
 }
 
 // agentsFor builds an agent for every tool whose binary this machine has.

@@ -8,6 +8,7 @@ import (
 	"github.com/justinrush/q/internal/terminal"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Relaunch restarts a mission's agent against its existing worktrees, resuming the
@@ -36,7 +37,23 @@ func (l *Launcher) Relaunch(
 
 	ms.HookEpoch++
 
-	if err := l.writeRelaunchArtifacts(ms, message); err != nil {
+	// With no session of the agent's own to resume, this is a fresh agent. That
+	// is the ordinary case for a mission that has just arrived from another
+	// machine, where the conversation never existed here. An agent that accepts
+	// a session id chosen in advance is given one now, exactly as at launch, so
+	// the next relaunch does have something to resume.
+	resume := ms.AgentSessionID != ""
+
+	if !resume && ms.Tool.SupportsPresetSessionID() {
+		sessionID, err := mission.NewSessionUUID()
+		if err != nil {
+			return ms, err
+		}
+
+		ms.AgentSessionID = sessionID
+	}
+
+	if err := l.writeRelaunchArtifacts(operation, ms, message, resume); err != nil {
 		return ms, err
 	}
 
@@ -59,16 +76,95 @@ func (l *Launcher) Relaunch(
 	return ms, nil
 }
 
-// writeRelaunchArtifacts regenerates the prompt and script for a resumed session.
+// Stop ends a mission's agent session, leaving its worktrees as they are.
 //
-// The prompt is rewritten because a resumed agent is given the follow-up message
-// rather than the original mission, which it has already seen. The agent's own
-// configuration is rewritten too, so a moved q binary is corrected on relaunch
-// rather than leaving the revived session unable to report status.
-func (l *Launcher) writeRelaunchArtifacts(ms mission.Mission, message string) error {
+// It is what a host does when a mission it was running is now run by its
+// paired peer. Reclaiming would be wrong there: the worktrees stay, as the
+// mirror of the work now happening elsewhere.
+func (l *Launcher) Stop(ctx context.Context, ms mission.Mission) error {
+	if ms.TmuxSession == "" || !l.tmux.HasSession(ctx, ms.TmuxSession) {
+		return nil
+	}
+
+	return l.tmux.KillSession(ctx, ms.TmuxSession)
+}
+
+// View starts a session for a mission whose agent runs on another host.
+//
+// The session is laid out like any other mission's, with the agent's window
+// where it always is, so everything that arranges a debrief works on it
+// unchanged. The difference is what runs in that window: not an agent, but
+// `q view`, which attaches to the one running elsewhere. The editors beside it
+// open on this host's own mirror of the worktrees, which is the point — the
+// conversation is remote and the code is local.
+//
+// The pane runs q rather than ssh directly so that it outlives the
+// connection. A laptop sleeps, the connection drops, and a pane that simply
+// exited would take the session and its editors with it.
+func (l *Launcher) View(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Mission, error) {
+	if ms.MissionDir == "" {
+		return ms, fmt.Errorf("mission %s has no worktrees on this machine yet", ms.ID)
+	}
+
+	self, err := l.selfPath()
+	if err != nil {
+		return ms, err
+	}
+
+	ms.TmuxSession = mission.TmuxSessionName(operation.Slug, ms.Slug, ms.ID)
+
+	if l.tmux.HasSession(ctx, ms.TmuxSession) {
+		if err := l.tmux.KillSession(ctx, ms.TmuxSession); err != nil {
+			return ms, err
+		}
+	}
+
+	paneID, err := l.tmux.NewSession(ctx, terminal.NewSessionOptions{
+		Name:    ms.TmuxSession,
+		Window:  agentWindow,
+		Dir:     ms.MissionDir,
+		Command: []string{self, "view", string(ms.ID)},
+	})
+	if err != nil {
+		return ms, err
+	}
+
+	ms.AgentPaneID = paneID
+
+	l.applySessionOptions(ctx, &ms)
+
+	return ms, nil
+}
+
+// writeRelaunchArtifacts regenerates the prompt and script for a revived session.
+//
+// A resumed agent is given the follow-up message rather than the original
+// mission, which it has already seen. A fresh one has seen nothing, so it is
+// given the mission's brief first and the message after it; handing it the
+// message alone would start an agent that knows what to do next and not what
+// it is doing.
+//
+// The agent's own configuration is rewritten too, so a moved q binary is
+// corrected on relaunch rather than leaving the revived session unable to
+// report status.
+func (l *Launcher) writeRelaunchArtifacts(
+	operation mission.Operation,
+	ms mission.Mission,
+	message string,
+	resume bool,
+) error {
 	prompt := message
 	if prompt == "" {
 		prompt = defaultResumePrompt
+	}
+
+	if !resume {
+		brief, err := mission.ComposePrompt(operation, ms)
+		if err != nil {
+			return err
+		}
+
+		prompt = strings.TrimRight(brief, "\n") + "\n\n" + prompt
 	}
 
 	if err := l.writePrompt(ms, prompt); err != nil {
@@ -79,7 +175,7 @@ func (l *Launcher) writeRelaunchArtifacts(ms mission.Mission, message string) er
 	// by id when its SessionStart hook never arrived. The session then starts
 	// fresh rather than silently resuming whatever was most recent in this
 	// directory.
-	return l.writeScript(ms, ms.AgentSessionID != "")
+	return l.writeScript(ms, resume)
 }
 
 // defaultResumePrompt is sent when a session is revived with nothing specific to say.

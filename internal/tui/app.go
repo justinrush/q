@@ -85,8 +85,10 @@ type App struct {
 	toast toast
 
 	snapshot mission.Snapshot
-	width    int
-	height   int
+	// remote is the state of the pairing with another q, zero when there is none.
+	remote api.RemoteStatus
+	width  int
+	height int
 
 	// events carries frames from the SSE reader goroutine.
 	events chan tea.Msg
@@ -510,6 +512,10 @@ func (a *App) status() string {
 		parts = append(parts, styles.CardError.Render("● reconnecting"+a.downFor()))
 	}
 
+	if link := a.linkLabel(); link != "" {
+		parts = append(parts, link)
+	}
+
 	if label := a.board.FilterLabel(); label != "" && a.active == tabBoard {
 		parts = append(parts, styles.CardWaiting.Render(label+" (esc clears)"))
 	}
@@ -524,6 +530,41 @@ func (a *App) status() string {
 	}
 
 	return strings.Join(parts, "  ")
+}
+
+// linkLabel renders the pairing with another q, or nothing when there is none.
+//
+// A link that is up is drawn quietly and one that is down is drawn as an
+// error, because the cards for missions on the other machine stop changing the
+// moment it drops and look exactly as they did while it was up.
+func (a *App) linkLabel() string {
+	if a.remote.Role == mission.RoleStandalone {
+		return ""
+	}
+
+	peer := "unpaired"
+	if a.remote.Peer != nil {
+		peer = a.remote.Peer.Name
+		if peer == "" {
+			peer = string(a.remote.Peer.ID)
+		}
+	}
+
+	label := "⇄ " + peer
+
+	if a.remote.Pending > 0 {
+		label += fmt.Sprintf(" (%d pending)", a.remote.Pending)
+	}
+
+	if a.remote.Linked() {
+		return styles.CardDetail.Render(label)
+	}
+
+	if a.remote.LastSyncAt.IsZero() {
+		return styles.CardError.Render(label + " not connected")
+	}
+
+	return styles.CardError.Render(label + " offline " + shortDuration(time.Since(a.remote.LastSyncAt)))
 }
 
 // downFor renders how long the stream has been down, once that is long enough to

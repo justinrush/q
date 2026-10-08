@@ -19,6 +19,8 @@ const (
 	EventLimits = "limits"
 	// EventJob reports progress of a long-running action such as a launch.
 	EventJob = "job"
+	// EventRemote carries the state of this daemon's pairing with another.
+	EventRemote = "remote"
 	// EventPing is a heartbeat, so a client can notice a socket that has died
 	// without the far end telling it.
 	EventPing = "ping"

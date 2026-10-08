@@ -9,7 +9,7 @@ import (
 
 // SchemaVersion is the current on-disk format version. Bump it when a change
 // requires migrating existing state, and add a case to migrate.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Snapshot is the complete persisted state of q.
 type Snapshot struct {
@@ -24,6 +24,18 @@ type Snapshot struct {
 	// whole point of recording it.
 	Limits    []Limit   `json:"limits,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
+
+	// Self identifies this installation. It lives in the snapshot rather than
+	// beside it so that it is created, backed up, and restored with the missions
+	// whose leases name it.
+	Self HostInfo `json:"self,omitzero"`
+	// Peer is the installation this one is paired with, nil when q runs alone.
+	Peer *Peer `json:"peer,omitempty"`
+	// Tombstones remember deletes long enough for the peer to hear of them.
+	Tombstones []Tombstone `json:"tombstones,omitempty"`
+	// Outbox holds requests for missions the peer runs that could not be
+	// delivered when they were made.
+	Outbox []Command `json:"outbox,omitempty"`
 }
 
 // Clone returns a deep copy.
@@ -37,6 +49,13 @@ func (s Snapshot) Clone() Snapshot {
 	out.Operations = make([]Operation, len(s.Operations))
 	out.Missions = make([]Mission, len(s.Missions))
 	out.Limits = slices.Clone(s.Limits)
+	out.Tombstones = slices.Clone(s.Tombstones)
+	out.Outbox = slices.Clone(s.Outbox)
+
+	if s.Peer != nil {
+		peer := *s.Peer
+		out.Peer = &peer
+	}
 
 	for i, t := range s.Operations {
 		t.Repos = slices.Clone(t.Repos)
@@ -53,7 +72,18 @@ func (s Snapshot) Clone() Snapshot {
 // cloneMission deep copies a mission's reference types.
 func cloneMission(t Mission) Mission {
 	t.Badges = slices.Clone(t.Badges)
+	t.LocalBadges = slices.Clone(t.LocalBadges)
+	t.BaseBranches = maps.Clone(t.BaseBranches)
 	t.Usage = t.Usage.Clone()
+
+	if t.UsageByHost != nil {
+		byHost := make(map[HostID]Usage, len(t.UsageByHost))
+		for host, usage := range t.UsageByHost {
+			byHost[host] = usage.Clone()
+		}
+
+		t.UsageByHost = byHost
+	}
 	t.ExtraRepos = slices.Clone(t.ExtraRepos)
 	t.LaunchRepos = slices.Clone(t.LaunchRepos)
 

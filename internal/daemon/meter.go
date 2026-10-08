@@ -40,7 +40,7 @@ func (s *Service) meterMission(id mission.MissionID) {
 	}
 
 	meter, ok := s.meters[ms.Tool]
-	if !ok {
+	if !ok || !s.holds(ms) {
 		return
 	}
 
@@ -85,10 +85,19 @@ func (s *Service) storeMetering(id mission.MissionID, metering mission.Metering)
 			return nil
 		}
 
-		if !metering.Usage.Empty() && !ms.Usage.Equal(metering.Usage) {
+		if !metering.Usage.Empty() && !ms.UsageByHost[s.self].Equal(metering.Usage) {
 			usage := metering.Usage
 			usage.At = now
-			ms.Usage = usage
+
+			// The reading is this host's alone. What the card shows is the sum
+			// over every host that has run the mission, so a mission that moved
+			// keeps what it cost before it did.
+			if ms.UsageByHost == nil {
+				ms.UsageByHost = map[mission.HostID]mission.Usage{}
+			}
+
+			ms.UsageByHost[s.self] = usage
+			ms.Usage = mission.TotalUsage(ms.UsageByHost)
 			ms.UpdatedAt = now
 
 			snap.PutMission(ms)
@@ -127,7 +136,7 @@ func (s *Service) meteringChanges(
 		return false
 	}
 
-	if !metering.Usage.Empty() && !ms.Usage.Equal(metering.Usage) {
+	if !metering.Usage.Empty() && !ms.UsageByHost[s.self].Equal(metering.Usage) {
 		return true
 	}
 

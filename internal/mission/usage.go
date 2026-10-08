@@ -1,6 +1,9 @@
 package mission
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // ModelTokens is what one model consumed for one mission.
 //
@@ -89,6 +92,52 @@ func (u Usage) Clone() Usage {
 	u.PerModel = models
 
 	return u
+}
+
+// Plus returns the two usages combined, as one mission's consumption on two
+// hosts. The measurement time is the later of the two.
+func (u Usage) Plus(o Usage) Usage {
+	out := Usage{USD: u.USD + o.USD, Unpriced: u.Unpriced || o.Unpriced, At: u.At}
+	if o.At.After(out.At) {
+		out.At = o.At
+	}
+
+	if len(u.PerModel)+len(o.PerModel) == 0 {
+		return out
+	}
+
+	out.PerModel = make(map[string]ModelTokens, len(u.PerModel)+len(o.PerModel))
+
+	for model, tokens := range u.PerModel {
+		out.PerModel[model] = tokens
+	}
+
+	for model, tokens := range o.PerModel {
+		out.PerModel[model] = out.PerModel[model].Add(tokens)
+	}
+
+	return out
+}
+
+// TotalUsage sums what a mission consumed across the hosts that ran it.
+//
+// The hosts are added in a fixed order. Floating-point addition is not
+// associative, and a total that differed in its last bit depending on map order
+// would read as a change on every measurement.
+func TotalUsage(byHost map[HostID]Usage) Usage {
+	hosts := make([]HostID, 0, len(byHost))
+	for host := range byHost {
+		hosts = append(hosts, host)
+	}
+
+	slices.Sort(hosts)
+
+	var total Usage
+	for _, host := range hosts {
+		total = total.Plus(byHost[host])
+	}
+
+	return total
 }
 
 // Equal reports whether two usages are the same measurement, ignoring when it
