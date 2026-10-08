@@ -1,13 +1,18 @@
 # q
 
+[![CI](https://github.com/justinrush/q/actions/workflows/ci.yml/badge.svg)](https://github.com/justinrush/q/actions/workflows/ci.yml)
+[![Release](https://github.com/justinrush/q/actions/workflows/release.yml/badge.svg)](https://github.com/justinrush/q/actions/workflows/release.yml)
+
+[Install](#install) · [Using it](#using-it) · [Two machines](#two-machines) · [Configuration](#configuration) · [Contributing](#contributing)
+
 `q` is a terminal UI for running coding agents across several git repos at once.
 
 Q runs the mission board. An **operation** is an area of investigation: a high-level
 summary plus the repos it spans. A **mission** is one unit of agent work inside an
 operation. It inherits the operation's repos and can add repos needed only for that
-mission. q gives each mission its own git worktree per repo, starts `claude`, `codex`, or `agy`
-in a detached tmux session, and shows every mission on a board that updates itself as the
-agents work.
+mission. q gives each mission its own git worktree per repo, starts `claude`, `codex`,
+`agy`, or `opencode` in a detached tmux session, and shows every mission on a board
+that updates itself as the agents work.
 
 ```
 q  Board   Operations
@@ -40,17 +45,34 @@ branched from a freshly fetched default branch. Your own checkouts are never mod
 A mission that is about work already in progress can name a different starting point per
 repo, so its worktree contains the branch you want to read. See [Base branches](#base-branches).
 
+## What q can do
+
+- Run independent missions in isolated worktrees, with live agent status and messages.
+- Queue briefed missions and launch them as active slots become free.
+- Create follow-up missions that inherit the parent mission's agent and repositories.
+- Pair two machines over SSH, mirror worktrees, and move agent execution between hosts.
+- Discover models from installed agents and estimate Claude/Codex usage costs.
+
 ## Requirements
 
-- **git** and **tmux**
-- **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** or **[agy](https://antigravity.google/docs/cli/getting-started/)** — at least one
-- **Go 1.26+** to build
+- **git** and **tmux** (git 2.40+ for merging paired-machine work)
+- **[claude](https://claude.com/claude-code)** or **[codex](https://developers.openai.com/codex/cli)** or **[agy](https://antigravity.google/docs/cli/getting-started/)** or **[opencode](https://opencode.ai)** — at least one
+- **Go 1.26+** when building from source
 - macOS or Linux. Desktop windows on macOS use [Ghostty](https://ghostty.org) 1.3+;
   remote shells use the current terminal. For other desktop windows, name your own
   terminal command, or let q print the `tmux attach` line for you. See
   [Configuration](#configuration).
 
 ## Install
+
+Download a macOS or Linux archive for your architecture (`arm64` or `amd64`) from
+[Releases](https://github.com/justinrush/q/releases). Each archive contains `q`, the
+README, and the license; `checksums.txt` lists SHA-256 hashes. Extract it, place `q`
+on your PATH (for example, in `~/.local/bin`), and run `q --version`.
+The binaries include their release version and commit. Agent CLIs, git, and tmux
+are installed separately.
+
+To build from source instead:
 
 ```sh
 git clone https://github.com/justinrush/q
@@ -66,6 +88,8 @@ q doctor        # check git, tmux, an agent, and your editor are all reachable
 q config init   # optional: write ~/.q-config.json with the current effective values
 q               # open the board
 ```
+
+After upgrading, run `q daemon restart` so the daemon uses the new binary.
 
 `q doctor` is worth running first. It reports the resolved path and version of every
 external tool, where state lives, and what your configuration actually resolved to.
@@ -83,6 +107,7 @@ Press `?` for the full keymap. The essentials:
 | `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
 | `m` | send a message to a running agent |
 | `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
+| `t` | take a mission from the paired host and run its agent here |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
 
@@ -169,6 +194,7 @@ local when it opens again.
 # on the laptop, once
 q remote setup mini.local
 q remote status
+q remote sync     # request an exchange now
 ```
 
 The arguments to `setup` are whatever you would give `ssh` to get a shell on
@@ -190,6 +216,10 @@ q remote setup vm.work
 If the old machine cannot be reached when you forget it, the command says so.
 Run `q remote forget` there as well: a machine left believing in the pairing
 waits out `remote.takeoverAfter` and then starts running the laptop's missions.
+
+To pin a mission to a host at creation, use `q mission add ... --on local` or
+`--on remote`. Run `q mission take ms_…` (or press `t` on its card) to bring an
+existing mission to this machine.
 
 ### What each machine does
 
@@ -292,6 +322,7 @@ settings without writing anything.
     "default": "claude",
     "modelRefresh": "6h",
     "agy": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
+    "opencode": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
     "claude": { "bin": "", "args": [], "model": "", "effort": "", "models": [] },
     "codex": { "bin": "", "args": [], "model": "", "effort": "", "models": [],
                "configDir": "~/.codex", "profile": "q" }
@@ -462,8 +493,10 @@ q would be wrong within weeks and would not know what a given account is entitle
   is knowable only from codex.
 
 The daemon asks on startup and every `agents.modelRefresh` after that, caching the answer
-so a restarted daemon has something to offer immediately. `q models` prints the catalog
-and how long ago it was learned; `q models --refresh` asks again now. Probing claude
+so a restarted daemon has something to offer immediately. A refresh that returns no
+models retains the last usable catalog rather than emptying the model picker.
+`q models` prints the catalog and how long ago it was learned; `q models --refresh`
+asks again now. Probing claude
 starts it, which fires your own `SessionStart` hooks — that is why it is cached and
 infrequent rather than done every time a form opens.
 
@@ -473,6 +506,12 @@ claude, `ANTHROPIC_MODEL`, then managed settings, then `model` in `~/.claude/set
 for codex, `model` under the profile q launches with, then the top-level one. `q doctor`
 reports what each resolves to. Nothing validates a mission's model against the catalog —
 a stale probe should not stop you launching a model the agent would have accepted.
+
+OpenCode discovers models with `opencode models --verbose`, falling back to the plain
+list and then configured `agents.opencode.models`. It supports model and effort
+selection and plan mode. Choose `--tool opencode` on the CLI or select it in the
+mission form; `agents.opencode.bin` and `Q_OPENCODE_BIN` select its executable.
+q generates a mission-local status plugin under `.opencode/plugins/q-status.js`.
 
 ### Base branches
 
@@ -643,6 +682,9 @@ plan mode, q routes that to **debrief** rather than to *awaiting orders*, and op
 debrief drops you into the live approval dialog. Approving it there switches claude into
 accept-edits and the card returns to *active*. Nothing is killed or restarted.
 
+OpenCode missions also support `--plan`; q launches the plan agent and handles its
+`plan_exit` approval event.
+
 codex has no plan mode, so the toggle is disabled for codex missions and says why. The toggle is also disabled for agy: its CLI has a plan mode, but q does not yet have a verified plan-approval event for it.
 
 ## Operating it
@@ -727,78 +769,7 @@ No trust check is ever bypassed. codex offers a flag to skip hook trust; q does 
 it, because it would disable the check for every hook in the invocation rather than just
 q's.
 
-## Contributing
-
-```sh
-go build ./... && go vet ./... && go test ./...
-go test -race ./...       # the store is shared between concurrent hook processes
-golangci-lint run ./...   # optional; .golangci.yml is the project's config
-```
-
-[`TESTING.md`](TESTING.md) covers what the automated tests actually pin down and what only
-a human can verify. A few expectations worth knowing before opening a pull request:
-
-**Anything that runs a subprocess goes through `internal/runner`.** It is the only place
-that calls `os/exec`, which is what keeps the gosec suppression to one justified site. New
-external commands should be argv built from validated state, never a shell string.
-
-**External-tool behavior is verified, not assumed.** Several of this tool's hardest bugs
-came from a flag that looked applied and was not. If a change relies on how `claude`,
-`codex`, `tmux`, `git`, or a terminal emulator behaves, say how that was checked, and add
-a test asserting the argv or the generated file.
-
-**Constraints are enforced by construction where possible.** `internal/git` exposes no
-general `Fetch`, only an explicit single-refspec one, because a user's global git config
-may set `fetch.all` and `fetch.force`. `internal/terminal` targets render their own `=`
-prefix, because tmux otherwise prefix-matches session names. The TUI keymap has a
-`Forbidden` set for keys tmux intercepts. A change that works around one of these instead
-of extending it deserves scrutiny.
-
-**Destructive paths need a refusal, not a warning.** Deleting a mission can discard an
-agent's uncommitted work. The rule is that git's own refusal is surfaced rather than
-overruled, and forcing is explicit.
-
-**Comments explain why, not what.** The non-obvious constraints are the valuable part of
-this codebase; a change that drops one of those explanations loses more than it looks.
-
-### Layout
-
-Packages are cut by domain, and every arrow in the import graph points inward toward
-`internal/mission`.
-
-| package | what lives there |
-|---|---|
-| `cmd/q` | the command tree, `~/.q-config.json`, tool resolution, and all wiring |
-| `internal/mission` | operations, missions, lanes, the state machine, the store, and the interfaces the rest implement |
-| `internal/api` | the daemon protocol: wire types, the handle, and the client |
-| `internal/daemon` | the service rules, the HTTP server, hook intake, the reconciler, the scheduler, and the exchange with a paired q |
-| `internal/remote` | reaching the q daemon on another machine over ssh |
-| `internal/claude` | running missions with `claude`, and reading its session registry |
-| `internal/codex` | running missions with `codex`, and its app-server client |
-| `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |
-| `internal/terminal` | tmux, and the window openers one per terminal strategy |
-| `internal/launch` | the launch sequence: provision, write, start, relaunch |
-| `internal/debrief` | arranging and attaching a debrief session |
-| `internal/runner` | the single seam through which q executes external programs |
-| `internal/paths` | the on-disk layout |
-| `internal/spool` | hook events buffered while the daemon is down |
-| `internal/usage` | reading what a session consumed out of the agents' own logs, and pricing it |
-| `internal/tui` | the board |
-
-**Adding an agent** is three edits: an entry in the `known` table in
-`internal/mission/tool.go`, a package implementing `mission.Agent` — what argv it takes,
-what files it needs written, which hook events it reports — and a line in
-`cmd/q/assemble.go` that builds it from config. If it can report on its own live sessions
-it also implements `mission.Runtime` (authoritative, polled) or `mission.Healer`
-(advisory, used only to correct a card a dropped hook left wrong), and if it writes down
-what its sessions consume, `mission.Meter`. Nothing else branches on which agent a mission
-uses.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
-
-### Google Antigravity CLI (agy)
+## Google Antigravity CLI (agy)
 
 Select `agy` in the mission form or pass `--tool agy` when creating a mission.
 Set `agents.default` to `agy` to use it by default. Configure `agents.agy.bin`
@@ -831,3 +802,109 @@ default, so q leaves the model unset unless configured or selected.
 Agy cost and limit metering is unavailable: the local 1.1.27 transcripts contain
 no token-usage or quota-reset records. Its missions display no cost, and `q doctor`
 reports this limitation. Configuring prices alone cannot supply missing usage.
+
+## Contributing
+
+Pull requests run [CI](.github/workflows/ci.yml) on GitHub-hosted Linux and macOS
+runners: formatting, `go vet`, the full test suite with the race detector, a build,
+and release-version tests. The same checks gate every release on `main`.
+No local runner, agent login, or API credentials are needed: agent/terminal tests
+use fakes, and the git integration tests use temporary repositories.
+
+```sh
+go build ./... && go vet ./... && go test ./...
+python3 -m unittest discover -s scripts -p 'test_*.py'  # release-version tests
+go test -race ./...       # the store is shared between concurrent hook processes
+golangci-lint run ./...   # optional; .golangci.yml is the project's config
+```
+
+[`TESTING.md`](TESTING.md) covers what the automated tests actually pin down and what only
+a human can verify. A few expectations worth knowing before opening a pull request:
+
+**Anything that runs a subprocess goes through `internal/runner`.** It is the only place
+that calls `os/exec`, which is what keeps the gosec suppression to one justified site. New
+external commands should be argv built from validated state, never a shell string.
+
+**External-tool behavior is verified, not assumed.** Several of this tool's hardest bugs
+came from a flag that looked applied and was not. If a change relies on how `claude`,
+`codex`, `tmux`, `git`, or a terminal emulator behaves, say how that was checked, and add
+a test asserting the argv or the generated file.
+
+**Constraints are enforced by construction where possible.** `internal/git` exposes no
+general `Fetch`, only an explicit single-refspec one, because a user's global git config
+may set `fetch.all` and `fetch.force`. `internal/terminal` targets render their own `=`
+prefix, because tmux otherwise prefix-matches session names. The TUI keymap has a
+`Forbidden` set for keys tmux intercepts. A change that works around one of these instead
+of extending it deserves scrutiny.
+
+**Destructive paths need a refusal, not a warning.** Deleting a mission can discard an
+agent's uncommitted work. The rule is that git's own refusal is surfaced rather than
+overruled, and forcing is explicit.
+
+**Comments explain why, not what.** The non-obvious constraints are the valuable part of
+this codebase; a change that drops one of those explanations loses more than it looks.
+
+### Releases and versioning
+
+[Release](.github/workflows/release.yml) runs on every push to `main`, including
+merged pull requests. After Linux and macOS checks pass, it creates a `vMAJOR.MINOR.PATCH`
+tag on that exact commit and a GitHub release with generated notes, macOS/Linux
+binaries for `amd64` and `arm64`, and SHA-256 checksums. Release runs queue while
+another is in progress. The workflow uses GitHub's built-in token; no personal
+access token or self-hosted runner is required.
+
+The first release is `v0.1.0`. Later releases examine commit messages since the
+highest stable version tag, using [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+
+| commit message | next version from `v1.2.3` |
+|---|---|
+| `fix: …`, `docs: …`, or an ordinary commit message | `v1.2.4` |
+| `feat: …` or `feat(queue): …` | `v1.3.0` |
+| `feat!: …`, `fix(api)!: …`, or a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer | `v2.0.0` |
+
+The largest bump wins. Breaking changes increment the major even before `v1.0.0`.
+Use the convention in the squash commit title/body when squash-merging; normal
+merges also inspect the branch's commits. Every successful main push releases,
+including documentation-only changes. Prerelease and unrelated non-version tags
+are ignored. Failed checks publish nothing. Rerunning an interrupted release
+reuses its tag and repairs asset uploads; a delayed run whose commit already has
+a newer descendant release skips publishing older code as latest.
+
+### Layout
+
+Packages are cut by domain, and every arrow in the import graph points inward toward
+`internal/mission`.
+
+| package | what lives there |
+|---|---|
+| `cmd/q` | the command tree, `~/.q-config.json`, tool resolution, and all wiring |
+| `internal/mission` | operations, missions, lanes, the state machine, the store, and the interfaces the rest implement |
+| `internal/api` | the daemon protocol: wire types, the handle, and the client |
+| `internal/daemon` | the service rules, the HTTP server, hook intake, the reconciler, the scheduler, and the exchange with a paired q |
+| `internal/remote` | reaching the q daemon on another machine over ssh |
+| `internal/claude` | running missions with `claude`, and reading its session registry |
+| `internal/agy` | running Antigravity missions and discovering its models |
+| `internal/opencode` | running OpenCode missions, its status plugin, and model discovery |
+| `internal/codex` | running missions with `codex`, and its app-server client |
+| `internal/git` | git operations, worktree provisioning and reclaim, checkout discovery |
+| `internal/terminal` | tmux, and the window openers one per terminal strategy |
+| `internal/launch` | the launch sequence: provision, write, start, relaunch |
+| `internal/debrief` | arranging and attaching a debrief session |
+| `internal/runner` | the single seam through which q executes external programs |
+| `internal/paths` | the on-disk layout |
+| `internal/spool` | hook events buffered while the daemon is down |
+| `internal/usage` | reading what a session consumed out of the agents' own logs, and pricing it |
+| `internal/tui` | the board |
+
+**Adding an agent** is three edits: an entry in the `known` table in
+`internal/mission/tool.go`, a package implementing `mission.Agent` — what argv it takes,
+what files it needs written, which hook events it reports — and a line in
+`cmd/q/assemble.go` that builds it from config. If it can report on its own live sessions
+it also implements `mission.Runtime` (authoritative, polled) or `mission.Healer`
+(advisory, used only to correct a card a dropped hook left wrong), and if it writes down
+what its sessions consume, `mission.Meter`. Nothing else branches on which agent a mission
+uses.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

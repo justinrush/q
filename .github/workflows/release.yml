@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Keep merges queued while another release is running, rather than replacing it.
+# https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency
+concurrency:
+  group: release-main
+  queue: max
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Select version
+        id: version
+        run: python3 scripts/release_version.py >> "$GITHUB_OUTPUT"
+      - name: Build release archives
+        if: steps.version.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/build-release.sh "$VERSION" "$GITHUB_SHA" dist
+      - name: Publish release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        shell: bash
+        run: |
+          # Recover uploads if a previous attempt created the release, then failed.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/* --clobber
+            gh release edit "$VERSION" --draft=false --latest
+          else
+            notes_args=()
+            if [[ -n "$PREVIOUS" ]]; then
+              notes_args+=(--notes-start-tag "$PREVIOUS")
+            fi
+            gh release create "$VERSION" dist/* \
+              --target "$GITHUB_SHA" --title "$VERSION" --generate-notes \
+              --latest "${notes_args[@]}"
+          fi

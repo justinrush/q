@@ -1,7 +1,8 @@
 # Testing q
 
 ```sh
-gofmt -l . && go vet ./...   # formatting and vet
+gofmt -l .                  # print unformatted files (CI fails if any are listed)
+go vet ./...                # static checks
 golangci-lint run ./...      # the project's lint set, configured in .golangci.yml
 go test ./...                # unit and integration tests
 go test -race ./...          # the same tests under the race detector
@@ -10,6 +11,26 @@ go test -race ./...          # the same tests under the race detector
 `go test -race` matters more here than in most projects: hook events arrive from many
 concurrent processes while the TUI reads the same state, and the store is shared between
 them.
+
+[GitHub Actions CI](.github/workflows/ci.yml) runs formatting, vet, race tests,
+builds, and release-version tests on hosted Linux and macOS runners for pull
+requests and before main releases. It does not install or authenticate agent CLIs;
+external agent and terminal behavior is faked. Git integration tests run real git
+against temporary repositories. Manual checks below still apply to live sessions.
+
+Release-version tests create temporary git histories to check first releases,
+patch/minor/major bumps, merge commits, stable-tag ordering, retries, and delayed
+runs. Run them locally with:
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_*.py' -v
+```
+
+To check release packaging without publishing (Go and Python 3 required):
+
+```sh
+bash scripts/build-release.sh v0.1.0 "$(git rev-parse HEAD)" /tmp/q-release-check
+```
 
 ## What the automated tests cover
 

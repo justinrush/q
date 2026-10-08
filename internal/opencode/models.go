@@ -39,7 +39,7 @@ func (p *Prober) Probe(ctx context.Context) (mission.ModelSet, error) {
 	defer cancel()
 
 	var (
-		options []mission.ModelOption
+		options  []mission.ModelOption
 		probeErr error
 	)
 
