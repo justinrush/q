@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func requireBinary(t *testing.T, name string) string {
@@ -230,5 +231,45 @@ func TestOSRunReportsMissingBinaryAsLaunchFailure(t *testing.T) {
 func TestOSRunRejectsEmptyName(t *testing.T) {
 	if _, err := (OS{}).Run(context.Background(), Spec{}); err == nil {
 		t.Fatal("expected an error for an empty command name")
+	}
+}
+
+func TestOSTimeoutFor(t *testing.T) {
+	cases := []struct {
+		name string
+		os   OS
+		spec Spec
+		want time.Duration
+	}{
+		{name: "nothing set", want: DefaultTimeout},
+		{name: "runner override", os: OS{Timeout: time.Second}, want: time.Second},
+		{name: "spec override", spec: Spec{Timeout: time.Hour}, want: time.Hour},
+		{
+			name: "spec beats runner",
+			os:   OS{Timeout: time.Second},
+			spec: Spec{Timeout: time.Hour},
+			want: time.Hour,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.os.timeoutFor(tc.spec); got != tc.want {
+				t.Errorf("timeoutFor = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOSRunStopsAtTheSpecTimeout(t *testing.T) {
+	sleep := requireBinary(t, "sleep")
+
+	_, err := OS{}.Run(context.Background(), Spec{
+		Name:    sleep,
+		Args:    []string{"30"},
+		Timeout: 50 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("Run returned no error for a command that outlived its timeout")
 	}
 }

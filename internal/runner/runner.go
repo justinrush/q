@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Spec describes one process to run. Name must be an absolute path; resolve it
@@ -30,6 +31,9 @@ type Spec struct {
 	Env []string
 	// Stdin is written to the process's standard input, if non-empty.
 	Stdin []byte
+	// Timeout overrides the runner's own bound when non-zero, for the rare
+	// command whose duration is set by a network rather than by local work.
+	Timeout time.Duration
 }
 
 // String renders the spec as a shell-ish line. It is for logs and test

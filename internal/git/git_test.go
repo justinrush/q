@@ -40,6 +40,38 @@ func TestFetchIsAlwaysExplicit(t *testing.T) {
 	}
 }
 
+// A fetch is bounded by the network rather than by local work, so it must ask
+// for more than the runner's default or a large repository fails the launch.
+func TestFetchBranchOutlastsTheRunnerDefault(t *testing.T) {
+	cases := []struct {
+		name   string
+		branch string
+	}{
+		{name: "default branch", branch: "main"},
+		{name: "named base branch", branch: "release/1.2"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			git, fake := newTestGit()
+
+			if err := git.FetchBranch(t.Context(), "/repo/.git", tc.branch); err != nil {
+				t.Fatalf("FetchBranch: %v", err)
+			}
+
+			calls := fake.Calls()
+			if len(calls) != 1 {
+				t.Fatalf("expected one call, got %d", len(calls))
+			}
+
+			if got := calls[0].Timeout; got != FetchTimeout || got <= runner.DefaultTimeout {
+				t.Errorf("Timeout = %s, want %s, above the runner default of %s",
+					got, FetchTimeout, runner.DefaultTimeout)
+			}
+		})
+	}
+}
+
 // Nothing in this package may emit a fetch without both a remote and a refspec.
 func TestNoCodePathEmitsABareFetch(t *testing.T) {
 	git, fake := newTestGit()

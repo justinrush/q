@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/paths"
@@ -19,7 +18,7 @@ import (
 const (
 	// rpcTimeout bounds one relayed request. It is generous because a relayed
 	// request can launch an agent, which fetches and provisions worktrees.
-	rpcTimeout = 90 * time.Second
+	rpcTimeout = api.LaunchTimeout
 	// maxRPCRequest bounds what is read from standard input. An exchange
 	// carries every mission's brief, so this is far above an ordinary request.
 	maxRPCRequest = 32 << 20
