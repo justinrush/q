@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/justinrush/q/internal/mission"
@@ -100,6 +101,12 @@ func DefaultBranchPrefix() string {
 }
 
 // provision creates one worktree per repo in the operation.
+//
+// Repos are provisioned concurrently, because each one waits on its own fetch
+// and a mission spanning several large repositories would otherwise pay for
+// them end to end. A failure does not cancel the others: interrupting a
+// worktree add leaves one that nothing has journaled, and so nothing rolls
+// back. The error reported is the first in the operation's repo order.
 func (p *Provisioner) provision(
 	ctx context.Context,
 	operation mission.Operation,
@@ -108,23 +115,47 @@ func (p *Provisioner) provision(
 ) (map[string]mission.RepoWork, map[string]mission.RepoWork, error) {
 	work := make(map[string]mission.RepoWork, len(operation.Repos))
 	created := make(map[string]mission.RepoWork)
+	errs := make([]error, len(operation.Repos))
 
-	for _, repo := range operation.Repos {
-		result, resumed, err := p.provisionRepo(ctx, repo, ms, state.Work[repo.Name])
-		work[repo.Name] = result
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
 
+	for i, repo := range operation.Repos {
+		saved := state.Work[repo.Name]
+
+		wg.Go(func() {
+			result, resumed, err := p.provisionRepo(ctx, repo, ms, saved)
+
+			mu.Lock()
+			defer mu.Unlock()
+
+			work[repo.Name] = result
+
+			if err != nil {
+				errs[i] = fmt.Errorf("provisioning %s: %w", repo.Name, err)
+
+				return
+			}
+
+			if !resumed {
+				created[repo.Name] = result
+			}
+
+			state.Work[repo.Name] = result
+
+			if err := writeProvisionState(ms.MissionDir, *state); err != nil {
+				errs[i] = fmt.Errorf("recording provisioned %s: %w", repo.Name, err)
+			}
+		})
+	}
+
+	wg.Wait()
+
+	for _, err := range errs {
 		if err != nil {
-			return work, created, fmt.Errorf("provisioning %s: %w", repo.Name, err)
-		}
-
-		if !resumed {
-			created[repo.Name] = result
-		}
-
-		state.Work[repo.Name] = result
-		err = writeProvisionState(ms.MissionDir, *state)
-		if err != nil {
-			return work, created, fmt.Errorf("recording provisioned %s: %w", repo.Name, err)
+			return work, created, err
 		}
 	}
 

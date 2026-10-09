@@ -32,9 +32,9 @@ const requestTimeout = 10 * time.Second
 const refreshTimeout = 2 * time.Minute
 
 // LaunchTimeout bounds a request that can launch an agent. Launching fetches
-// each of the mission's repositories in turn, and the daemon abandons the
-// launch when the request is canceled, so this has to outlast several fetches
-// rather than one.
+// the mission's repositories and checks each one out, and the daemon abandons
+// the launch when the request is canceled, so this is kept well clear of the
+// slowest fetch rather than matched to it.
 const LaunchTimeout = 30 * time.Minute
 
 // Client is a connection to a running daemon.
