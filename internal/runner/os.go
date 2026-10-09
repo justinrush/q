@@ -16,7 +16,7 @@ import (
 )
 
 // DefaultTimeout bounds any Spec that does not arrive with a deadline of its
-// own. git fetch against cloudlab is the slowest thing q runs.
+// own. A command known to need longer asks for it with [Spec.Timeout].
 const DefaultTimeout = 2 * time.Minute
 
 // OS runs processes for real. It is the only type in q that calls
@@ -115,18 +115,26 @@ func (s *Stream) Stop() error {
 	return err
 }
 
+// timeoutFor picks the bound for one Spec: its own, then the runner's, then
+// DefaultTimeout.
+func (o OS) timeoutFor(s Spec) time.Duration {
+	switch {
+	case s.Timeout != 0:
+		return s.Timeout
+	case o.Timeout != 0:
+		return o.Timeout
+	default:
+		return DefaultTimeout
+	}
+}
+
 // Run implements [Runner].
 func (o OS) Run(ctx context.Context, s Spec) (Result, error) {
 	if s.Name == "" {
 		return Result{}, errors.New("runner: empty command name")
 	}
 
-	timeout := o.Timeout
-	if timeout == 0 {
-		timeout = DefaultTimeout
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, o.timeoutFor(s))
 	defer cancel()
 
 	if o.Logger != nil {

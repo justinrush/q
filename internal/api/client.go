@@ -31,6 +31,12 @@ const requestTimeout = 10 * time.Second
 // board with a stale catalog and no explanation.
 const refreshTimeout = 2 * time.Minute
 
+// LaunchTimeout bounds a request that can launch an agent. Launching fetches
+// the mission's repositories and checks each one out, and the daemon abandons
+// the launch when the request is canceled, so this is kept well clear of the
+// slowest fetch rather than matched to it.
+const LaunchTimeout = 30 * time.Minute
+
 // Client is a connection to a running daemon.
 //
 // The handle is re-read rather than fixed for the client's lifetime. The daemon
@@ -230,7 +236,8 @@ func (c *Client) DeletePlan(ctx context.Context, id mission.MissionID) (mission.
 // SetStatus moves a mission to another lane, applying lifecycle effects such as launching,
 // resuming, or reclaiming it.
 func (c *Client) SetStatus(ctx context.Context, id mission.MissionID, req SetStatusRequest) (mission.Mission, error) {
-	return send[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/status", req)
+	return sendWithin[mission.Mission](
+		ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/status", req, LaunchTimeout)
 }
 
 // OpenDebrief arranges a mission's debrief session and attaches to it.

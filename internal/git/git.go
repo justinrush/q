@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/justinrush/q/internal/runner"
 )
@@ -240,6 +241,11 @@ func parseLsRemoteHeads(out string) []string {
 	return branches
 }
 
+// FetchTimeout bounds fetching a mission's base branch. It is far above the
+// runner's default because a large repository that has fallen behind origin
+// takes minutes to catch up, and giving up partway fails the launch outright.
+const FetchTimeout = 10 * time.Minute
+
 // FetchBranch updates one remote-tracking ref from origin.
 //
 // The refspec is explicit and the remote is named, so this cannot be widened by
@@ -248,7 +254,13 @@ func parseLsRemoteHeads(out string) []string {
 func (g *Client) FetchBranch(ctx context.Context, dir, branch string) error {
 	refspec := fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch)
 
-	if _, err := g.exec(ctx, dir, "fetch", "--no-tags", "origin", refspec); err != nil {
+	spec := runner.Spec{
+		Name:    g.bin,
+		Args:    []string{"-C", dir, "fetch", "--no-tags", "origin", refspec},
+		Timeout: FetchTimeout,
+	}
+
+	if _, err := g.run.Run(ctx, spec); err != nil {
 		return fmt.Errorf("fetching origin/%s in %s: %w", branch, dir, err)
 	}
 

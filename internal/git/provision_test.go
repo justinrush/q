@@ -2,10 +2,14 @@ package git
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
@@ -253,5 +257,129 @@ func TestProvisionReportsAMissingBaseBranch(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}
+	}
+}
+
+// fetchGate holds every fetch until the expected number are in flight at once,
+// so a provisioner that fetched one repo at a time would never get past it.
+type fetchGate struct {
+	runner.Runner
+
+	want int
+
+	mu       sync.Mutex
+	waiting  int
+	released chan struct{}
+}
+
+func newFetchGate(inner runner.Runner, want int) *fetchGate {
+	return &fetchGate{Runner: inner, want: want, released: make(chan struct{})}
+}
+
+func (g *fetchGate) Run(ctx context.Context, s runner.Spec) (runner.Result, error) {
+	if !slices.Contains(s.Args, "fetch") {
+		return g.Runner.Run(ctx, s)
+	}
+
+	g.mu.Lock()
+	g.waiting++
+
+	if g.waiting == g.want {
+		close(g.released)
+	}
+	g.mu.Unlock()
+
+	select {
+	case <-g.released:
+		return g.Runner.Run(ctx, s)
+	case <-time.After(5 * time.Second):
+		return runner.Result{}, context.DeadlineExceeded
+	}
+}
+
+func TestProvisionFetchesReposConcurrently(t *testing.T) {
+	cases := []struct {
+		name string
+		// failing names the repos whose fetch fails.
+		failing     []string
+		wantErr     string
+		wantCreated []string
+	}{
+		{
+			name:        "every repo succeeds",
+			wantCreated: []string{"alpha", "bravo", "charlie"},
+		},
+		{
+			name:        "a failure leaves the others provisioned for rollback",
+			failing:     []string{"bravo"},
+			wantErr:     "provisioning bravo",
+			wantCreated: []string{"alpha", "charlie"},
+		},
+		{
+			name:        "the first failure in repo order is the one reported",
+			failing:     []string{"charlie", "bravo"},
+			wantErr:     "provisioning bravo",
+			wantCreated: []string{"alpha"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, fake, dirs := newTestProvisioner(t)
+			names := []string{"alpha", "bravo", "charlie"}
+			operation := provisionOperation("")
+			operation.Repos = nil
+
+			for _, name := range names {
+				path := "/dev/" + name
+				operation.Repos = append(operation.Repos, mission.Repo{Name: name, Path: path})
+				seedRepo(fake, path, path+"/.git")
+			}
+
+			for _, name := range tc.failing {
+				fake.ExpectExit(provisionGitBin+" -C /dev/"+name+"/.git fetch --no-tags origin "+
+					"+refs/heads/main:refs/remotes/origin/main", 128, "fatal: unable to access")
+			}
+
+			provisioner := NewProvisioner(dirs,
+				New(provisionGitBin, newFetchGate(fake, len(names))), noSessions{},
+				WithBranchPrefix("jarush"))
+
+			ms := provisionMission()
+
+			provisioned, err := provisioner.Prepare(t.Context(), operation, &ms)
+
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("Prepare: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("err = %v, want one mentioning %q", err, tc.wantErr)
+			}
+
+			var created []string
+
+			for name, work := range provisioned.Work {
+				if work.Created {
+					created = append(created, name)
+				}
+			}
+
+			slices.Sort(created)
+
+			if !slices.Equal(created, tc.wantCreated) {
+				t.Errorf("created = %v, want %v", created, tc.wantCreated)
+			}
+
+			state, err := readProvisionState(filepath.Join(ms.MissionDir, mission.ArtifactDir, provisionStateFile))
+			if err != nil {
+				t.Fatalf("reading the journal: %v", err)
+			}
+
+			journaled := slices.Sorted(maps.Keys(state.Work))
+
+			if !slices.Equal(journaled, tc.wantCreated) {
+				t.Errorf("journaled = %v, want %v", journaled, tc.wantCreated)
+			}
+		})
 	}
 }
