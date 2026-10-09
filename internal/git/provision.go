@@ -122,11 +122,15 @@ func (p *Provisioner) provision(
 		wg sync.WaitGroup
 	)
 
+	// Read before any repo starts: the goroutines below write to state.Work.
+	saved := make([]mission.RepoWork, len(operation.Repos))
 	for i, repo := range operation.Repos {
-		saved := state.Work[repo.Name]
+		saved[i] = state.Work[repo.Name]
+	}
 
+	for i, repo := range operation.Repos {
 		wg.Go(func() {
-			result, resumed, err := p.provisionRepo(ctx, repo, ms, saved)
+			result, resumed, err := p.provisionRepo(ctx, repo, ms, saved[i])
 
 			mu.Lock()
 			defer mu.Unlock()
