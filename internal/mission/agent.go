@@ -3,6 +3,7 @@ package mission
 import (
 	"context"
 	"os"
+	"time"
 )
 
 // Agent is one coding agent q can run a mission with.
@@ -109,6 +110,8 @@ type Reading struct {
 	// PaneID is the tmux pane the session occupies, when the agent knows it.
 	// An agent that reports this beats anything q inferred.
 	PaneID string
+	// ObservedAt is when the source recorded this status. Zero means unavailable.
+	ObservedAt time.Time
 	// Activity is what the session is doing.
 	Activity Activity
 	// WaitingFor describes what a waiting session is blocked on.

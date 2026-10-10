@@ -174,3 +174,56 @@ func TestReconcileLeavesActiveMissionsRunningAnAgent(t *testing.T) {
 		})
 	}
 }
+
+func TestRegistryBusyMustBeNewerThanWaitingHook(t *testing.T) {
+	svc := newTestService(t)
+	now := time.Now()
+	for _, lane := range []mission.Status{mission.StatusAwaiting, mission.StatusDebrief} {
+		for _, offset := range []time.Duration{-time.Second, 0, time.Second} {
+			ms := mission.Mission{ID: "ms_test", Status: lane, AgentState: mission.AgentWaiting,
+				WaitingFor: "approval", LastEventAt: now}
+			readings := map[mission.MissionID]mission.Reading{ms.ID: {
+				Activity: mission.ActivityBusy, ObservedAt: now.Add(offset)}}
+			svc.applyReading(&ms, readings, now.Add(time.Minute))
+			if offset <= 0 {
+				if ms.Status != lane || ms.AgentState != mission.AgentWaiting || ms.WaitingFor != "approval" {
+					t.Fatalf("old reading overwrote %s: %+v", lane, ms)
+				}
+			} else if ms.Status != mission.StatusActive || ms.AgentState != mission.AgentBusy || ms.WaitingFor != "" {
+				t.Fatalf("new busy reading did not recover %s: %+v", lane, ms)
+			}
+		}
+	}
+}
+
+func TestReconcileDoesNotOverwriteConcurrentHook(t *testing.T) {
+	svc := newTestService(t)
+	before := launchedServiceMission(t, svc)
+	correction := before
+	correction.Status = mission.StatusActive
+	correction.AgentState = mission.AgentBusy
+	hook := before
+	hook.Status = mission.StatusAwaiting
+	hook.AgentState = mission.AgentWaiting
+	hook.WaitingFor = "permission"
+	hook.UpdatedAt = before.UpdatedAt.Add(time.Second)
+	if err := svc.store.Mutate("test.hook", func(snap *mission.Snapshot) error {
+		snap.PutMission(hook)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.persistReconciled(before, correction)
+	stored, _ := svc.Snapshot().Mission(before.ID)
+	if stored.Status != hook.Status || stored.AgentState != hook.AgentState || stored.WaitingFor != hook.WaitingFor {
+		t.Fatalf("reconciliation overwrote concurrent hook: %+v", stored)
+	}
+	correction = stored
+	correction.Status = mission.StatusDebrief
+	correction.AgentState = mission.AgentIdle
+	svc.persistReconciled(stored, correction)
+	stored, _ = svc.Snapshot().Mission(before.ID)
+	if stored.Status != mission.StatusDebrief {
+		t.Fatalf("correction not persisted: %+v", stored)
+	}
+}

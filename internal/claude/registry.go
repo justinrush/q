@@ -35,6 +35,8 @@ type Session struct {
 	Tmux string `json:"tmux"`
 	// UpdatedAt is a millisecond epoch timestamp.
 	UpdatedAt int64 `json:"updatedAt"`
+	// StatusUpdatedAt excludes unrelated registry updates such as renaming.
+	StatusUpdatedAt int64 `json:"statusUpdatedAt"`
 	// Name is claude's display name for the session.
 	Name string `json:"name"`
 	// Kind distinguishes interactive sessions from background jobs.
@@ -61,6 +63,15 @@ func (s Session) Updated() time.Time {
 	}
 
 	return time.UnixMilli(s.UpdatedAt)
+}
+
+// StatusUpdated returns the status timestamp, falling back for older registries.
+func (s Session) StatusUpdated() time.Time {
+	if s.StatusUpdatedAt != 0 {
+		return time.UnixMilli(s.StatusUpdatedAt)
+	}
+
+	return s.Updated()
 }
 
 // Alive reports whether the recorded process still exists.
@@ -194,6 +205,7 @@ func (r *Registry) Heal(_ context.Context, missions []mission.Mission) (map[miss
 		out[ms.ID] = mission.Reading{
 			SessionID:  session.SessionID,
 			PaneID:     session.PaneID(),
+			ObservedAt: session.StatusUpdated(),
 			Activity:   activityOf(session.Status),
 			WaitingFor: session.WaitingFor,
 		}
