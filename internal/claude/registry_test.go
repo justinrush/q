@@ -2,9 +2,11 @@ package claude
 
 import (
 	"fmt"
+	"github.com/justinrush/q/internal/mission"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // The registry directory holds messaging credentials alongside the status files.
@@ -145,5 +147,27 @@ func TestBySessionID(t *testing.T) {
 
 	if len(index) != 2 || index["a"].SessionID != "a" {
 		t.Errorf("index = %+v", index)
+	}
+}
+
+func TestHealCarriesStatusTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, fmt.Sprintf("%d.json", os.Getpid()))
+	body := fmt.Sprintf(`{"pid":%d,"sessionId":"live","status":"busy","updatedAt":2000,"statusUpdatedAt":1000}`, os.Getpid())
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readings, err := NewRegistry(dir).Heal(t.Context(), []mission.Mission{{ID: "ms_test", Tool: mission.ToolClaude, AgentSessionID: "live"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readings["ms_test"].ObservedAt; !got.Equal(time.UnixMilli(1000)) {
+		t.Fatalf("status timestamp = %v", got)
+	}
+	if got := (Session{UpdatedAt: 2000}).StatusUpdated(); !got.Equal(time.UnixMilli(2000)) {
+		t.Fatalf("fallback = %v", got)
+	}
+	if !(Session{}).StatusUpdated().IsZero() {
+		t.Fatal("missing timestamp must remain unknown")
 	}
 }

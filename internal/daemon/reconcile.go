@@ -91,7 +91,7 @@ func (s *Service) Reconcile(ctx context.Context) {
 		}
 
 		if updated, changed := s.reconcileMission(ctx, ms, readings, now); changed {
-			s.persistReconciled(updated)
+			s.persistReconciled(ms, updated)
 		}
 
 		// A turn that runs for ten minutes should show a total that grows over
@@ -301,6 +301,12 @@ func (s *Service) applyReading(ms *mission.Mission, readings map[mission.Mission
 		ms.AgentPaneID = reading.PaneID
 	}
 
+	// A registry can still report busy from before the latest Stop or permission
+	// hook. Only a newer observation can contradict that hook.
+	if !reading.ObservedAt.IsZero() && !reading.ObservedAt.After(ms.LastEventAt) {
+		return
+	}
+
 	switch reading.Activity {
 	case mission.ActivityWaitingApproval, mission.ActivityWaitingInput:
 		// Recovers a dropped PermissionRequest.
@@ -351,17 +357,16 @@ func (s *Service) applyTimers(ms *mission.Mission, now time.Time) {
 }
 
 // persistReconciled writes a corrected mission.
-func (s *Service) persistReconciled(ms mission.Mission) {
+func (s *Service) persistReconciled(before, ms mission.Mission) {
 	var updated mission.Mission
 
 	err := s.store.Mutate("mission.reconcile", func(snap *mission.Snapshot) error {
 		stored, ok := snap.Mission(ms.ID)
-		if !ok {
+		if !ok || !stored.UpdatedAt.Equal(before.UpdatedAt) || !sameReconciled(stored, before) {
 			return nil
 		}
 
-		// A hook may have landed since the snapshot was taken, so only the fields
-		// reconciliation owns are carried over.
+		// The snapshot still matches. Carry over only fields reconciliation owns.
 		stored.Status = ms.Status
 		stored.StatusChangedAt = ms.StatusChangedAt
 		stored.AgentState = ms.AgentState
