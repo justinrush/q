@@ -50,6 +50,7 @@ repo, so its worktree contains the branch you want to read. See [Base branches](
 - Run independent missions in isolated worktrees, with live agent status and messages.
 - Queue briefed missions and launch them as active slots become free.
 - Create follow-up missions that inherit the parent mission's agent and repositories.
+- Have a second agent review a mission's changes and the decisions behind them.
 - Pair two machines over SSH, mirror worktrees, and move agent execution between hosts.
 - Discover models from installed agents and estimate Claude/Codex usage costs.
 
@@ -108,6 +109,7 @@ Press `?` for the full keymap. The essentials:
 | `l` | open the selected card’s full launch error; scroll with `j`/`k` or Page Up/Down, `c` copies the full log, `t` queues a troubleshooting mission with the source brief and diagnostics, close with `esc` |
 | `←` / `→` | focus the previous/next lane |
 | `m` | send a message to a running agent |
+| `r` | have another agent review the selected mission; pick the agent, model, and effort |
 | `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `t` | take a mission from the paired host and run its agent here |
 | `d` | delete a mission and reclaim its worktrees |
@@ -131,6 +133,7 @@ q mission add review-login --operation "$op" --prompt "Review it." --base weave=
 q models                       # what each agent offers, and the default a mission gets
 q mission move ms_… active     # launches the agent
 q mission queue ms_… ms_…      # or let q launch them as slots free up
+q mission review ms_… --tool codex --effort high   # a second agent reviews the work
 q mission list                 # the board, as text
 q open ms_…                    # open the debrief session
 q mission rm ms_… --dry-run    # what deleting would discard
@@ -187,6 +190,52 @@ every few seconds.
 Queueing says nothing about order between missions beyond their position on
 the board. Two missions where the second builds on the first's unmerged work
 should not both be queued.
+
+### Reviewing a mission
+
+A finished mission leaves a diff and a closing message. What it does not leave
+is an account of what the agent decided along the way, and the agent's own
+summary is the least independent place to look for one. Press `r` on a card,
+or run `q mission review`, to have a different agent read the work and report:
+
+```sh
+q mission review ms_… --tool codex --model gpt-5.4 --effort high
+q mission review ms_… --tool claude --focus "Is the migration reversible?"
+```
+
+The review is a mission of its own, queued on the board as `Review <name>`, so
+it is watched, messaged, opened, and costed like any other. It differs in what
+it is given:
+
+- **No worktrees of its own.** It reads the reviewed mission's worktrees where
+  they are, so uncommitted changes are part of what it sees.
+- **The first agent's transcript.** q copies that agent's conversation log into
+  the review's `.q/` directory. That is where the reviewer finds what was
+  considered and rejected, what was tried and failed, and what the agent was
+  told part-way through.
+- **A brief q writes.** It names the operation, quotes the original brief, lists
+  each worktree with the commands that show its changes, and asks for a report
+  covering what changed, the decisions and trade-offs, departures from the
+  brief, risks and defects, claims the first agent made that could not be
+  confirmed, and questions for you. `--focus`, or the form's focus field, adds
+  what you want looked at in particular.
+
+The report is the reviewer's closing message, and is also written to
+`.q/review.md` in the review's mission directory. The first line of the closing
+message is a one-sentence verdict, which is what the card shows.
+
+A review can be requested for any launched mission that has not been closed,
+including one still running. A mission can be reviewed more than once, by
+different agents. A review cannot itself be reviewed.
+
+The reviewer is told not to edit, commit, or push in the worktrees it reads,
+but that is an instruction rather than a sandbox: q leaves each agent's own
+approval and sandbox settings alone. Closing a review removes only its own
+directory. Closing the reviewed mission while a review is still running takes
+the worktrees away from under it.
+
+Set `review` in the [configuration](#configuration) to stop choosing the
+reviewer each time.
 
 ## Two machines
 
@@ -369,6 +418,12 @@ thing the previous agent said, and pointed at `git status` and `git log`. If
 the mission ran on this machine before, its earlier session is resumed with
 that same note.
 
+A review depends on this. The reviewer is given a copy of the first agent's
+transcript, which exists only on the machine that agent ran on,
+so a review is pinned to the machine running the mission it reviews. If that
+mission ran part of its life on the other machine, the reviewer sees only the
+part that happened where it runs.
+
 ### Limits
 
 - Without a [witness](#a-witness-for-split-networks), a laptop that is awake
@@ -413,6 +468,7 @@ settings without writing anything.
   "paths": { "dataDir": "", "stateDir": "" },
   "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 4, "output": 20, "cacheRead": 0.4 } } },
   "tui": { "mouse": true },
+  "review": { "tool": "codex", "model": "", "effort": "high" },
   "tools": { "tmux": "/usr/bin/tmux" },
   "logLevel": "info"
 }
@@ -441,6 +497,8 @@ settings without writing anything.
 | `cost.disabled` | turns metering off: no transcripts are read and no card carries a cost |
 | `cost.models` | rates in dollars per million tokens, keyed by model id, layered over the built-in table |
 | `queue.maxConcurrent` | how many queued missions run at once on this machine. Defaults to `2` |
+| `review.tool` | the agent a review starts on. Unset, the board offers a different agent from the one reviewed, and `q mission review` needs `--tool` |
+| `review.model`, `review.effort` | the model and effort for that agent. Unset, its own defaults |
 | `remote.ssh` | the command that gets a shell on the paired machine, e.g. `["ssh", "mini.local"]`. Setting it makes this machine the primary |
 | `remote.bin` | the q binary on the paired machine. Defaults to `~/.local/bin/q` |
 | `remote.name` | what this machine is called on cards. Defaults to its hostname |

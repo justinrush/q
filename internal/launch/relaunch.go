@@ -159,7 +159,7 @@ func (l *Launcher) writeRelaunchArtifacts(
 	}
 
 	if !resume {
-		brief, err := mission.ComposePrompt(operation, ms)
+		brief, err := l.brief(operation, ms)
 		if err != nil {
 			return err
 		}

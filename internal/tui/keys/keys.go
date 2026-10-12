@@ -67,6 +67,7 @@ type Board struct {
 	TogglePlan key.Binding
 	Queue      key.Binding
 	Take       key.Binding
+	Review     key.Binding
 	ToggleDone key.Binding
 	Status     key.Binding
 	Filter     key.Binding
@@ -96,6 +97,7 @@ func NewBoard() Board {
 		TogglePlan: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle plan mode")),
 		Queue:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "queue to auto-start")),
 		Take:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "take from the paired machine")),
+		Review:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review with another agent")),
 		ToggleDone: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "expand closed")),
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "move to lane…")),
 		Filter:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter by operation")),
@@ -114,7 +116,7 @@ func (b Board) FullHelp() [][]key.Binding {
 		{b.Left, b.Right, b.Up, b.Down, b.Lane, b.First},
 		{b.MoveLeft, b.ReorderUp, b.Open, b.Log, b.Message},
 		{b.New, b.Edit, b.Delete, b.TogglePlan, b.Queue},
-		{b.Status, b.ToggleDone, b.Filter, b.Take},
+		{b.Status, b.ToggleDone, b.Filter, b.Take, b.Review},
 	}
 }
 

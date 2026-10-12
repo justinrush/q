@@ -90,6 +90,11 @@ func tuiOptions() tui.Options {
 			Skip:     cfg.Repos.Skip,
 		},
 		DefaultTool: mission.Tool(cfg.Agents.Default),
-		AttachBin:   currentTerminalBin(cfg),
+		Review: tui.ReviewDefaults{
+			Tool:   mission.Tool(cfg.Review.Tool),
+			Model:  cfg.Review.Model,
+			Effort: cfg.Review.Effort,
+		},
+		AttachBin: currentTerminalBin(cfg),
 	}
 }

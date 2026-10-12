@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func (l *Launcher) agentFor(tool mission.Tool) (mission.Agent, error) {
 // writeArtifacts generates the prompt, the agent's own configuration, and the
 // launch script.
 func (l *Launcher) writeArtifacts(operation mission.Operation, ms mission.Mission) error {
-	prompt, err := mission.ComposePrompt(operation, ms)
+	prompt, err := l.brief(operation, ms)
 	if err != nil {
 		return err
 	}
@@ -59,6 +60,85 @@ func (l *Launcher) writeArtifacts(operation mission.Operation, ms mission.Missio
 	}
 
 	return l.writeScript(ms, false)
+}
+
+// brief composes what a mission's agent is told when it starts with no
+// conversation of its own to resume.
+func (l *Launcher) brief(operation mission.Operation, ms mission.Mission) (string, error) {
+	if !ms.IsReview() {
+		return mission.ComposePrompt(operation, ms)
+	}
+
+	source, ok := l.reviewed(ms)
+	if !ok {
+		return "", fmt.Errorf("%w: mission %s, which this one reviews, no longer exists", errNothingToReview, ms.ReviewOf)
+	}
+
+	return mission.ComposeReviewPrompt(operation, source, ms, l.copyTranscript(ms, source))
+}
+
+// errNothingToReview reports a review whose subject cannot be read.
+var errNothingToReview = errors.New("nothing to review")
+
+// reviewed returns the mission a review is of.
+func (l *Launcher) reviewed(ms mission.Mission) (mission.Mission, bool) {
+	if !ms.IsReview() || l.hostSnapshot == nil {
+		return mission.Mission{}, false
+	}
+
+	return l.hostSnapshot().Mission(ms.ReviewOf)
+}
+
+// copyTranscript puts a copy of the reviewed agent's conversation log among
+// the review's own artifacts, returning where, or "" when there is none.
+//
+// It is copied rather than pointed at because agents keep their logs under
+// their own home directories, beside every other session's. A copy gives the
+// reviewer the one conversation it needs without opening those directories to
+// it, and works the same whichever agent is reading.
+//
+// A missing log is not a failure. An agent that keeps none, or one whose
+// conversation happened on the paired machine, still leaves work to review.
+func (l *Launcher) copyTranscript(review, source mission.Mission) string {
+	if source.TranscriptPath == "" {
+		return ""
+	}
+
+	dir := filepath.Join(review.MissionDir, mission.ArtifactDir)
+	dst := filepath.Join(dir, mission.ReviewTranscriptFile)
+
+	if err := copyFile(source.TranscriptPath, dir, dst); err != nil {
+		l.logger.Warn("copying the reviewed transcript", "mission", review.ID, "source", source.ID, "error", err)
+
+		return ""
+	}
+
+	return dst
+}
+
+// copyFile copies src to dst, creating dir for it.
+func copyFile(src, dir, dst string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	if err := os.MkdirAll(dir, paths.DirMode); err != nil {
+		return err
+	}
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, paths.FileMode)
+	if err != nil {
+		return err
+	}
+
+	// A close that fails after a clean copy is a write that did not land.
+	defer func() { err = errors.Join(err, out.Close()) }()
+
+	_, err = io.Copy(out, in)
+
+	return err
 }
 
 // writePrompt writes the composed prompt into the mission's artifact directory.
@@ -179,6 +259,13 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		return mission.Invocation{}, err
 	}
 
+	// A review owns no worktrees. The ones it is given access to are those of
+	// the mission it reviews, which it reads where they are.
+	worktrees := git.WorktreePaths(ms)
+	if source, ok := l.reviewed(ms); ok {
+		worktrees = git.WorktreePaths(source)
+	}
+
 	return mission.Invocation{
 		MissionID:   ms.ID,
 		HookEpoch:   ms.HookEpoch,
@@ -191,7 +278,7 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		Model:       ms.Model,
 		Effort:      ms.Effort,
 		DisplayName: "q: " + ms.Name,
-		Worktrees:   git.WorktreePaths(ms),
+		Worktrees:   worktrees,
 		PathEnv:     os.Getenv("PATH"),
 		QBin:        qBin,
 	}, nil

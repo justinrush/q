@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,6 +31,7 @@ func buildMissionSubcommand() *cobra.Command {
 		buildMissionQueueSubcommand(),
 		buildMissionUnqueueSubcommand(),
 		buildMissionTakeSubcommand(),
+		buildMissionReviewSubcommand(),
 		buildMissionRemoveSubcommand(),
 	)
 
@@ -196,6 +198,139 @@ func buildMissionAddSubcommand() *cobra.Command {
 	}
 
 	return cmd
+}
+
+func buildMissionReviewSubcommand() *cobra.Command {
+	var (
+		tool   string
+		model  string
+		effort string
+		focus  string
+		name   string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "review <mission-id>",
+		Short: "Have another agent review a mission's work",
+		Long: "Queue a second agent to review a launched mission. The reviewer reads the " +
+			"operation, the mission's brief, the changes in its worktrees (committed or not), " +
+			"and the first agent's own transcript, then reports what changed, what that agent " +
+			"decided and why, and what looks wrong. It is told not to edit the work.\n\n" +
+			"The review is a mission of its own, so it shows on the board and is opened like " +
+			"any other. Its report is also written to .q/review.md in its mission directory.\n\n" +
+			"Name the reviewer with --tool, or set review.tool in the config file.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := connectDaemon(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			parsedTool, err := parseToolFlag(tool)
+			if err != nil {
+				return err
+			}
+
+			reviewer, err := resolveReviewer(cfg.Review, parsedTool, model, effort)
+			if err != nil {
+				return err
+			}
+
+			if reviewer.model == "" {
+				reviewer.model, reviewer.effort = defaultModelFor(cmd.Context(), c, reviewer.tool, reviewer.effort)
+			}
+
+			ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{
+				ReviewOf: mission.MissionID(args[0]),
+				Name:     name,
+				Prompt:   focus,
+				Tool:     reviewer.tool,
+				Model:    reviewer.model,
+				Effort:   reviewer.effort,
+				Queued:   true,
+			})
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", ms.ID)
+
+			return err
+		},
+	}
+
+	cmd.Flags().StringVar(&tool, "tool", "",
+		"Agent that reviews: claude, codex, agy, or opencode (default: review.tool from the config file)")
+	cmd.Flags().StringVar(&model, "model", "",
+		"Model to review with; defaults to the reviewer's own (see q models)")
+	cmd.Flags().StringVar(&effort, "effort", "",
+		"Reasoning effort, for a model that takes one (see q models)")
+	cmd.Flags().StringVar(&focus, "focus", "",
+		"Anything in particular the reviewer should look at")
+	cmd.Flags().StringVar(&name, "name", "",
+		"Name for the review's card (default: \"Review <mission name>\")")
+
+	return cmd
+}
+
+// reviewer is the agent a review runs on.
+type reviewer struct {
+	tool   mission.Tool
+	model  string
+	effort string
+}
+
+// resolveReviewer decides who reviews, from the flags and the configured
+// defaults.
+//
+// A flag always wins. The configured model and effort are used only with the
+// configured tool: they are that agent's names, and handing them to a
+// different agent named on the command line would send it a model it has
+// never heard of.
+func resolveReviewer(defaults reviewSettings, tool mission.Tool, model, effort string) (reviewer, error) {
+	out := reviewer{tool: tool, model: model, effort: effort}
+
+	configured, err := parseToolFlag(defaults.Tool)
+	if err != nil {
+		return reviewer{}, fmt.Errorf("review.tool in the config file: %w", err)
+	}
+
+	if out.tool == "" {
+		out.tool = configured
+	}
+
+	if out.tool == "" {
+		return reviewer{}, errors.New("name the reviewing agent with --tool, or set review.tool in the config file")
+	}
+
+	if out.tool == configured && out.model == "" {
+		out.model = defaults.Model
+
+		if out.effort == "" {
+			out.effort = defaults.Effort
+		}
+	}
+
+	return out, nil
+}
+
+// describeReviewer renders the configured reviewer for q doctor.
+func describeReviewer(defaults reviewSettings) string {
+	if defaults.Tool == "" {
+		return "(not set: chosen per review)"
+	}
+
+	parts := []string{defaults.Tool}
+
+	if defaults.Model != "" {
+		parts = append(parts, defaults.Model)
+	}
+
+	if defaults.Effort != "" {
+		parts = append(parts, defaults.Effort)
+	}
+
+	return strings.Join(parts, " ")
 }
 
 // placement is when and where a new mission starts.

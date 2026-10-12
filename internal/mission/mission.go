@@ -111,6 +111,12 @@ type Mission struct {
 	// Pin names the one host this mission must run on. Empty means q decides:
 	// the primary when it is around, the secondary when it is not.
 	Pin HostID `json:"pin,omitempty" q:"spec"`
+	// ReviewOf names the mission this one reviews. Empty for an ordinary mission.
+	//
+	// A review is a mission in every other respect: it has its own directory,
+	// session, and card. What it lacks is worktrees of its own, because the
+	// thing it reads is the reviewed mission's, uncommitted changes included.
+	ReviewOf MissionID `json:"reviewOf,omitempty" q:"spec"`
 	// LaunchRepos freezes the complete repository set used for a launch.
 	LaunchRepos []Repo `json:"launchRepos,omitempty" q:"run"`
 	// LaunchReposFrozen distinguishes a repo-less launch from a draft whose
@@ -398,6 +404,9 @@ func (t Mission) WithoutBadge(kind string) []Badge {
 
 	return out
 }
+
+// IsReview reports whether the mission reviews another one.
+func (t Mission) IsReview() bool { return t.ReviewOf != "" }
 
 // Launched reports whether the mission has ever been started.
 func (t Mission) Launched() bool { return t.StartedAt != nil }

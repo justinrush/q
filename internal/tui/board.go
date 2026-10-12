@@ -92,6 +92,7 @@ var boardActions = map[string]boardAction{
 	"p":      (*Board).togglePlan,
 	"a":      (*Board).toggleQueued,
 	"t":      (*Board).takeMission,
+	"r":      (*Board).reviewMission,
 	"/":      (*Board).filterByOperation,
 	"s":      (*Board).statusMenu,
 }

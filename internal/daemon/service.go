@@ -337,12 +337,16 @@ func (s *Service) DeleteOperation(id mission.OperationID, force bool) error {
 // Nothing here launches anything. A created mission is a written brief, and
 // moving it to the active lane is a separate, explicit act.
 func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, error) {
-	if strings.TrimSpace(req.Name) == "" {
-		return mission.Mission{}, fmt.Errorf("%w: mission name is required", ErrInvalid)
-	}
+	// A review is named after what it reviews and briefed by q, so it may
+	// arrive with neither.
+	if req.ReviewOf == "" {
+		if strings.TrimSpace(req.Name) == "" {
+			return mission.Mission{}, fmt.Errorf("%w: mission name is required", ErrInvalid)
+		}
 
-	if strings.TrimSpace(req.Prompt) == "" {
-		return mission.Mission{}, fmt.Errorf("%w: mission prompt is required", ErrInvalid)
+		if strings.TrimSpace(req.Prompt) == "" {
+			return mission.Mission{}, fmt.Errorf("%w: mission prompt is required", ErrInvalid)
+		}
 	}
 
 	id, err := mission.NewMissionID()
@@ -411,6 +415,12 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		inheritDefaults(&req, parent)
 	}
 
+	if req.ReviewOf != "" {
+		if err := resolveReview(snap, &req); err != nil {
+			return zero, err
+		}
+	}
+
 	// Checked here rather than left to the operation lookup below, so that a
 	// request naming no operation at all is a 400 saying so, instead of a 404
 	// looking for an operation whose id is the empty string.
@@ -455,9 +465,55 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		Effort:       req.Effort,
 		ExtraRepos:   normalizeRepos(req.ExtraRepos),
 		BaseBranches: normalizeBaseBranches(req.BaseBranches),
+		ReviewOf:     req.ReviewOf,
 		Queued:       req.Queued,
 		Pin:          pin,
 	}, nil
+}
+
+// resolveReview turns a request to review a mission into the request for the
+// mission that will do it.
+//
+// A review needs something to read, which is what the three refusals are about:
+// a brief that never ran has produced nothing, a closed mission's worktrees have
+// been reclaimed, and a review's own output is a report rather than work.
+func resolveReview(snap *mission.Snapshot, req *api.CreateMissionRequest) error {
+	source, ok := snap.Mission(req.ReviewOf)
+
+	switch {
+	case !ok:
+		return fmt.Errorf("%w: mission %s", ErrNotFound, req.ReviewOf)
+	case source.IsReview():
+		return fmt.Errorf("%w: %s is itself a review", ErrInvalid, source.Name)
+	case !source.Launched():
+		return fmt.Errorf("%w: %s has not been launched, so there is nothing to review", ErrInvalid, source.Name)
+	case source.Status.Terminal():
+		return fmt.Errorf("%w: %s is closed and its worktrees are gone", ErrInvalid, source.Name)
+	case req.Tool == "":
+		return fmt.Errorf("%w: a review needs a tool to be named", ErrInvalid)
+	case req.PlanMode:
+		return fmt.Errorf("%w: a review cannot start in plan mode", ErrInvalid)
+	}
+
+	req.OperationID = source.OperationID
+	req.ExtraRepos = nil
+	req.BaseBranches = nil
+
+	if strings.TrimSpace(req.Name) == "" {
+		req.Name = "Review " + source.Name
+	}
+
+	if strings.TrimSpace(req.Prompt) == "" {
+		req.Prompt = mission.DefaultReviewFocus
+	}
+
+	// A holder this host no longer knows, left by a pairing since ended, is not
+	// somewhere a mission can be sent, so the review is left for q to place.
+	if holder := source.Lease.Holder; req.Pin == "" && (holder == snap.Self.ID || holder == snap.PeerID()) {
+		req.Pin = string(holder)
+	}
+
+	return nil
 }
 
 // resolveHost turns what a human typed for "which machine" into a host id.

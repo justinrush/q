@@ -10,7 +10,15 @@ import (
 // A launched mission uses its frozen repository set so later operation edits cannot
 // change the worktrees that must be resumed or reclaimed. A draft mission combines
 // its operation's repositories with its own additions.
+//
+// A review has none. It reads the worktrees of the mission it reviews, and
+// giving it fresh ones would hand it a tree without the work it is there to
+// look at.
 func MissionRepos(operation Operation, ms Mission) ([]Repo, error) {
+	if ms.IsReview() {
+		return nil, nil
+	}
+
 	if ms.LaunchReposFrozen {
 		return slices.Clone(ms.LaunchRepos), nil
 	}
