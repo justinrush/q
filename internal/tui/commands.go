@@ -289,6 +289,30 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 	}
 }
 
+// createReview queues a mission that reviews another.
+//
+// It is queued, not launched outright, so that the scheduler places it: on
+// the machine that holds the reviewed worktrees, and within the limit on how
+// many agents run at once.
+func (a *App) createReview(msg submitMissionMsg) tea.Cmd {
+	return func() tea.Msg {
+		ms, err := a.client.CreateMission(a.ctx(), api.CreateMissionRequest{
+			ReviewOf: msg.ReviewOf,
+			Name:     msg.Name,
+			Prompt:   msg.Prompt,
+			Tool:     msg.Tool,
+			Model:    msg.Model,
+			Effort:   msg.Effort,
+			Queued:   true,
+		})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: "queued " + ms.Name}
+	}
+}
+
 // updateMission patches a mission.
 func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 	return func() tea.Msg {

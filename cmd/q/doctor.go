@@ -139,6 +139,7 @@ func reportConfig(rep *report) {
 	rep.row("  repo roots\t%s", strings.Join(cfg.Repos.Roots, ", "))
 	rep.row("  branch prefix\t%s", branchPrefixOrUser(cfg))
 	rep.row("  default agent\t%s", cfg.Agents.Default)
+	rep.row("  review agent\t%s", describeReviewer(cfg.Review))
 	rep.row("  editor\t%s", strings.Join(cfg.Editor.Command, " "))
 	rep.row("  terminal\t%s\t%s", cfg.Terminal.Mode, strings.Join(cfg.Terminal.Command, " "))
 	rep.line("")

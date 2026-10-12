@@ -27,6 +27,7 @@ type settings struct {
 	Cost     costSettings
 	TUI      tuiSettings
 	Queue    queueSettings
+	Review   reviewSettings
 	Remote   remoteSettings
 	// Tools maps a tool name ("git", "tmux", "codex", …) to an absolute path,
 	// overriding both PATH lookup and the built-in fallbacks.
@@ -39,6 +40,19 @@ type queueSettings struct {
 	// MaxConcurrent is how many queued missions run at once on this machine. A
 	// mission started by hand is not held back by it, but does count against it.
 	MaxConcurrent int
+}
+
+// reviewSettings names the agent a review of a mission is offered with.
+//
+// All of it is optional. With no tool the board offers a different agent from
+// the one that did the work and `q mission review` asks for one; with no
+// model the reviewing agent's own default is used.
+type reviewSettings struct {
+	// Tool is "claude", "codex", "agy", or "opencode".
+	Tool string
+	// Model and Effort apply only to Tool.
+	Model  string
+	Effort string
 }
 
 // remoteSettings pairs this q with one on another machine.

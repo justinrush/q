@@ -53,7 +53,8 @@ type Launcher struct {
 	hostSnapshot func() mission.Snapshot
 }
 
-// WithHostSnapshot supplies the current machine names for the executor banner.
+// WithHostSnapshot supplies current state: the machine names for the executor
+// banner, and the mission a review is of.
 func WithHostSnapshot(snapshot func() mission.Snapshot) Option {
 	return func(l *Launcher) { l.hostSnapshot = snapshot }
 }
@@ -112,6 +113,12 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 	ms.LaunchRepos = repos
 	ms.LaunchReposFrozen = true
 	operation.Repos = repos
+
+	// Checked before anything is claimed on disk. A review with nothing to read
+	// would otherwise start an agent that has a brief and no subject.
+	if _, ok := l.reviewed(ms); ms.IsReview() && !ok {
+		return ms, fmt.Errorf("%w: mission %s, which this one reviews, no longer exists", errNothingToReview, ms.ReviewOf)
+	}
 
 	// claude accepts a session id chosen in advance, so q picks one here and
 	// the session is resumable from the instant it starts. codex generates its own

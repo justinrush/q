@@ -58,6 +58,8 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		return a.handleToggleQueued(m.Mission), true
 	case takeMissionMsg:
 		return a.handleTake(m.Mission), true
+	case reviewMissionMsg:
+		return a.showReviewForm(m.Mission), true
 	case moveMissionMsg:
 		return a.moveToLane(m.Mission, m.To), true
 	case resumePromptMsg:
@@ -117,6 +119,31 @@ func (a *App) showMissionForm(ms mission.Mission) tea.Cmd {
 	return a.fetchModels()
 }
 
+// showReviewForm opens the form that picks who reviews a mission.
+//
+// The refusals mirror the daemon's, so that the human is told why before
+// filling in a form the daemon would then turn down.
+func (a *App) showReviewForm(ms mission.Mission) tea.Cmd {
+	var reason string
+
+	switch {
+	case ms.IsReview():
+		reason = ms.Name + " is itself a review"
+	case !ms.Launched():
+		reason = ms.Name + " has not been launched, so there is nothing to review"
+	case ms.Status.Terminal():
+		reason = ms.Name + " is closed and its worktrees are gone"
+	}
+
+	if reason != "" {
+		return emit(toastMsg{text: reason, err: true})
+	}
+
+	a.modal = newReviewForm(ms, a.opts, a.snapshot.Limits, time.Now())
+
+	return a.fetchModels()
+}
+
 // showOperationForm opens the operation editor.
 func (a *App) showOperationForm(operation mission.Operation) tea.Cmd {
 	a.modal = newOperationForm(operation, a.opts)
@@ -126,6 +153,10 @@ func (a *App) showOperationForm(operation mission.Operation) tea.Cmd {
 
 // handleMissionSubmit saves a created or edited mission.
 func (a *App) handleMissionSubmit(msg submitMissionMsg) tea.Cmd {
+	if msg.ReviewOf != "" {
+		return a.createReview(msg)
+	}
+
 	if msg.ID == "" {
 		return a.createMission(msg)
 	}

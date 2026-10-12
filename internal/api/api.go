@@ -100,6 +100,17 @@ type CreateMissionRequest struct {
 	// off, and whether a mission should stop for approval is a decision for
 	// whoever launches it.
 	InheritFrom mission.MissionID `json:"inheritFrom,omitempty"`
+	// ReviewOf names a launched mission for this one to review.
+	//
+	// It changes what the other fields mean. The operation is the reviewed
+	// mission's and need not be sent. Tool is required rather than defaulted,
+	// because a second opinion from whichever agent happens to be the default is
+	// not what was asked for. Name defaults to one that says what is reviewed.
+	// Prompt is what the human wants looked at and may be empty: q composes the
+	// reviewer's instructions itself, at launch. An unset Pin becomes the host
+	// running the reviewed mission, which is the one that has its worktrees and
+	// its agent's transcript.
+	ReviewOf mission.MissionID `json:"reviewOf,omitempty"`
 	// Queued asks the daemon to start the mission on its own once a slot is
 	// free. Without it a new mission waits in briefing for a human, as before.
 	Queued bool `json:"queued,omitempty"`

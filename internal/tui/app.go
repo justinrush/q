@@ -56,11 +56,22 @@ type Options struct {
 	Repos git.ScanOptions
 	// DefaultTool is the agent a new mission starts with.
 	DefaultTool mission.Tool
+	// Review is the reviewer the review form starts on.
+	Review ReviewDefaults
 	// Models is what each agent says it can run. It arrives from the daemon
 	// rather than from configuration, and is empty until the first fetch lands,
 	// which the form renders as "the agent's own default" rather than as an
 	// agent that offers nothing.
 	Models map[mission.Tool]mission.ModelSet
+}
+
+// ReviewDefaults name the agent a review is offered with. Every field is
+// optional: an unset tool means "a different agent from the one reviewed", and
+// an unset model or effort means that agent's own.
+type ReviewDefaults struct {
+	Tool   mission.Tool
+	Model  string
+	Effort string
 }
 
 // withDefaults fills in anything cmd/q left unset.

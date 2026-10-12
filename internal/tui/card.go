@@ -144,6 +144,12 @@ func metaLine(ms mission.Mission, host string, width int) string {
 		parts = append(parts, "plan")
 	}
 
+	// A review can be renamed, so the name alone cannot be relied on to say
+	// that this card's agent is reading another mission's work, not doing its own.
+	if ms.IsReview() {
+		parts = append(parts, "review")
+	}
+
 	// Queued is a flag rather than a stored badge, since the brief owns it and
 	// the badges belong to the run.
 	if ms.Queued {

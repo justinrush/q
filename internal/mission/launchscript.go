@@ -37,6 +37,10 @@ const (
 	PromptFile = "prompt.md"
 	// LaunchScript starts the agent.
 	LaunchScript = "launch.sh"
+	// ReviewFile is where a reviewing agent is asked to write its report.
+	ReviewFile = "review.md"
+	// ReviewTranscriptFile is a review's copy of the reviewed agent's transcript.
+	ReviewTranscriptFile = "source-transcript.jsonl"
 	// MetaFile records what was generated, as a debugging aid.
 	MetaFile = "meta.json"
 )

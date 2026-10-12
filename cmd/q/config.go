@@ -68,6 +68,7 @@ type fileConfig struct {
 	Cost     *costConfig     `json:"cost,omitempty"`
 	TUI      *tuiConfig      `json:"tui,omitempty"`
 	Queue    *queueConfig    `json:"queue,omitempty"`
+	Review   *reviewConfig   `json:"review,omitempty"`
 	Remote   *remoteConfig   `json:"remote,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
@@ -75,6 +76,12 @@ type fileConfig struct {
 }
 
 // queueConfig configures how the daemon works through queued missions.
+type reviewConfig struct {
+	Tool   string `json:"tool,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+}
+
 type queueConfig struct {
 	MaxConcurrent int `json:"maxConcurrent,omitempty"`
 }
@@ -344,6 +351,10 @@ func applyFile(out *settings, file fileConfig) {
 
 	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
+	}
+
+	if r := file.Review; r != nil {
+		out.Review = reviewSettings{Tool: r.Tool, Model: r.Model, Effort: r.Effort}
 	}
 
 	applyRemote(out, file.Remote)
@@ -652,6 +663,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
 		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse},
 		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
+		Review:   &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
 			SSH:           s.Remote.SSH,
 			Bin:           s.Remote.Bin,

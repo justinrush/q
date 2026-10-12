@@ -2,6 +2,7 @@ package tui
 
 import (
 	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ type submitMissionMsg struct {
 	BaseBranches map[string]string
 	// Launch requests that the mission be started immediately after saving.
 	Launch bool
+	// ReviewOf names the mission to review, for a form opened to request one.
+	ReviewOf mission.MissionID
 }
 
 // submitOperationMsg carries a completed operation form.
@@ -77,6 +80,51 @@ type missionForm struct {
 	openedAt time.Time
 	// reposLocked covers the launch-in-progress interval before StartedAt is set.
 	reposLocked bool
+	// reviewOf and reviewName are set on a form that requests a review of
+	// another mission. Such a form offers only what a review can choose: who
+	// does it, and what to look at.
+	reviewOf   mission.MissionID
+	reviewName string
+}
+
+// reviewFields are the fields a review form offers, in tab order. A review has
+// its subject's operation, no repositories of its own, and no plan to approve.
+var reviewFields = []int{
+	fieldMissionName, fieldMissionTool, fieldMissionModel, fieldMissionEffort, fieldMissionPrompt,
+}
+
+// newReviewForm builds the form that asks another agent to review source.
+//
+// It starts on a different agent from the one that did the work, because a
+// second opinion from the same one is rarely what is wanted, and with the
+// agent focused, because choosing it is the reason the form was opened.
+func newReviewForm(source mission.Mission, opts Options, limits []mission.Limit, now time.Time) *missionForm {
+	form := newMissionForm(mission.Mission{Name: "Review " + source.Name}, nil, "", opts, limits, now)
+	form.reviewOf = source.ID
+	form.reviewName = source.Name
+
+	form.tool = opts.Review.Tool
+	if form.tool == "" {
+		form.tool = source.Tool.Next()
+	}
+
+	form.resetModel()
+
+	// The configured model and effort are the configured agent's names, so
+	// they are applied only when that is the agent the form starts on.
+	if opts.Review.Tool != "" {
+		if opts.Review.Model != "" {
+			form.model = opts.Review.Model
+		}
+
+		if opts.Review.Effort != "" {
+			form.effort = opts.Review.Effort
+		}
+	}
+
+	form.focusField(fieldMissionTool)
+
+	return form
 }
 
 // missionFormFields are the form's focusable fields, in tab order.
@@ -173,6 +221,10 @@ func (f *missionForm) Update(msg tea.KeyMsg) (modal, tea.Cmd) {
 		// it in briefing is the less common intent.
 		return f.submit(true)
 	case keyBranches:
+		if f.reviewOf != "" {
+			return f, nil
+		}
+
 		return f.showBranches()
 	case keyEnter:
 		switch {
@@ -222,6 +274,14 @@ func (f *missionForm) updateField(msg tea.KeyMsg) (modal, tea.Cmd) {
 
 // moveField changes focus, keeping the text fields' cursors in step.
 func (f *missionForm) moveField(delta int) {
+	if f.reviewOf != "" {
+		n := len(reviewFields)
+		idx := max(slices.Index(reviewFields, f.field), 0)
+		f.focusField(reviewFields[((idx+delta)%n+n)%n])
+
+		return
+	}
+
 	f.focusField(((f.field+delta)%fieldMissionCount + fieldMissionCount) % fieldMissionCount)
 }
 
@@ -443,6 +503,19 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 		return f, nil
 	}
 
+	// A review is briefed by q. What is typed here only narrows it, so both
+	// keys do the same thing and an empty focus is fine.
+	if f.reviewOf != "" {
+		return nil, emit(submitMissionMsg{
+			Name:     name,
+			Prompt:   f.prompt.Value(),
+			Tool:     f.tool,
+			Model:    f.model,
+			Effort:   f.effort,
+			ReviewOf: f.reviewOf,
+		})
+	}
+
 	if strings.TrimSpace(f.prompt.Value()) == "" {
 		f.err = "a mission needs a prompt: it is what the agent is told to do"
 		f.focusField(fieldMissionPrompt)
@@ -484,6 +557,10 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 // View implements modal.
 func (f *missionForm) View(width, height int) string {
 	inner := min(max(width-20, 40), 90)
+
+	if f.reviewOf != "" {
+		return f.reviewView(inner, width, height)
+	}
 
 	title := "New mission"
 	if f.id != "" {
@@ -537,6 +614,40 @@ func (f *missionForm) View(width, height int) string {
 	}
 
 	rows = append(rows, "", styles.Footer.Render(footer))
+
+	return center(styles.Modal.Render(lipgloss.JoinVertical(lipgloss.Left, rows...)), width, height)
+}
+
+// reviewView draws the form as a request for a review.
+func (f *missionForm) reviewView(inner, width, height int) string {
+	rows := []string{
+		styles.ModalTitle.Render("Review " + f.reviewName),
+		styles.CardDetail.Render("  another agent reads the work and its transcript, and reports back"),
+		"",
+		f.label("Name", fieldMissionName),
+		f.name.View(inner),
+		"",
+		f.label("Agent", fieldMissionTool) + "   " + f.toolValue() + f.toolWarning(),
+		f.label("Model", fieldMissionModel) + "   " + f.modelValue(),
+	}
+
+	if f.field == fieldMissionModel && len(f.modelSet().Options) > 0 {
+		rows = append(rows, styles.CardDetail.Render("  enter to choose from the full list"))
+	}
+
+	rows = append(rows,
+		f.label("Effort", fieldMissionEffort)+"  "+f.effortValue(),
+		"",
+		f.label("Focus", fieldMissionPrompt),
+		styles.CardDetail.Render("  optional: anything in particular to look at"),
+		f.prompt.View(inner),
+	)
+
+	if f.err != "" {
+		rows = append(rows, "", styles.CardError.Render(f.err))
+	}
+
+	rows = append(rows, "", styles.Footer.Render("tab field   space change   ctrl+s start review   esc cancel"))
 
 	return center(styles.Modal.Render(lipgloss.JoinVertical(lipgloss.Left, rows...)), width, height)
 }
