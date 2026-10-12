@@ -822,6 +822,10 @@ A claude, codex, or opencode mission can start in plan mode (`--plan`, or the *P
 field on the form). When the plan is ready q routes the card to **debrief** rather than to
 *awaiting orders*, and opening the debrief drops you into the agent's own approval dialog.
 
+Asking for revisions instead also returns the card to *active*. claude reports nothing
+when a plan is turned down in the dialog, so q takes the agent's next tool call as the
+sign that it is planning again.
+
 How each agent gets there differs, and q hides the difference:
 
 - **claude** is launched with `--permission-mode plan` and asks permission to leave it.

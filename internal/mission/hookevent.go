@@ -106,6 +106,9 @@ type HookEvent struct {
 	BackgroundTasks int
 	// PermissionMode is the agent's mode, absent on session-lifecycle events.
 	PermissionMode string
+	// AgentID is set only when claude fires the hook from inside a subagent, whose
+	// tool calls say nothing about what the main session is blocked on.
+	AgentID string
 }
 
 // raw mirrors the on-the-wire payload. Every optional field is a pointer because
@@ -126,6 +129,7 @@ type raw struct {
 	StopHookActive       *bool             `json:"stop_hook_active"`
 	BackgroundTasks      []json.RawMessage `json:"background_tasks"`
 	PermissionMode       *string           `json:"permission_mode"`
+	AgentID              *string           `json:"agent_id"`
 }
 
 // Parse decodes a hook payload.
@@ -172,6 +176,7 @@ func ParseHookEventBytes(data []byte, event string) (HookEvent, error) {
 		StopHookActive:       body.StopHookActive != nil && *body.StopHookActive,
 		BackgroundTasks:      len(body.BackgroundTasks),
 		PermissionMode:       deref(body.PermissionMode),
+		AgentID:              deref(body.AgentID),
 	}, nil
 }
 

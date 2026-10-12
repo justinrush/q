@@ -237,6 +237,7 @@ func TestRejectedPlanNeedsDirection(t *testing.T) {
 func TestStopDoesNotDowngradeAPendingPlan(t *testing.T) {
 	ms := missionIn(StatusDebrief)
 	ms.PlanPending = true
+	ms.StatusChangedAt = testNow
 
 	res := Reduce(ms, ev(EventStop), testNow)
 
@@ -246,6 +247,105 @@ func TestStopDoesNotDowngradeAPendingPlan(t *testing.T) {
 
 	if res.Mission.FinishedAt != nil {
 		t.Error("a pending plan is not finished")
+	}
+}
+
+// Turning a plan down with revisions fires neither PostToolUse nor PermissionDenied,
+// so whatever the agent does next has to be what releases the card.
+func TestUnapprovedPlanIsReleasedByWhatFollows(t *testing.T) {
+	requested := testNow.Add(-3 * time.Minute)
+
+	for _, tc := range []struct {
+		name        string
+		requestedAt time.Time
+		payload     HookEvent
+		want        Status
+		wantPending bool
+		wantWaiting string
+	}{
+		{
+			name:        "the agent's next tool call resumes work",
+			requestedAt: requested,
+			payload:     HookEvent{Event: EventPreToolUse, SessionID: "sess-1", ToolName: "Bash"},
+			want:        StatusActive,
+		},
+		{
+			name:        "the plan tool's own pre-call does not release it",
+			requestedAt: requested,
+			payload:     HookEvent{Event: EventPreToolUse, SessionID: "sess-1", ToolName: ExitPlanModeTool},
+			want:        "",
+			wantPending: true,
+			wantWaiting: "plan debrief",
+		},
+		{
+			name:        "a subagent working behind the dialog does not release it",
+			requestedAt: requested,
+			payload: HookEvent{
+				Event: EventPreToolUse, SessionID: "sess-1", ToolName: "Bash", AgentID: "agent-7",
+			},
+			want:        "",
+			wantPending: true,
+			wantWaiting: "plan debrief",
+		},
+		{
+			name:        "another tool finishing does not release it",
+			requestedAt: requested,
+			payload:     HookEvent{Event: EventPostToolUse, SessionID: "sess-1", ToolName: "Write"},
+			want:        "",
+			wantPending: true,
+			wantWaiting: "plan debrief",
+		},
+		{
+			name:        "a new prompt resumes work",
+			requestedAt: requested,
+			payload:     ev(EventUserPromptSubmit),
+			want:        StatusActive,
+		},
+		{
+			name:        "a later stop is a finished turn",
+			requestedAt: requested,
+			payload:     HookEvent{Event: EventStop, SessionID: "sess-1", LastAssistantMessage: "noted"},
+			want:        StatusDebrief,
+		},
+		{
+			name:        "a later stop that asks something waits on the human",
+			requestedAt: requested,
+			payload: HookEvent{
+				Event: EventStop, SessionID: "sess-1", LastAssistantMessage: "Which approach do you prefer?",
+			},
+			want:        StatusAwaiting,
+			wantWaiting: "Which approach do you prefer?",
+		},
+		{
+			name:        "a stop racing the request leaves it pending",
+			requestedAt: testNow.Add(-planStopGrace / 2),
+			payload:     HookEvent{Event: EventStop, SessionID: "sess-1", LastAssistantMessage: "noted"},
+			want:        "",
+			wantPending: true,
+			wantWaiting: "plan debrief",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := missionIn(StatusDebrief)
+			ms.AgentState = AgentWaiting
+			ms.PlanPending = true
+			ms.WaitingFor = "plan debrief"
+			ms.StatusChangedAt = tc.requestedAt
+
+			res := Reduce(ms, tc.payload, testNow)
+
+			if res.ProposedStatus != tc.want {
+				t.Errorf("ProposedStatus = %q, want %q", res.ProposedStatus, tc.want)
+			}
+
+			if res.Mission.PlanPending != tc.wantPending {
+				t.Errorf("PlanPending = %v, want %v", res.Mission.PlanPending, tc.wantPending)
+			}
+
+			if res.Mission.WaitingFor != tc.wantWaiting {
+				t.Errorf("WaitingFor = %q, want %q", res.Mission.WaitingFor, tc.wantWaiting)
+			}
+		})
 	}
 }
 

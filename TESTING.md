@@ -137,6 +137,10 @@ and after you approve in opencode's own dialog the footer should change to the b
 agent on the implementing model with the pane never restarting. `p` on that card should
 decline and point you at the dialog.
 
+Repeat, but answer the dialog with a revision instead of approving. The card should return
+to **active** as soon as the agent calls its next tool, and come back to **debrief** when
+the revised plan is ready.
+
 ### Review sessions
 
 With a mission that has changed something, press `enter`. Expect one tmux window with the

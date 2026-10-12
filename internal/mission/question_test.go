@@ -125,6 +125,7 @@ func TestQuestionYieldsToBackgroundWorkAndPendingPlans(t *testing.T) {
 
 	planned := missionIn(StatusDebrief)
 	planned.PlanPending = true
+	planned.StatusChangedAt = testNow
 
 	res = Reduce(planned, HookEvent{
 		Event: EventStop, SessionID: "sess-1", LastAssistantMessage: codexQuestion,

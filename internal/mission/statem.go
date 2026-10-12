@@ -20,6 +20,13 @@ const maxLastMessage = 240
 // maxWaitingFor bounds the description of what an agent is blocked on.
 const maxWaitingFor = 60
 
+// planStopGrace is how long after a plan request a Stop is assumed to be the tail
+// of the turn that raised it rather than news about the plan.
+//
+// claude cannot end a turn while its approval dialog is open, so any later Stop
+// means the dialog was answered without approval.
+const planStopGrace = 750 * time.Millisecond
+
 // Reduction is the outcome of reducing one event.
 type Reduction struct {
 	// Mission carries every change except the lane.
@@ -154,7 +161,7 @@ func apply(ms *Mission, ev HookEvent, now time.Time) Status {
 	case EventUserPromptSubmit:
 		return applyUserPrompt(ms, ev)
 	case EventPreToolUse:
-		return applyPreToolUse(ms)
+		return applyPreToolUse(ms, ev)
 	case EventPostToolUse:
 		return applyPostToolUse(ms, ev)
 	case EventPermissionRequest:
@@ -229,10 +236,9 @@ func applySessionEnd(ms *Mission, ev HookEvent, now time.Time) Status {
 // applyUserPrompt clears the blocked state, because the human evidently is not
 // waiting on anything.
 //
-// That includes a plan on the table: whatever was typed, the agent is working
-// again and a later Stop is a turn ending, not the old proposal still waiting.
-// For an agent that takes approval as a prompt, this is also where approval is
-// seen.
+// That includes a plan on the table. An agent's approval dialog swallows all
+// input while it is open, so a submitted prompt means it was dismissed; and for
+// an agent that takes approval as a prompt, this is where approval is seen.
 func applyUserPrompt(ms *Mission, ev HookEvent) Status {
 	ms.AgentState = AgentBusy
 	ms.WaitingFor = ""
@@ -246,10 +252,30 @@ func applyUserPrompt(ms *Mission, ev HookEvent) Status {
 	return StatusActive
 }
 
-// applyPreToolUse marks progress without arguing for a lane.
-func applyPreToolUse(ms *Mission) Status {
-	ms.AgentState = AgentBusy
+// applyPreToolUse marks progress without arguing for a lane, except when a plan
+// was pending.
+//
+// Answering the plan dialog with revisions instead of approval fires neither
+// PostToolUse nor PermissionDenied; the agent simply carries on in the same turn.
+// Its next tool call is the only evidence q gets that the plan is no longer
+// waiting, and without it the card sits in debrief while the agent works. A
+// subagent's call proves nothing, because subagents keep running behind the dialog.
+func applyPreToolUse(ms *Mission, ev HookEvent) Status {
 	ms.Badges = ms.WithoutBadge(BadgeStale)
+
+	if ms.PlanPending {
+		if ev.IsPlanApproval() || ev.AgentID != "" {
+			return ""
+		}
+
+		ms.AgentState = AgentBusy
+		ms.PlanPending = false
+		ms.WaitingFor = ""
+
+		return StatusActive
+	}
+
+	ms.AgentState = AgentBusy
 
 	return ""
 }
@@ -356,13 +382,19 @@ func applyNotification(ms *Mission, ev HookEvent) Status {
 // applyStop ends a turn.
 //
 // In-flight background work means the session is paused rather than finished, so the
-// card stays active with a badge. A pending plan debrief outranks a Stop
-// entirely: downgrading it would silently strip the card of its "needs your
-// approval" meaning. And a turn that ends by asking the human something is not
-// finished work at all, so it goes to waiting rather than to debrief; see
-// [closingQuestion].
+// card stays active with a badge. A plan debrief raised moments ago outranks a
+// Stop entirely: downgrading it would silently strip the card of its "needs your
+// approval" meaning. A Stop any later than that means the plan was turned down
+// and the agent answered without calling a tool, so the turn really did end. And
+// a turn that ends by asking the human something is not finished work at all, so
+// it goes to waiting rather than to debrief; see [closingQuestion].
 func applyStop(ms *Mission, ev HookEvent, now time.Time) Status {
 	ms.Badges = ms.WithoutBadge(BadgeStale)
+
+	if ms.PlanPending && now.Sub(ms.StatusChangedAt) >= planStopGrace {
+		ms.PlanPending = false
+		ms.WaitingFor = ""
+	}
 
 	question := closingQuestion(ev.LastAssistantMessage)
 
