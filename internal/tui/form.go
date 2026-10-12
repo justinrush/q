@@ -17,13 +17,17 @@ import (
 // submitMissionMsg carries a completed mission form.
 type submitMissionMsg struct {
 	// ID is empty when creating.
-	ID          mission.MissionID
-	Name        string
-	Prompt      string
-	Tool        mission.Tool
-	Model       string
-	Effort      string
-	PlanMode    bool
+	ID       mission.MissionID
+	Name     string
+	Prompt   string
+	Tool     mission.Tool
+	Model    string
+	Effort   string
+	PlanMode bool
+	// PlanModel and PlanEffort are what the mission plans on. An empty model
+	// means it plans on what it implements on.
+	PlanModel   string
+	PlanEffort  string
 	OperationID mission.OperationID
 	ExtraRepos  []mission.Repo
 	// BaseBranches names the branch each repo's worktree is based on, keyed by
@@ -56,10 +60,14 @@ type missionForm struct {
 	// name. The branch modal edits this map in place.
 	baseBranches map[string]string
 
-	tool         mission.Tool
-	model        string
-	effort       string
-	planMode     bool
+	tool     mission.Tool
+	model    string
+	effort   string
+	planMode bool
+	// planModel and planEffort are what the mission plans on, leaving model and
+	// effort as what it implements on. An empty planModel means the same pair.
+	planModel    string
+	planEffort   string
 	operationIdx int
 	field        int
 	err          string
@@ -135,6 +143,8 @@ const (
 	fieldMissionModel
 	fieldMissionEffort
 	fieldMissionPlan
+	fieldMissionPlanModel
+	fieldMissionPlanEffort
 	fieldMissionRepos
 	fieldMissionPrompt
 	fieldMissionCount
@@ -162,6 +172,8 @@ func newMissionForm(
 		model:        ms.Model,
 		effort:       ms.Effort,
 		planMode:     ms.PlanMode,
+		planModel:    ms.PlanModel,
+		planEffort:   ms.PlanEffort,
 		launched:     ms.Launched(),
 		reposLocked:  ms.Status != "" && ms.Status != mission.StatusBriefing,
 		models:       opts.Models,
@@ -240,6 +252,10 @@ func (f *missionForm) Update(msg tea.KeyMsg) (modal, tea.Cmd) {
 			if len(f.modelSet().Options) > 0 {
 				return f.showModelPicker(), nil
 			}
+		case f.field == fieldMissionPlanModel && !f.launched:
+			if len(f.modelSet().Options) > 0 {
+				return f.showPlanModelPicker(), nil
+			}
 		}
 	}
 
@@ -263,6 +279,10 @@ func (f *missionForm) updateField(msg tea.KeyMsg) (modal, tea.Cmd) {
 		f.cycleEffort(msg.String())
 	case fieldMissionPlan:
 		f.togglePlan(msg.String())
+	case fieldMissionPlanModel:
+		f.cyclePlanModel(msg.String())
+	case fieldMissionPlanEffort:
+		f.cyclePlanEffort(msg.String())
 	case fieldMissionRepos:
 		if !f.reposLocked {
 			f.repos.Update(msg)
@@ -282,8 +302,33 @@ func (f *missionForm) moveField(delta int) {
 		return
 	}
 
-	f.focusField(((f.field+delta)%fieldMissionCount + fieldMissionCount) % fieldMissionCount)
+	next := f.field
+
+	// The planning fields exist only while plan mode is on, so focus steps over
+	// them otherwise rather than landing on a row that is not drawn.
+	for range fieldMissionCount {
+		next = ((next+delta)%fieldMissionCount + fieldMissionCount) % fieldMissionCount
+
+		if !f.hidden(next) {
+			break
+		}
+	}
+
+	f.focusField(next)
 }
+
+// hidden reports whether a field is not offered right now.
+func (f *missionForm) hidden(field int) bool {
+	switch field {
+	case fieldMissionPlanModel, fieldMissionPlanEffort:
+		return !f.plans()
+	default:
+		return false
+	}
+}
+
+// plans reports whether the mission will start in plan mode.
+func (f *missionForm) plans() bool { return f.planMode && f.tool.SupportsPlanMode() }
 
 func (f *missionForm) focusField(field int) {
 	f.field = field
@@ -336,6 +381,7 @@ func (f *missionForm) cycleTool(keyName string) {
 		// The models one agent offers mean nothing to another, so the choice is
 		// re-made from the new agent's own list rather than carried across.
 		f.resetModel()
+		f.planModel, f.planEffort = "", ""
 	}
 }
 
@@ -365,6 +411,50 @@ func (f *missionForm) cycleEffort(keyName string) {
 	}
 }
 
+// cyclePlanModel changes the model the mission plans on.
+//
+// The rotation starts with no choice at all, which is how a mission says it
+// plans on the model it implements on.
+func (f *missionForm) cyclePlanModel(keyName string) {
+	if f.launched {
+		return
+	}
+
+	delta, ok := cycleDelta(keyName)
+	if !ok {
+		return
+	}
+
+	values := []string{""}
+	for _, opt := range f.modelSet().Options {
+		values = append(values, opt.Value)
+	}
+
+	idx := max(slices.Index(values, f.planModel), 0)
+	n := len(values)
+
+	f.planModel = values[((idx+delta)%n+n)%n]
+	f.clampPlanEffort()
+}
+
+// cyclePlanEffort changes the effort the mission plans with.
+func (f *missionForm) cyclePlanEffort(keyName string) {
+	if f.launched || !f.modelSet().SupportsEffort(f.planModel) {
+		return
+	}
+
+	if delta, ok := cycleDelta(keyName); ok {
+		f.planEffort = f.modelSet().NextEffort(f.planModel, f.planEffort, delta)
+	}
+}
+
+// clampPlanEffort drops a planning effort the planning model does not accept.
+func (f *missionForm) clampPlanEffort() {
+	if f.planModel == "" || !f.modelSet().ValidEffort(f.planModel, f.planEffort) {
+		f.planEffort = ""
+	}
+}
+
 // cycleDelta reads a keypress as a step through a list, or reports that it is
 // not one.
 func cycleDelta(keyName string) (int, bool) {
@@ -391,6 +481,7 @@ func (f *missionForm) setModels(models map[mission.Tool]mission.ModelSet) {
 	}
 
 	f.clampEffort()
+	f.clampPlanEffort()
 }
 
 // resetModel takes the selected agent's own default.
@@ -423,6 +514,19 @@ func (f *missionForm) togglePlan(keyName string) {
 // showModelPicker opens the filterable catalog over the form.
 func (f *missionForm) showModelPicker() modal {
 	return newModelPicker(f.tool, f.model, f.modelSet().Options, f)
+}
+
+// showPlanModelPicker opens the same catalog to choose what the mission plans
+// on.
+func (f *missionForm) showPlanModelPicker() modal {
+	picker := newModelPicker(f.tool, f.planModel, f.modelSet().Options, f)
+	picker.title = "Plan model for " + f.tool.String()
+	picker.onPick = func(value string) {
+		f.planModel = value
+		f.clampPlanEffort()
+	}
+
+	return picker
 }
 
 // showBranches opens the base branch modal over the form.
@@ -539,6 +643,14 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 		}
 	}
 
+	// Planning settings are sent only for a mission that plans, so turning
+	// plan mode off does not leave a model behind to surprise whoever turns it
+	// back on.
+	var planModel, planEffort string
+	if f.plans() {
+		planModel, planEffort = f.planModel, f.planEffort
+	}
+
 	return nil, emit(submitMissionMsg{
 		ID:           f.id,
 		Name:         name,
@@ -546,7 +658,9 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 		Tool:         f.tool,
 		Model:        f.model,
 		Effort:       f.effort,
-		PlanMode:     f.planMode && f.tool.SupportsPlanMode(),
+		PlanMode:     f.plans(),
+		PlanModel:    planModel,
+		PlanEffort:   planEffort,
 		OperationID:  f.operations[f.operationIdx].ID,
 		ExtraRepos:   parseRepoLines(f.repos.Value()),
 		BaseBranches: f.baseBranches,
@@ -585,6 +699,20 @@ func (f *missionForm) View(width, height int) string {
 	rows = append(rows,
 		f.label("Effort", fieldMissionEffort)+"  "+f.effortValue(),
 		f.label("Plan mode", fieldMissionPlan)+" "+f.planValue(),
+	)
+
+	if f.plans() {
+		rows = append(rows,
+			f.label("Plan model", fieldMissionPlanModel)+" "+f.planModelValue(),
+			f.label("Plan effort", fieldMissionPlanEffort)+" "+f.planEffortValue(),
+		)
+
+		if f.field == fieldMissionPlanModel && !f.launched && len(f.modelSet().Options) > 0 {
+			rows = append(rows, styles.CardDetail.Render("  enter to choose from the full list"))
+		}
+	}
+
+	rows = append(rows,
 		"",
 		f.label("Additional repos", fieldMissionRepos),
 		f.repoHelp(),
@@ -822,10 +950,41 @@ func (f *missionForm) planValue() string {
 	return "[ ] off"
 }
 
+// planModelValue renders what the mission plans on.
+func (f *missionForm) planModelValue() string {
+	if f.planModel == "" {
+		return styles.Disabled.Render("same as the model above") +
+			styles.CardDetail.Render("  the model above implements the approved plan")
+	}
+
+	if f.launched {
+		return f.planModel + styles.CardDetail.Render("  (fixed once launched)")
+	}
+
+	if _, ok := f.modelSet().Option(f.planModel); !ok {
+		return f.planModel + styles.CardDetail.Render("  not in "+string(f.tool)+"'s list")
+	}
+
+	return f.planModel
+}
+
+// planEffortValue renders the effort the mission plans with.
+func (f *missionForm) planEffortValue() string {
+	switch {
+	case f.planModel == "":
+		return styles.Disabled.Render("same as the effort above")
+	case !f.modelSet().SupportsEffort(f.planModel):
+		return styles.Disabled.Render("unavailable") +
+			styles.CardDetail.Render("  this model takes no effort setting")
+	case f.planEffort == "":
+		return styles.Disabled.Render("the model's own default")
+	default:
+		return f.planEffort
+	}
+}
+
 func (f *missionForm) planUnavailableReason() string {
 	switch f.tool {
-	case mission.ToolCodex:
-		return "codex has no plan mode"
 	case mission.ToolAgy:
 		return "agy plan mode is not supported in q"
 	default:

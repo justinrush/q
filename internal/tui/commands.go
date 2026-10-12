@@ -269,6 +269,8 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			Model:        msg.Model,
 			Effort:       msg.Effort,
 			PlanMode:     msg.PlanMode,
+			PlanModel:    msg.PlanModel,
+			PlanEffort:   msg.PlanEffort,
 			ExtraRepos:   msg.ExtraRepos,
 			BaseBranches: msg.BaseBranches,
 		})
@@ -329,6 +331,8 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 			req.Model = &msg.Model
 			req.Effort = &msg.Effort
 			req.PlanMode = &msg.PlanMode
+			req.PlanModel = &msg.PlanModel
+			req.PlanEffort = &msg.PlanEffort
 		}
 
 		if ms, ok := a.snapshot.Mission(msg.ID); ok && ms.Status == mission.StatusBriefing {
@@ -416,6 +420,20 @@ func describeReport(ms mission.Mission, report mission.Report) string {
 	}
 
 	return "deleted " + ms.Name
+}
+
+// approvePlan accepts a planning mission's plan, restarting its session to
+// implement it.
+func (a *App) approvePlan(ms mission.Mission) tea.Cmd {
+	return func() tea.Msg {
+		updated, err := a.client.SetStatus(a.ctx(), ms.ID,
+			api.SetStatusRequest{To: mission.StatusActive, ApprovePlan: true})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: updated.Name + ": plan approved, implementing"}
+	}
 }
 
 // setPlanMode flips an unlaunched mission's plan-mode flag.

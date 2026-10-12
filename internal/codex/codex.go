@@ -138,7 +138,78 @@ func (a *Agent) Args(inv mission.Invocation) []string {
 		args = append(args, "--add-dir", mission.ShellQuote(wt))
 	}
 
+	return a.withPrompt(args, inv)
+}
+
+// withPrompt ends an argument list with the composed prompt.
+//
+// A planning session is given none. codex enters plan mode only through its
+// /plan command, and a prompt passed here is submitted as written, slash and
+// all, so the brief is delivered by [Agent.Opening] instead.
+func (*Agent) withPrompt(args []string, inv mission.Invocation) []string {
+	if inv.PlanMode {
+		return args
+	}
+
 	return append(args, mission.PromptArg)
+}
+
+// Opening is the /plan command that starts a planning session.
+//
+// The brief is named rather than included. codex folds a long paste into a
+// placeholder, and a command line that begins with one is no longer read as a
+// command, so the whole brief would arrive as an ordinary prompt and the
+// session would never enter plan mode.
+func (*Agent) Opening(inv mission.Invocation) (string, bool) {
+	if !inv.PlanMode {
+		return "", false
+	}
+
+	brief := filepath.Join(mission.ArtifactDir, mission.PromptFile)
+
+	return "/plan Read " + brief + " in this directory for your instructions, then plan the work.", true
+}
+
+// Ready reports whether codex is showing its composer.
+//
+// Before that it may be asking whether to trust its hooks or the directory,
+// and text sent then would answer the question instead of reaching the
+// composer.
+func (*Agent) Ready(pane string) bool {
+	composer := false
+
+	for line := range strings.SplitSeq(pane, "\n") {
+		line = strings.TrimSpace(line)
+
+		if isDialogHint(line) {
+			return false
+		}
+
+		if rest, ok := strings.CutPrefix(line, composerMarker); ok && !isMenuChoice(rest) {
+			composer = true
+		}
+	}
+
+	return composer
+}
+
+// isDialogHint reports whether a line is the key hint codex draws under a
+// question, e.g. "enter confirm · esc skip" or "enter continue · esc quit".
+func isDialogHint(line string) bool {
+	return strings.HasPrefix(line, "enter ") && strings.Contains(line, "esc ")
+}
+
+// composerMarker begins codex's input line. It also begins the highlighted
+// choice of a menu, which is what [isMenuChoice] tells apart.
+const composerMarker = "›"
+
+// isMenuChoice reports whether the text after a marker is a numbered option,
+// e.g. "1. Review hooks".
+func isMenuChoice(rest string) bool {
+	rest = strings.TrimSpace(rest)
+	digits := strings.TrimLeft(rest, "0123456789")
+
+	return len(digits) < len(rest) && strings.HasPrefix(digits, ".")
 }
 
 // remoteArgs points codex at the managed app-server.
@@ -200,7 +271,7 @@ func (a *Agent) resumeArgs(inv mission.Invocation) []string {
 	args := append([]string{"resume"}, a.commonArgs(inv)...)
 	args = append(args, mission.ShellQuote(inv.SessionID))
 
-	return append(args, mission.PromptArg)
+	return a.withPrompt(args, inv)
 }
 
 // Artifacts refreshes the shared codex profile.

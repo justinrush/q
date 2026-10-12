@@ -113,3 +113,120 @@ func TestRemoteArgsKeepModel(t *testing.T) {
 		})
 	}
 }
+
+// codex enters plan mode only through its /plan command, and a prompt on the
+// command line is submitted as written, so a planning session is started with
+// no prompt and told what to do once it is listening.
+func TestPlanModeLaunch(t *testing.T) {
+	cases := []struct {
+		name        string
+		inv         mission.Invocation
+		wantPrompt  bool
+		wantOpening bool
+	}{
+		{
+			name:       "an ordinary launch carries its prompt",
+			inv:        mission.Invocation{MissionDir: "/m"},
+			wantPrompt: true,
+		},
+		{
+			name:        "a planning launch is opened instead",
+			inv:         mission.Invocation{MissionDir: "/m", PlanMode: true},
+			wantOpening: true,
+		},
+		{
+			name:       "an ordinary resume carries its prompt",
+			inv:        mission.Invocation{MissionDir: "/m", SessionID: "abc", Resume: true},
+			wantPrompt: true,
+		},
+		{
+			name:        "a planning resume is opened instead",
+			inv:         mission.Invocation{MissionDir: "/m", SessionID: "abc", Resume: true, PlanMode: true},
+			wantOpening: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := New("/bin/codex", Options{})
+			line := strings.Join(agent.Args(tc.inv), " ")
+
+			if got := strings.Contains(line, mission.PromptArg); got != tc.wantPrompt {
+				t.Errorf("argv = %q, prompt present = %v, want %v", line, got, tc.wantPrompt)
+			}
+
+			opening, ok := agent.Opening(tc.inv)
+			if ok != tc.wantOpening {
+				t.Fatalf("Opening() ok = %v, want %v", ok, tc.wantOpening)
+			}
+
+			if !tc.wantOpening {
+				return
+			}
+
+			if !strings.HasPrefix(opening, "/plan ") {
+				t.Errorf("Opening() = %q, want a /plan command", opening)
+			}
+
+			if !strings.Contains(opening, ".q/prompt.md") {
+				t.Errorf("Opening() = %q, want it to name the brief", opening)
+			}
+
+			// codex folds a long or multi-line paste into a placeholder, and a
+			// line that starts with one is no longer read as a command.
+			if strings.Contains(opening, "\n") || len(opening) > 200 {
+				t.Errorf("Opening() = %q, want one short line", opening)
+			}
+		})
+	}
+}
+
+// Text sent before codex shows its composer answers whatever it was asking
+// instead. These panes are what codex 0.162.1 draws.
+func TestReady(t *testing.T) {
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{name: "nothing drawn yet", pane: "\n\n"},
+		{
+			name: "asking about hooks",
+			pane: "  Hooks need review\n  4 hooks are new or changed.\n\n" +
+				"› 1. Review hooks\n  2. Trust all and continue\n\n  enter confirm · esc skip\n",
+		},
+		{
+			name: "asking whether to implement a plan",
+			pane: "  Implement this plan?\n› 1. Yes, implement this plan\n  2. Yes, clear context and implement\n" +
+				"  enter select · esc back\n",
+		},
+		{
+			name: "asking whether to trust the folder",
+			pane: "  Trust this folder?\n\n  1. Trust and continue\n  2. Quit\n\n  enter continue · esc quit\n" +
+				"› stale text\n",
+		},
+		{
+			name: "a menu with no footer in view",
+			pane: "› 2. Trust all and continue\n",
+		},
+		{
+			name: "the composer",
+			pane: "  >_ OpenAI Codex (v0.162.1)\n\n› Ask Codex to do anything\n\n" +
+				"  GPT-6.1-Sol default · /m\n  ? for shortcuts\n",
+			want: true,
+		},
+		{
+			name: "the composer with text in it",
+			pane: "› 12 angry men is a film\n  ? for shortcuts\n",
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := New("/bin/codex", Options{}).Ready(tc.pane); got != tc.want {
+				t.Errorf("Ready() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

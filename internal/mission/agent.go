@@ -55,13 +55,19 @@ type Invocation struct {
 	// Resume continues SessionID rather than starting fresh.
 	Resume bool
 	// PlanMode starts the agent in a plan-then-approve flow, for an agent that
-	// supports one.
+	// supports one. It is true only while the mission is still planning.
 	PlanMode bool
 	// Model names the model to run on, as the agent's own CLI names it. Empty
 	// means emit no model flag, leaving the agent its own default.
 	Model string
 	// Effort is the reasoning effort level. Empty means emit no effort flag.
 	Effort string
+	// ImplementModel and ImplementEffort are what the mission will run on once
+	// its plan is accepted. They are set only while PlanMode is, and are for an
+	// agent that makes that change itself and so has to be told both ends of it
+	// at the start.
+	ImplementModel  string
+	ImplementEffort string
 	// DisplayName is shown in the agent's own UI.
 	DisplayName string
 	// Worktrees are the absolute worktree paths the agent may touch.
@@ -71,6 +77,21 @@ type Invocation struct {
 	PathEnv string
 	// QBin is the absolute path to the q binary, embedded in hook commands.
 	QBin string
+}
+
+// Opener is an agent whose first instruction sometimes has to be typed into its
+// UI rather than passed on its command line.
+//
+// It is optional. An agent implements it when something it must be told at the
+// start is only reachable as a command in its own interface, which no argument
+// can stand in for.
+type Opener interface {
+	// Opening returns the text to submit once the agent is accepting input, and
+	// false when the command line already carries everything.
+	Opening(Invocation) (string, bool)
+	// Ready reports whether a capture of the agent's pane shows it waiting for
+	// input, as opposed to still starting or stopped at a question of its own.
+	Ready(pane string) bool
 }
 
 // Artifact is a file an agent needs written before it starts.

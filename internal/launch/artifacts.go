@@ -266,6 +266,16 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		worktrees = git.WorktreePaths(source)
 	}
 
+	// A plan-mode mission runs on its planning settings until its plan is
+	// accepted and on its implementing ones after, so which phase it is in
+	// decides everything about how the agent is invoked.
+	model, effort := ms.PhaseModel()
+
+	var implementModel, implementEffort string
+	if ms.Planning() {
+		implementModel, implementEffort = ms.Model, ms.Effort
+	}
+
 	return mission.Invocation{
 		MissionID:   ms.ID,
 		HookEpoch:   ms.HookEpoch,
@@ -274,9 +284,13 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		DaemonFile:  l.dirs.DaemonFile(),
 		SessionID:   ms.AgentSessionID,
 		Resume:      resume,
-		PlanMode:    ms.PlanMode,
-		Model:       ms.Model,
-		Effort:      ms.Effort,
+		PlanMode:    ms.Planning(),
+		Model:       model,
+		Effort:      effort,
+
+		ImplementModel:  implementModel,
+		ImplementEffort: implementEffort,
+
 		DisplayName: "q: " + ms.Name,
 		Worktrees:   worktrees,
 		PathEnv:     os.Getenv("PATH"),
@@ -331,7 +345,12 @@ func (l *Launcher) selfPath() (string, error) {
 // It does not check whether the session already exists. Callers own that decision:
 // an initial launch refuses to adopt an existing session, while a relaunch has just
 // killed the stale one on purpose.
-func (l *Launcher) startSession(ctx context.Context, operation mission.Operation, ms *mission.Mission) error {
+func (l *Launcher) startSession(
+	ctx context.Context,
+	operation mission.Operation,
+	ms *mission.Mission,
+	resume bool,
+) error {
 	ms.TmuxSession = mission.TmuxSessionName(operation.Slug, ms.Slug, ms.ID)
 
 	script := filepath.Join(ms.MissionDir, mission.ArtifactDir, mission.LaunchScript)
@@ -355,8 +374,94 @@ func (l *Launcher) startSession(ctx context.Context, operation mission.Operation
 
 	l.applySessionOptions(ctx, ms)
 	l.applyExecutorBanner(ctx, *ms)
+	l.open(*ms, resume)
 
 	return nil
+}
+
+// openingTimeout bounds how long q waits for an agent to accept its opening.
+//
+// It is long because the usual reason an agent is not ready is that it has
+// stopped to ask the human something, and the human may be some time.
+const openingTimeout = 15 * time.Minute
+
+// open submits an agent's opening once it is ready for one.
+//
+// It does not hold up the launch. The agent is running by this point, and how
+// long it takes to reach its input line is the agent's business; a launch that
+// waited on it would block every other one behind it.
+func (l *Launcher) open(ms mission.Mission, resume bool) {
+	agent, err := l.agentFor(ms.Tool)
+	if err != nil {
+		return
+	}
+
+	opener, ok := agent.(mission.Opener)
+	if !ok {
+		return
+	}
+
+	inv, err := l.invocation(ms, resume)
+	if err != nil {
+		return
+	}
+
+	text, ok := opener.Opening(inv)
+	if !ok {
+		return
+	}
+
+	go l.submitWhenReady(ms, opener, text)
+}
+
+// submitWhenReady watches an agent's pane and submits text once it shows the
+// agent waiting for input.
+//
+// Readiness has to hold across two looks, because an agent's UI can draw its
+// input line a moment before it is listening on it.
+func (l *Launcher) submitWhenReady(ms mission.Mission, opener mission.Opener, text string) {
+	ctx, cancel := context.WithTimeout(context.Background(), openingTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(l.openingPoll)
+	defer ticker.Stop()
+
+	ready := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			l.logger.Warn("agent never became ready for its opening", "mission", ms.ID)
+
+			return
+		case <-ticker.C:
+		}
+
+		pane, err := l.tmux.CapturePane(ctx, terminal.Pane(ms.AgentPaneID), 0)
+		if err != nil {
+			// The pane is gone, so the session was ended or replaced and the
+			// opening belongs to nothing.
+			return
+		}
+
+		if !opener.Ready(pane) {
+			ready = false
+
+			continue
+		}
+
+		if !ready {
+			ready = true
+
+			continue
+		}
+
+		if err := l.SendMessage(ctx, ms, text); err != nil {
+			l.logger.Warn("submitting an agent's opening", "mission", ms.ID, "error", err)
+		}
+
+		return
+	}
 }
 
 // applySessionOptions pins the window and pane behavior q depends on.

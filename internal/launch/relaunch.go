@@ -64,7 +64,7 @@ func (l *Launcher) Relaunch(
 		}
 	}
 
-	if err := l.startSession(ctx, operation, &ms); err != nil {
+	if err := l.startSession(ctx, operation, &ms, resume); err != nil {
 		return ms, err
 	}
 

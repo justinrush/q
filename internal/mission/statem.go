@@ -125,8 +125,19 @@ func turnEnded(previous bool, event string, proposed Status) bool {
 // An empty recorded id means q has not learned it yet, which is the normal
 // state for a codex mission before its SessionStart arrives, so anything is accepted
 // then.
+//
+// A session that starts by clearing the one before it is the same agent in the
+// same pane under a new id, and is how codex implements a plan "in a fresh
+// context". It is adopted rather than refused, or every event after it would be
+// discarded and the card would never move again. A session q has given up on
+// cannot arrive this way: its hooks carry an older epoch and are dropped before
+// they are reduced.
 func sessionMatches(ms Mission, ev HookEvent) bool {
 	if ms.AgentSessionID == "" || ev.SessionID == "" {
+		return true
+	}
+
+	if ev.Event == EventSessionStart && ev.Source == SourceClear {
 		return true
 	}
 
@@ -141,7 +152,7 @@ func apply(ms *Mission, ev HookEvent, now time.Time) Status {
 	case EventSessionEnd:
 		return applySessionEnd(ms, ev, now)
 	case EventUserPromptSubmit:
-		return applyUserPrompt(ms)
+		return applyUserPrompt(ms, ev)
 	case EventPreToolUse:
 		return applyPreToolUse(ms)
 	case EventPostToolUse:
@@ -217,10 +228,20 @@ func applySessionEnd(ms *Mission, ev HookEvent, now time.Time) Status {
 
 // applyUserPrompt clears the blocked state, because the human evidently is not
 // waiting on anything.
-func applyUserPrompt(ms *Mission) Status {
+//
+// That includes a plan on the table: whatever was typed, the agent is working
+// again and a later Stop is a turn ending, not the old proposal still waiting.
+// For an agent that takes approval as a prompt, this is also where approval is
+// seen.
+func applyUserPrompt(ms *Mission, ev HookEvent) Status {
 	ms.AgentState = AgentBusy
 	ms.WaitingFor = ""
+	ms.PlanPending = false
 	ms.Badges = ms.WithoutBadge(BadgeStale)
+
+	if ms.Planning() && ms.Tool.PlanEndsTurn() && ev.IsPlanGoAhead() {
+		ms.PlanApproved = true
+	}
 
 	return StatusActive
 }
@@ -247,6 +268,7 @@ func applyPostToolUse(ms *Mission, ev HookEvent) Status {
 
 	if ev.IsPlanApproval() {
 		ms.PlanPending = false
+		ms.PlanApproved = true
 		ms.WaitingFor = ""
 
 		return StatusActive
@@ -371,6 +393,14 @@ func applyStop(ms *Mission, ev HookEvent, now time.Time) Status {
 		return ""
 	}
 
+	if proposesPlan(*ms, ev) {
+		ms.AgentState = AgentWaiting
+		ms.PlanPending = true
+		ms.WaitingFor = "plan debrief"
+
+		return StatusDebrief
+	}
+
 	// FinishedAt stays unset: the agent is blocked at its prompt, and stamping a
 	// finish time would have the card report an age for work that has not ended.
 	//
@@ -394,6 +424,17 @@ func applyStop(ms *Mission, ev HookEvent, now time.Time) Status {
 	ms.FinishedAt = &finished
 
 	return StatusDebrief
+}
+
+// proposesPlan reports whether a Stop is an agent presenting its plan.
+//
+// It applies to an agent that has no permission request to mark the moment. Such
+// an agent delivers the plan as an item of its own, apart from its messages, so
+// a planning turn that ends having said nothing is one that ended on a plan. A
+// planning turn that ends on a message is the agent asking something or
+// reporting back, and is left to the ordinary rules.
+func proposesPlan(ms Mission, ev HookEvent) bool {
+	return ms.Planning() && ms.Tool.PlanEndsTurn() && strings.TrimSpace(ev.LastAssistantMessage) == ""
 }
 
 // applyStopFailure records a turn that ended in an API error.
@@ -430,6 +471,7 @@ func equivalent(a, b Mission) bool {
 	if a.AgentState != b.AgentState ||
 		a.WaitingFor != b.WaitingFor ||
 		a.PlanPending != b.PlanPending ||
+		a.PlanApproved != b.PlanApproved ||
 		a.AgentSessionID != b.AgentSessionID ||
 		a.TranscriptPath != b.TranscriptPath ||
 		a.LastMessage != b.LastMessage ||

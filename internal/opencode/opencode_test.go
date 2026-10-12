@@ -197,3 +197,123 @@ func TestMergeConfig(t *testing.T) {
 		t.Errorf("corrupt config was not preserved")
 	}
 }
+
+// opencode's plan and build agents each take a model of their own, and
+// accepting a plan hands the session from one to the other, so a planning
+// mission is given both ends up front. A resumed session ignores --model, which
+// is why this is config rather than a restart.
+func TestConfigModelsByPhase(t *testing.T) {
+	type agents map[string]map[string]any
+
+	cases := []struct {
+		name      string
+		inv       mission.Invocation
+		existing  string
+		wantModel any
+		want      agents
+	}{
+		{
+			name:      "an ordinary mission sets one model and one effort for both agents",
+			inv:       mission.Invocation{Model: "impl", Effort: "low"},
+			wantModel: "impl",
+			want:      agents{"plan": {"variant": "low"}, "build": {"variant": "low"}},
+		},
+		{
+			name: "a mission naming nothing writes nothing",
+			inv:  mission.Invocation{},
+		},
+		{
+			name: "a planning mission gives each agent its own pair",
+			inv: mission.Invocation{
+				PlanMode: true, Model: "planner", Effort: "high",
+				ImplementModel: "impl", ImplementEffort: "low",
+			},
+			wantModel: "impl",
+			want: agents{
+				"plan":  {"model": "planner", "variant": "high"},
+				"build": {"model": "impl", "variant": "low"},
+			},
+		},
+		{
+			name: "a planning mission with one model gives both agents the same",
+			inv: mission.Invocation{
+				PlanMode: true, Model: "impl", Effort: "low",
+				ImplementModel: "impl", ImplementEffort: "low",
+			},
+			wantModel: "impl",
+			want: agents{
+				"plan":  {"model": "impl", "variant": "low"},
+				"build": {"model": "impl", "variant": "low"},
+			},
+		},
+		{
+			name:      "a planning model with nothing named for implementing leaves build alone",
+			inv:       mission.Invocation{PlanMode: true, Model: "planner"},
+			wantModel: nil,
+			want:      agents{"plan": {"model": "planner"}},
+		},
+		{
+			name: "what the file already says survives where the mission is silent",
+			inv:  mission.Invocation{PlanMode: true, Model: "planner", ImplementModel: "impl"},
+			existing: `{"theme":"dark","agent":{"build":{"variant":"mine","temperature":0.2},` +
+				`"review":{"model":"other"}}}`,
+			wantModel: "impl",
+			want: agents{
+				"plan":   {"model": "planner"},
+				"build":  {"model": "impl", "variant": "mine", "temperature": 0.2},
+				"review": {"model": "other"},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := renderConfig(tc.inv)
+			if err != nil {
+				t.Fatalf("renderConfig: %v", err)
+			}
+
+			if tc.existing != "" {
+				merged, changed := mergeConfig(tc.inv, data, []byte(tc.existing))
+				if !changed {
+					t.Fatal("mergeConfig reported nothing to write")
+				}
+
+				data = merged
+			}
+
+			var doc map[string]any
+			if err := json.Unmarshal(data, &doc); err != nil {
+				t.Fatalf("invalid config: %v", err)
+			}
+
+			if doc["model"] != tc.wantModel {
+				t.Errorf("model = %v, want %v", doc["model"], tc.wantModel)
+			}
+
+			got, _ := doc["agent"].(map[string]any)
+			if len(got) != len(tc.want) {
+				t.Fatalf("agents = %v, want %v", got, tc.want)
+			}
+
+			for name, want := range tc.want {
+				settings, _ := got[name].(map[string]any)
+				if len(settings) != len(want) {
+					t.Errorf("agent.%s = %v, want %v", name, settings, want)
+
+					continue
+				}
+
+				for key, value := range want {
+					if settings[key] != value {
+						t.Errorf("agent.%s.%s = %v, want %v", name, key, settings[key], value)
+					}
+				}
+			}
+
+			if tc.existing != "" && doc["theme"] != "dark" {
+				t.Errorf("theme = %v, the user's own settings must survive", doc["theme"])
+			}
+		})
+	}
+}

@@ -447,6 +447,10 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		return zero, err
 	}
 
+	if err := validatePlanFlags(req.PlanModel, req.PlanEffort); err != nil {
+		return zero, err
+	}
+
 	pin, err := resolveHost(snap, req.Pin)
 	if err != nil {
 		return zero, err
@@ -463,6 +467,8 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		PlanMode:     req.PlanMode,
 		Model:        req.Model,
 		Effort:       req.Effort,
+		PlanModel:    req.PlanModel,
+		PlanEffort:   req.PlanEffort,
 		ExtraRepos:   normalizeRepos(req.ExtraRepos),
 		BaseBranches: normalizeBaseBranches(req.BaseBranches),
 		ReviewOf:     req.ReviewOf,
@@ -644,7 +650,8 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 	// Tool, plan mode, model, and effort are only meaningful before launch: they
 	// are baked into the agent's argv, so changing one afterwards would describe a
 	// session that is not the one running.
-	if req.Tool != nil || req.PlanMode != nil || req.Model != nil || req.Effort != nil {
+	if req.Tool != nil || req.PlanMode != nil || req.Model != nil || req.Effort != nil ||
+		req.PlanModel != nil || req.PlanEffort != nil {
 		if ms.Launched() {
 			return fmt.Errorf("%w: cannot change tool, plan mode, model, or effort after launch", ErrConflict)
 		}
@@ -662,6 +669,20 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 	// cannot fail over a model value that was already stored.
 	if req.Model != nil || req.Effort != nil {
 		if err := validateModelFlags(ms.Model, ms.Effort); err != nil {
+			return err
+		}
+	}
+
+	if req.PlanModel != nil {
+		ms.PlanModel = *req.PlanModel
+	}
+
+	if req.PlanEffort != nil {
+		ms.PlanEffort = *req.PlanEffort
+	}
+
+	if req.PlanModel != nil || req.PlanEffort != nil {
+		if err := validatePlanFlags(ms.PlanModel, ms.PlanEffort); err != nil {
 			return err
 		}
 	}
@@ -938,4 +959,17 @@ func validateModelFlags(model, effort string) error {
 	}
 
 	return nil
+}
+
+// validatePlanFlags rejects planning settings q cannot act on.
+//
+// An effort with no model is refused rather than read as "the implementing
+// model, at this effort": the pair is taken together, and guessing which model
+// was meant would launch a mission on settings nobody chose.
+func validatePlanFlags(model, effort string) error {
+	if model == "" && effort != "" {
+		return fmt.Errorf("%w: a plan effort needs a plan model", ErrInvalid)
+	}
+
+	return validateModelFlags(model, effort)
 }

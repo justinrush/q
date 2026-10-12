@@ -111,9 +111,31 @@ This is the thing worth checking first, because everything else depends on it.
 
 ### Plan mode
 
-Launch a claude mission with `--plan`. The card should reach **debrief** when the plan is
-ready, *not* awaiting orders. Press `enter`: you should land in the live approval dialog.
-Approve it there and the card should return to **active** with nothing restarted.
+Launch a mission with `--plan` on each of claude, codex, and opencode. The card should
+reach **debrief** when the plan is ready, *not* awaiting orders. Press `enter`: you should
+land in the agent's own approval dialog. Approve it there and the card should return to
+**active** with nothing restarted.
+
+For codex, watch the pane at launch: it should come up with an empty composer, then
+receive a one-line `/plan` command naming `.q/prompt.md`, and report that it changed to
+Plan mode. If codex stops first to ask about hooks or trust, the command should not be
+sent until you have answered.
+
+Then repeat on claude and codex with a different `--plan-model` (and `--plan-effort`)
+from `--model`:
+
+1. While planning, the agent's own status line should show the plan model.
+2. With the plan ready, press `p` on the card and confirm. The pane should restart, resume
+   the same conversation, and show the implementing model, out of plan mode.
+3. Launch another and approve in the agent's dialog instead. The pane should restart on
+   its own a moment later and carry on with the plan on the implementing model.
+4. For codex, also choose *Yes, clear context and implement*. The card should keep
+   following the new thread, and the restart should resume that thread.
+
+On opencode the same mission should show the plan model in the footer while planning,
+and after you approve in opencode's own dialog the footer should change to the build
+agent on the implementing model with the pane never restarting. `p` on that card should
+decline and point you at the dialog.
 
 ### Review sessions
 

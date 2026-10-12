@@ -51,6 +51,7 @@ type Launcher struct {
 	logger       *slog.Logger
 	now          func() time.Time
 	hostSnapshot func() mission.Snapshot
+	openingPoll  time.Duration
 }
 
 // WithHostSnapshot supplies current state: the machine names for the executor
@@ -88,6 +89,8 @@ func New(dirs paths.Dirs, workspace Workspace, tmux *terminal.Tmux, opts ...Opti
 		agents:    make(map[mission.Tool]mission.Agent),
 		logger:    slog.Default(),
 		now:       time.Now,
+
+		openingPoll: time.Second,
 	}
 
 	for _, opt := range opts {
@@ -154,7 +157,7 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 		return ms, err
 	}
 
-	if err := l.startSession(ctx, operation, &ms); err != nil {
+	if err := l.startSession(ctx, operation, &ms, false); err != nil {
 		provisioned.Rollback(ctx)
 
 		return ms, err

@@ -141,7 +141,7 @@ func metaLine(ms mission.Mission, host string, width int) string {
 	}
 
 	if ms.PlanMode {
-		parts = append(parts, "plan")
+		parts = append(parts, planPart(ms))
 	}
 
 	// A review can be renamed, so the name alone cannot be relied on to say
@@ -287,4 +287,18 @@ func firstLine(s string) string {
 	}
 
 	return s
+}
+
+// planPart marks a plan-mode card, naming what it plans on when that is not
+// what it implements on.
+func planPart(ms mission.Mission) string {
+	if !ms.SplitsPlan() {
+		return "plan"
+	}
+
+	if ms.PlanEffort == "" {
+		return "plan " + ms.PlanModel
+	}
+
+	return "plan " + ms.PlanModel + "/" + ms.PlanEffort
 }
