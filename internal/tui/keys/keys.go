@@ -94,7 +94,7 @@ func NewBoard() Board {
 		New:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new mission")),
 		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:     key.NewBinding(key.WithKeys("d", "x"), key.WithHelp("d", "delete")),
-		TogglePlan: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "toggle plan mode")),
+		TogglePlan: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "plan mode / approve plan")),
 		Queue:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "queue to auto-start")),
 		Take:       key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "take from the paired machine")),
 		Review:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review with another agent")),

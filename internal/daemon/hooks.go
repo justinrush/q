@@ -87,8 +87,9 @@ func (s *Service) resolveMission(req api.HookRequest, payload mission.HookEvent)
 // applyReduction runs the state machine and persists the outcome.
 func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent) {
 	var (
-		updated mission.Mission
-		changed bool
+		updated  mission.Mission
+		changed  bool
+		switched bool
 	)
 
 	err := s.store.Mutate("mission.hook."+mission.HookEventSlug(payload.Event), func(snap *mission.Snapshot) error {
@@ -115,6 +116,8 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 
 		updated = next
 		changed = true
+		switched = !ms.PlanApproved && next.PlanApproved && next.SplitsPlan() &&
+			!next.Tool.PlanSwitchesItself()
 		snap.PutMission(next)
 
 		return nil
@@ -127,6 +130,12 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 
 	if changed {
 		s.publishMission(updated)
+	}
+
+	// Off this goroutine, which reduces every hook in turn and must not wait on
+	// tmux.
+	if switched {
+		go s.implementPlan(id)
 	}
 }
 

@@ -91,15 +91,40 @@ func TestAgentStateValid(t *testing.T) {
 	}
 }
 
-// Plan mode is claude-only: codex 0.147.0 exposes no --permission-mode flag, so
-// offering the toggle for codex would silently do nothing.
-func TestPlanModeIsClaudeOnly(t *testing.T) {
-	if !ToolClaude.SupportsPlanMode() {
-		t.Error("claude should support plan mode")
+// Plan mode is offered only where q can follow it through: it has to be able
+// to tell that a plan is ready and that it was accepted. agy has a plan mode of
+// its own, but no event q has verified for either.
+func TestPlanModeSupport(t *testing.T) {
+	cases := []struct {
+		name           string
+		tool           Tool
+		planMode       bool
+		planEndsTurn   bool
+		switchesItself bool
+	}{
+		{name: "claude asks permission to leave plan mode", tool: ToolClaude, planMode: true},
+		{
+			name: "opencode asks permission and changes model itself",
+			tool: ToolOpencode, planMode: true, switchesItself: true,
+		},
+		{name: "codex ends its turn on the plan", tool: ToolCodex, planMode: true, planEndsTurn: true},
+		{name: "agy is not followed", tool: ToolAgy},
 	}
 
-	if ToolCodex.SupportsPlanMode() {
-		t.Error("codex must not advertise plan mode support")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.tool.SupportsPlanMode(); got != tc.planMode {
+				t.Errorf("SupportsPlanMode() = %v, want %v", got, tc.planMode)
+			}
+
+			if got := tc.tool.PlanEndsTurn(); got != tc.planEndsTurn {
+				t.Errorf("PlanEndsTurn() = %v, want %v", got, tc.planEndsTurn)
+			}
+
+			if got := tc.tool.PlanSwitchesItself(); got != tc.switchesItself {
+				t.Errorf("PlanSwitchesItself() = %v, want %v", got, tc.switchesItself)
+			}
+		})
 	}
 }
 

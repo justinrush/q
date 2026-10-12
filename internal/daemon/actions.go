@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/justinrush/q/internal/api"
 	"strings"
+	"time"
 
 	"github.com/justinrush/q/internal/launch"
 	"github.com/justinrush/q/internal/mission"
@@ -333,6 +334,107 @@ func (s *Service) Resume(ctx context.Context, id mission.MissionID, message stri
 	return s.relaunch(ctx, id, s.continuation(ms, message))
 }
 
+// What a session is told when it is restarted to implement its plan. The first
+// is for a plan accepted from q, where the agent was still waiting on an
+// answer; the second for one accepted in the agent's own UI, where it had
+// already been told and had started.
+const (
+	planApprovedMessage = "Your plan is approved. Implement it."
+	planSwitchedMessage = "Your plan was approved. q restarted this session on the model chosen " +
+		"for implementing it, so check what you had already changed and carry on with the plan."
+)
+
+// ApprovePlan accepts a planning mission's plan and restarts its session to
+// implement it.
+//
+// The restart is the point. A mission may plan on one model and implement on
+// another, and no agent can be asked to change its own, so the session is
+// resumed on the implementing settings and out of plan mode. The conversation
+// is the same one, plan included.
+//
+// It does not require the plan to have been announced. q learns that a plan is
+// ready from events that can be missed, and a human looking at a finished plan
+// in the pane should not be told there is nothing to approve.
+func (s *Service) ApprovePlan(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	if s.messenger == nil {
+		return mission.Mission{}, fmt.Errorf("%w: this daemon cannot talk to agent sessions", ErrConflict)
+	}
+
+	ms, err := s.requireLaunched(id)
+	if err != nil {
+		return mission.Mission{}, err
+	}
+
+	if !ms.Planning() {
+		return mission.Mission{}, fmt.Errorf("%w: %s has no plan awaiting approval", ErrConflict, ms.Name)
+	}
+
+	// Such an agent changes model as part of accepting the plan in its own UI,
+	// and a restart would leave it on the planning one.
+	if ms.Tool.PlanSwitchesItself() {
+		return mission.Mission{}, fmt.Errorf(
+			"%w: approve the plan in %s itself, which is what moves it to its implementing model; "+
+				"open the debrief to get there", ErrConflict, ms.Tool)
+	}
+
+	if err := s.setPlanApproved(id, true, false); err != nil {
+		return mission.Mission{}, err
+	}
+
+	relaunched, err := s.relaunch(ctx, id, planApprovedMessage)
+	if err != nil {
+		// The session is still the planning one, so the mission must say so, or
+		// the next attempt would be refused as already approved.
+		if undo := s.setPlanApproved(id, false, ms.PlanPending); undo != nil {
+			s.warn("restoring a plan's pending approval", "mission", id, "error", undo)
+		}
+
+		return mission.Mission{}, err
+	}
+
+	return relaunched, nil
+}
+
+// setPlanApproved records whether a mission's plan has been accepted.
+func (s *Service) setPlanApproved(id mission.MissionID, approved, pending bool) error {
+	return s.store.Mutate("mission.plan", func(snap *mission.Snapshot) error {
+		ms, ok := snap.Mission(id)
+		if !ok {
+			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
+		}
+
+		ms.PlanApproved = approved
+		ms.PlanPending = pending
+		ms.UpdatedAt = s.now()
+		snap.PutMission(ms)
+
+		return nil
+	})
+}
+
+// planSwitchTimeout bounds restarting a session whose plan was accepted in its
+// own UI.
+const planSwitchTimeout = 2 * time.Minute
+
+// implementPlan restarts a session whose plan was accepted in the agent's own
+// UI, when implementing calls for different settings from planning.
+//
+// The agent has by then started on the plan with the planning model, which is
+// exactly what the mission asked not to happen, so it is stopped and resumed
+// rather than left to finish.
+func (s *Service) implementPlan(id mission.MissionID) {
+	if s.messenger == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), planSwitchTimeout)
+	defer cancel()
+
+	if _, err := s.relaunch(ctx, id, planSwitchedMessage); err != nil {
+		s.warn("restarting a session to implement its plan", "mission", id, "error", err)
+	}
+}
+
 // Dispatch decides what a lane move actually does, and does it.
 //
 // Moving out of briefing launches the agent. Moving into the active lane from a
@@ -368,6 +470,10 @@ func (s *Service) Dispatch(
 
 	if req.To != mission.StatusActive {
 		return s.SetStatus(id, req.To)
+	}
+
+	if req.ApprovePlan {
+		return s.ApprovePlan(ctx, id)
 	}
 
 	if !current.Launched() {

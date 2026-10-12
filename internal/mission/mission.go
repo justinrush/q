@@ -91,6 +91,15 @@ type Mission struct {
 	// Effort is the reasoning effort level, for a model that accepts one. Empty
 	// means q passes no effort flag.
 	Effort string `json:"effort,omitempty" q:"spec"`
+	// PlanModel and PlanEffort are what a plan-mode mission plans on, leaving
+	// Model and Effort as what it implements on. An empty PlanModel means the
+	// mission does not distinguish: it plans on Model and Effort too.
+	//
+	// The pair is taken together rather than field by field, because an effort
+	// level belongs to a model and the implementing model's may mean nothing to
+	// the planning one.
+	PlanModel  string `json:"planModel,omitempty" q:"spec"`
+	PlanEffort string `json:"planEffort,omitempty" q:"spec"`
 	// ExtraRepos are repositories this mission adds to the repositories inherited
 	// from its operation. They are editable until the mission starts.
 	ExtraRepos []Repo `json:"extraRepos,omitempty" q:"spec"`
@@ -155,6 +164,13 @@ type Mission struct {
 	// While set, no Stop event may move the card out of debrief, so a plan
 	// awaiting approval cannot be silently downgraded to "finished".
 	PlanPending bool `json:"planPending,omitempty" q:"run"`
+	// PlanApproved records that a plan-mode mission's plan was accepted, which
+	// is what moves it from its planning settings to its implementing ones.
+	//
+	// It is stored rather than inferred from the lane because a session can die
+	// and be revived at any point, and one revived after approval must not be
+	// put back into plan mode.
+	PlanApproved bool `json:"planApproved,omitempty" q:"run"`
 	// LastMessage is the agent's closing message from its last completed turn.
 	LastMessage string `json:"lastMessage,omitempty" q:"run"`
 	// Badges carry nuance the five lanes cannot express.
@@ -407,6 +423,26 @@ func (t Mission) WithoutBadge(kind string) []Badge {
 
 // IsReview reports whether the mission reviews another one.
 func (t Mission) IsReview() bool { return t.ReviewOf != "" }
+
+// Planning reports whether the mission is still in its planning phase: started
+// in plan mode, with no plan accepted yet.
+func (t Mission) Planning() bool { return t.PlanMode && !t.PlanApproved }
+
+// SplitsPlan reports whether the mission plans on different settings from the
+// ones it implements on, which is what makes approving its plan a restart
+// rather than something the agent carries on from by itself.
+func (t Mission) SplitsPlan() bool {
+	return t.PlanMode && t.PlanModel != "" && (t.PlanModel != t.Model || t.PlanEffort != t.Effort)
+}
+
+// PhaseModel returns the model and effort for the phase the mission is in.
+func (t Mission) PhaseModel() (model, effort string) {
+	if t.Planning() && t.PlanModel != "" {
+		return t.PlanModel, t.PlanEffort
+	}
+
+	return t.Model, t.Effort
+}
 
 // Launched reports whether the mission has ever been started.
 func (t Mission) Launched() bool { return t.StartedAt != nil }

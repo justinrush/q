@@ -80,8 +80,13 @@ type CreateMissionRequest struct {
 	// Model and Effort name the agent model to run on and how hard it should
 	// think. Both are empty when the caller has no opinion, in which case q emits
 	// no flag and the agent uses its own default.
-	Model      string         `json:"model,omitempty"`
-	Effort     string         `json:"effort,omitempty"`
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	// PlanModel and PlanEffort are what a plan-mode mission plans on, when that
+	// differs from what it implements on. They are never inherited: like
+	// PlanMode, they describe one launch rather than a setup worth copying.
+	PlanModel  string         `json:"planModel,omitempty"`
+	PlanEffort string         `json:"planEffort,omitempty"`
 	ExtraRepos []mission.Repo `json:"extraRepos,omitempty"`
 	// BaseBranches names the branch each repo's worktree is based on, keyed by
 	// repo name. Repos it does not mention use their own default branch.
@@ -127,6 +132,8 @@ type UpdateMissionRequest struct {
 	PlanMode    *bool                `json:"planMode,omitempty"`
 	Model       *string              `json:"model,omitempty"`
 	Effort      *string              `json:"effort,omitempty"`
+	PlanModel   *string              `json:"planModel,omitempty"`
+	PlanEffort  *string              `json:"planEffort,omitempty"`
 	OperationID *mission.OperationID `json:"operationId,omitempty"`
 	ExtraRepos  *[]mission.Repo      `json:"extraRepos,omitempty"`
 	// BaseBranches replaces the whole map rather than merging into it, so that
@@ -150,6 +157,11 @@ type SetStatusRequest struct {
 	// Force permits finishing to discard uncommitted work. Other lane moves
 	// ignore it.
 	Force bool `json:"force,omitempty"`
+	// ApprovePlan accepts a planning mission's plan, which restarts its session
+	// on the settings chosen for implementing it. It is a field here rather than
+	// an action of its own so that it reaches a mission the paired q is running
+	// by the same route as any other move to active.
+	ApprovePlan bool `json:"approvePlan,omitempty"`
 }
 
 // MessageRequest sends text to a mission's live agent session, reviving it first if it

@@ -578,3 +578,291 @@ func TestUnknownEventIsIgnored(t *testing.T) {
 		t.Errorf("ProposedStatus = %q, want none", res.ProposedStatus)
 	}
 }
+
+// A plan-mode mission's phase decides which settings its agent runs on, and a
+// mission that names no planning model does not distinguish the two.
+func TestMissionPlanPhase(t *testing.T) {
+	cases := []struct {
+		name       string
+		ms         Mission
+		planning   bool
+		splits     bool
+		wantModel  string
+		wantEffort string
+	}{
+		{
+			name:       "an ordinary mission runs on its model",
+			ms:         Mission{Model: "opus", Effort: "low", PlanModel: "fable"},
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name:       "planning with no planning model uses the implementing pair",
+			ms:         Mission{PlanMode: true, Model: "opus", Effort: "low"},
+			planning:   true,
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name:       "planning takes the planning pair whole",
+			ms:         Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "fable"},
+			planning:   true,
+			splits:     true,
+			wantModel:  "fable",
+			wantEffort: "",
+		},
+		{
+			name:       "the same model at another effort is still a split",
+			ms:         Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "opus", PlanEffort: "high"},
+			planning:   true,
+			splits:     true,
+			wantModel:  "opus",
+			wantEffort: "high",
+		},
+		{
+			name:       "the same pair is no split",
+			ms:         Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "opus", PlanEffort: "low"},
+			planning:   true,
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name: "an approved plan implements",
+			ms: Mission{
+				PlanMode: true, PlanApproved: true,
+				Model: "opus", Effort: "low", PlanModel: "fable", PlanEffort: "high",
+			},
+			splits:     true,
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ms.Planning(); got != tc.planning {
+				t.Errorf("Planning() = %v, want %v", got, tc.planning)
+			}
+
+			if got := tc.ms.SplitsPlan(); got != tc.splits {
+				t.Errorf("SplitsPlan() = %v, want %v", got, tc.splits)
+			}
+
+			model, effort := tc.ms.PhaseModel()
+			if model != tc.wantModel || effort != tc.wantEffort {
+				t.Errorf("PhaseModel() = %q/%q, want %q/%q", model, effort, tc.wantModel, tc.wantEffort)
+			}
+		})
+	}
+}
+
+// codex raises no permission request around a plan: it ends its turn on one, and
+// takes approval as a prompt it writes itself. These are the payloads codex
+// 0.162.1 actually sends at each of those moments.
+func TestReducePlanThatEndsTheTurn(t *testing.T) {
+	planning := func(mut func(*Mission)) Mission {
+		ms := missionIn(StatusActive)
+		ms.Tool = ToolCodex
+		ms.PlanMode = true
+
+		if mut != nil {
+			mut(&ms)
+		}
+
+		return ms
+	}
+
+	pending := func(ms *Mission) {
+		ms.Status = StatusDebrief
+		ms.PlanPending = true
+	}
+
+	cases := []struct {
+		name         string
+		ms           Mission
+		payload      HookEvent
+		want         Status
+		wantPending  bool
+		wantApproved bool
+		wantSession  string
+	}{
+		{
+			name:        "a planning turn that ends on no message proposed a plan",
+			ms:          planning(nil),
+			payload:     ev(EventStop),
+			want:        StatusDebrief,
+			wantPending: true,
+		},
+		{
+			name: "a planning turn that ends on a question is waiting, not proposing",
+			ms:   planning(nil),
+			payload: HookEvent{
+				Event: EventStop, SessionID: "sess-1",
+				LastAssistantMessage: "Should the flag default to on?",
+			},
+			want: StatusAwaiting,
+		},
+		{
+			name:    "an ordinary turn that ends on no message is just finished",
+			ms:      planning(func(ms *Mission) { ms.PlanApproved = true }),
+			payload: ev(EventStop),
+			want:    StatusDebrief,
+			// Approval is carried through untouched.
+			wantApproved: true,
+		},
+		{
+			name:    "an agent that asks permission is not read this way",
+			ms:      planning(func(ms *Mission) { ms.Tool = ToolClaude }),
+			payload: ev(EventStop),
+			want:    StatusDebrief,
+		},
+		{
+			name: "accepting in the same thread approves",
+			ms:   planning(pending),
+			payload: HookEvent{
+				Event: EventUserPromptSubmit, SessionID: "sess-1", Prompt: "Implement the plan.",
+			},
+			want:         StatusActive,
+			wantApproved: true,
+		},
+		{
+			name: "accepting into a fresh thread approves",
+			ms:   planning(pending),
+			payload: HookEvent{
+				Event: EventUserPromptSubmit, SessionID: "sess-1",
+				Prompt: "A previous agent produced the plan below to accomplish the user's task. Implement the plan in a fresh context.\n\n- step",
+			},
+			want:         StatusActive,
+			wantApproved: true,
+		},
+		{
+			name: "anything else typed is the human still shaping the plan",
+			ms:   planning(pending),
+			payload: HookEvent{
+				Event: EventUserPromptSubmit, SessionID: "sess-1", Prompt: "Also cover the migration.",
+			},
+			want: StatusActive,
+		},
+		{
+			name: "the same words do not approve for an agent that asks permission",
+			ms: planning(func(ms *Mission) {
+				ms.Tool = ToolClaude
+				pending(ms)
+			}),
+			payload: HookEvent{
+				Event: EventUserPromptSubmit, SessionID: "sess-1", Prompt: "Implement the plan.",
+			},
+			want: StatusActive,
+		},
+		{
+			name:        "a session that cleared the one before it is adopted",
+			ms:          planning(pending),
+			payload:     HookEvent{Event: EventSessionStart, SessionID: "sess-2", Source: SourceClear},
+			want:        "",
+			wantPending: true,
+			wantSession: "sess-2",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Reduce(tc.ms, tc.payload, testNow)
+
+			if res.ProposedStatus != tc.want {
+				t.Errorf("ProposedStatus = %q, want %q", res.ProposedStatus, tc.want)
+			}
+
+			if res.Mission.PlanPending != tc.wantPending {
+				t.Errorf("PlanPending = %v, want %v", res.Mission.PlanPending, tc.wantPending)
+			}
+
+			if res.Mission.PlanApproved != tc.wantApproved {
+				t.Errorf("PlanApproved = %v, want %v", res.Mission.PlanApproved, tc.wantApproved)
+			}
+
+			if tc.wantSession != "" && res.Mission.AgentSessionID != tc.wantSession {
+				t.Errorf("AgentSessionID = %q, want %q", res.Mission.AgentSessionID, tc.wantSession)
+			}
+		})
+	}
+}
+
+// An event from a session q did not record is still discarded, unless it is that
+// session announcing it replaced the recorded one.
+func TestReduceSessionAdoption(t *testing.T) {
+	cases := []struct {
+		name        string
+		payload     HookEvent
+		wantSession string
+		wantChanged bool
+	}{
+		{
+			name:        "a stranger's stop is ignored",
+			payload:     HookEvent{Event: EventStop, SessionID: "sess-2"},
+			wantSession: "sess-1",
+		},
+		{
+			name:        "a stranger's startup is ignored",
+			payload:     HookEvent{Event: EventSessionStart, SessionID: "sess-2", Source: SourceStartup},
+			wantSession: "sess-1",
+		},
+		{
+			name:        "a clear is adopted",
+			payload:     HookEvent{Event: EventSessionStart, SessionID: "sess-2", Source: SourceClear},
+			wantSession: "sess-2",
+			wantChanged: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			res := Reduce(missionIn(StatusActive), tc.payload, testNow)
+
+			if res.Mission.AgentSessionID != tc.wantSession {
+				t.Errorf("AgentSessionID = %q, want %q", res.Mission.AgentSessionID, tc.wantSession)
+			}
+
+			if res.Changed != tc.wantChanged {
+				t.Errorf("Changed = %v, want %v", res.Changed, tc.wantChanged)
+			}
+		})
+	}
+}
+
+// Approval is recorded on the mission for an agent that asks permission too, so
+// a session revived afterwards is not put back into plan mode.
+func TestReducePlanApprovalIsRecorded(t *testing.T) {
+	cases := []struct {
+		name         string
+		payload      HookEvent
+		wantApproved bool
+	}{
+		{
+			name:         "the plan-exit tool completing approves",
+			payload:      HookEvent{Event: EventPostToolUse, SessionID: "sess-1", ToolName: ExitPlanModeTool},
+			wantApproved: true,
+		},
+		{
+			name:    "any other tool completing does not",
+			payload: HookEvent{Event: EventPostToolUse, SessionID: "sess-1", ToolName: "Bash"},
+		},
+		{
+			name:    "a rejected plan does not",
+			payload: HookEvent{Event: EventPermissionDenied, SessionID: "sess-1", ToolName: ExitPlanModeTool},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := missionIn(StatusDebrief)
+			ms.PlanMode = true
+			ms.PlanPending = true
+
+			res := Reduce(ms, tc.payload, testNow)
+
+			if res.Mission.PlanApproved != tc.wantApproved {
+				t.Errorf("PlanApproved = %v, want %v", res.Mission.PlanApproved, tc.wantApproved)
+			}
+		})
+	}
+}

@@ -554,56 +554,72 @@ func TestCreateMissionValidation(t *testing.T) {
 	}
 }
 
-// codex 0.147.0 has no --permission-mode flag, so accepting the request would
-// silently produce a mission that never stops for approval.
-func TestCreateMissionRejectsPlanModeForCodex(t *testing.T) {
-	svc := newTestService(t)
-	operation := seedOperation(t, svc)
-
-	_, err := svc.CreateMission(api.CreateMissionRequest{
-		OperationID: operation.ID,
-		Name:        "mission",
-		Prompt:      "x",
-		Tool:        mission.ToolCodex,
-		PlanMode:    true,
-	})
-	if !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want ErrInvalid", err)
+// Accepting plan mode for an agent q cannot follow through it would silently
+// produce a mission that never stops for approval.
+func TestCreateMissionPlanModeByTool(t *testing.T) {
+	cases := []struct {
+		name    string
+		tool    mission.Tool
+		wantErr error
+	}{
+		{name: "claude", tool: mission.ToolClaude},
+		{name: "codex", tool: mission.ToolCodex},
+		{name: "opencode", tool: mission.ToolOpencode},
+		{name: "agy is refused", tool: mission.ToolAgy, wantErr: ErrInvalid},
 	}
 
-	// The same request is fine for claude.
-	if _, err := svc.CreateMission(api.CreateMissionRequest{
-		OperationID: operation.ID,
-		Name:        "mission",
-		Prompt:      "x",
-		Tool:        mission.ToolClaude,
-		PlanMode:    true,
-	}); err != nil {
-		t.Errorf("claude plan mode should be accepted: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t)
+			operation := seedOperation(t, svc)
+
+			_, err := svc.CreateMission(api.CreateMissionRequest{
+				OperationID: operation.ID,
+				Name:        "mission",
+				Prompt:      "x",
+				Tool:        tc.tool,
+				PlanMode:    true,
+			})
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
-// Switching a draft mission to codex must not silently keep a plan flag codex
-// cannot honour.
-func TestUpdateMissionRejectsPlanModeWhenSwitchingToCodex(t *testing.T) {
-	svc := newTestService(t)
-	operation := seedOperation(t, svc)
-
-	ms, err := svc.CreateMission(api.CreateMissionRequest{
-		OperationID: operation.ID,
-		Name:        "mission",
-		Prompt:      "x",
-		Tool:        mission.ToolClaude,
-		PlanMode:    true,
-	})
-	if err != nil {
-		t.Fatalf("CreateMission: %v", err)
+// Switching a draft mission to an agent without plan mode must not silently
+// keep a plan flag that agent cannot honour.
+func TestUpdateMissionPlanModeWhenSwitchingTool(t *testing.T) {
+	cases := []struct {
+		name    string
+		to      mission.Tool
+		wantErr error
+	}{
+		{name: "codex keeps it", to: mission.ToolCodex},
+		{name: "agy refuses it", to: mission.ToolAgy, wantErr: ErrInvalid},
 	}
 
-	codex := mission.ToolCodex
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newTestService(t)
+			operation := seedOperation(t, svc)
 
-	if _, err := svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Tool: &codex}); !errors.Is(err, ErrInvalid) {
-		t.Errorf("err = %v, want ErrInvalid", err)
+			ms, err := svc.CreateMission(api.CreateMissionRequest{
+				OperationID: operation.ID,
+				Name:        "mission",
+				Prompt:      "x",
+				Tool:        mission.ToolClaude,
+				PlanMode:    true,
+			})
+			if err != nil {
+				t.Fatalf("CreateMission: %v", err)
+			}
+
+			_, err = svc.UpdateMission(ms.ID, api.UpdateMissionRequest{Tool: &tc.to})
+			if !errors.Is(err, tc.wantErr) {
+				t.Errorf("err = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

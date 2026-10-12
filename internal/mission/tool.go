@@ -26,14 +26,29 @@ type capabilities struct {
 	// glyph is the one-rune marker used on board cards.
 	glyph string
 	// planMode reports whether the agent can be launched into a plan-then-approve
-	// flow.
+	// flow that q can follow: one where it can tell that a plan is ready, and
+	// that it was accepted.
 	//
-	// Only claude can: it takes --permission-mode plan and raises an ExitPlanMode
-	// permission request that q routes to the debrief lane. codex 0.147.0 exposes
-	// no equivalent — it has no --permission-mode flag, and permission_mode does
-	// not appear in its binary at all — so the board disables the plan toggle for
-	// codex missions rather than accepting a flag it would silently ignore.
+	// agy is absent although its CLI has a plan mode, because q has no verified
+	// event for either moment.
 	planMode bool
+	// planEndsTurn reports that the agent presents a plan by ending its turn,
+	// and takes approval as an ordinary prompt, rather than raising a permission
+	// request for the human to answer.
+	//
+	// codex works this way. Its plan mode is entered with a slash command typed
+	// into its UI, a finished plan is a turn that ends without a closing
+	// message, and accepting it submits a prompt codex writes itself.
+	planEndsTurn bool
+	// planSwitchesItself reports that the agent moves to its implementing model
+	// by itself when its plan is accepted, so q neither needs to restart it nor
+	// can usefully do so.
+	//
+	// opencode works this way: its plan and build agents each carry a model of
+	// their own, and accepting a plan hands the session from one to the other.
+	// A restart cannot do the same, because a resumed opencode session takes
+	// its model from its last message whatever it is told on the command line.
+	planSwitchesItself bool
 	// presetSessionID reports whether q can choose the agent's session identifier
 	// before launching it.
 	//
@@ -49,9 +64,9 @@ type capabilities struct {
 // branches on which tool a mission uses.
 var known = map[Tool]capabilities{
 	ToolClaude:   {glyph: "◆", planMode: true, presetSessionID: true},
-	ToolCodex:    {glyph: "◇"},
+	ToolCodex:    {glyph: "◇", planMode: true, planEndsTurn: true},
 	ToolAgy:      {glyph: "△"},
-	ToolOpencode: {glyph: "⬡", planMode: true},
+	ToolOpencode: {glyph: "⬡", planMode: true, planSwitchesItself: true},
 }
 
 // Tools lists every supported agent, in the order the board cycles them.
@@ -69,6 +84,14 @@ func (t Tool) Glyph() string { return known[t].glyph }
 // SupportsPlanMode reports whether the agent can be launched into a
 // plan-then-approve flow.
 func (t Tool) SupportsPlanMode() bool { return known[t].planMode }
+
+// PlanEndsTurn reports whether the agent presents a plan by ending its turn
+// rather than by asking permission to leave plan mode.
+func (t Tool) PlanEndsTurn() bool { return known[t].planEndsTurn }
+
+// PlanSwitchesItself reports whether the agent moves to its implementing model
+// by itself when its plan is accepted.
+func (t Tool) PlanSwitchesItself() bool { return known[t].planSwitchesItself }
 
 // SupportsPresetSessionID reports whether q can choose the agent's session
 // identifier before launching it.

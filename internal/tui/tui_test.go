@@ -863,27 +863,47 @@ func TestOperationFormCompletesTheLineUnderTheCursor(t *testing.T) {
 
 // The form must not offer plan mode for an agent that has none, and must not carry a
 // stale flag across a change of agent.
-func TestMissionFormDropsPlanModeForCodex(t *testing.T) {
-	operations := []mission.Operation{testOperation("op_1", "T", 0)}
-
-	form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true}, operations, "op_1", Options{}, nil, time.Time{})
-	form.name.SetValue("mission")
-	form.prompt.SetValue("do it")
-
-	form.tool = mission.ToolCodex
-
-	_, cmd := form.submit(false)
-	if cmd == nil {
-		t.Fatal("expected the form to submit")
+func TestMissionFormPlanModeByTool(t *testing.T) {
+	cases := []struct {
+		name     string
+		tool     mission.Tool
+		wantPlan bool
+	}{
+		{name: "codex keeps plan mode", tool: mission.ToolCodex, wantPlan: true},
+		{name: "opencode keeps plan mode", tool: mission.ToolOpencode, wantPlan: true},
+		{name: "agy drops plan mode", tool: mission.ToolAgy},
 	}
 
-	msg, ok := cmd().(submitMissionMsg)
-	if !ok {
-		t.Fatalf("got %T, want submitMissionMsg", cmd())
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			operations := []mission.Operation{testOperation("op_1", "T", 0)}
 
-	if msg.PlanMode {
-		t.Error("codex missions must not be submitted with plan mode set")
+			form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: true},
+				operations, "op_1", Options{}, nil, time.Time{})
+			form.name.SetValue("mission")
+			form.prompt.SetValue("do it")
+			form.planModel = "planner"
+
+			form.tool = tc.tool
+
+			_, cmd := form.submit(false)
+			if cmd == nil {
+				t.Fatal("expected the form to submit")
+			}
+
+			msg, ok := cmd().(submitMissionMsg)
+			if !ok {
+				t.Fatalf("got %T, want submitMissionMsg", cmd())
+			}
+
+			if msg.PlanMode != tc.wantPlan {
+				t.Errorf("PlanMode = %v, want %v", msg.PlanMode, tc.wantPlan)
+			}
+
+			if got := msg.PlanModel != ""; got != tc.wantPlan {
+				t.Errorf("PlanModel = %q, sent only for a mission that plans", msg.PlanModel)
+			}
+		})
 	}
 }
 
@@ -899,11 +919,8 @@ func TestMissionFormPlanModeUnavailabilityReason(t *testing.T) {
 	if form.tool != mission.ToolCodex {
 		t.Fatalf("tool = %s, want codex", form.tool)
 	}
-	if form.planMode {
-		t.Error("cycling to codex must drop plan mode")
-	}
-	if !strings.Contains(form.planValue(), "codex has no plan mode") {
-		t.Errorf("planValue() = %q, want mention of codex", form.planValue())
+	if !form.planMode || !strings.Contains(form.planValue(), "plan first") {
+		t.Errorf("codex plan mode should be available: %s", form.planValue())
 	}
 
 	form.cycleTool(keyRight)
@@ -915,6 +932,155 @@ func TestMissionFormPlanModeUnavailabilityReason(t *testing.T) {
 	}
 	if !strings.Contains(form.planValue(), "agy plan mode is not supported in q") {
 		t.Errorf("planValue() = %q, want mention of agy", form.planValue())
+	}
+}
+
+// The planning model and effort are chosen from the same catalog as the model
+// itself, are offered only while plan mode is on, and do not survive a change of
+// agent, whose models mean nothing to the next one.
+func TestMissionFormPlanModel(t *testing.T) {
+	models := map[mission.Tool]mission.ModelSet{
+		mission.ToolClaude: {Default: "opus", Options: []mission.ModelOption{
+			{Value: "opus", Efforts: []string{"low", "high"}},
+			{Value: "fable", Efforts: []string{"high"}},
+			{Value: "haiku"},
+		}},
+	}
+	operations := []mission.Operation{testOperation("op_1", "T", 0)}
+
+	newForm := func(plan bool) *missionForm {
+		return newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: plan},
+			operations, "op_1", Options{Models: models}, nil, time.Time{})
+	}
+
+	cases := []struct {
+		name       string
+		plan       bool
+		act        func(*missionForm)
+		wantModel  string
+		wantEffort string
+		wantHidden bool
+	}{
+		{
+			name:       "hidden without plan mode",
+			act:        func(*missionForm) {},
+			wantHidden: true,
+		},
+		{
+			name: "starts on the implementing model",
+			plan: true,
+			act:  func(*missionForm) {},
+		},
+		{
+			name:      "cycles through the catalog",
+			plan:      true,
+			act:       func(f *missionForm) { f.cyclePlanModel(keyRight); f.cyclePlanModel(keyRight) },
+			wantModel: "fable",
+		},
+		{
+			name:      "wraps back to none",
+			plan:      true,
+			act:       func(f *missionForm) { f.cyclePlanModel(keyRight); f.cyclePlanModel(keyLeft) },
+			wantModel: "",
+		},
+		{
+			name: "takes an effort the planning model accepts",
+			plan: true,
+			act: func(f *missionForm) {
+				f.cyclePlanModel(keyRight)
+				f.cyclePlanEffort(keyRight)
+			},
+			wantModel:  "opus",
+			wantEffort: "low",
+		},
+		{
+			name: "drops an effort the next planning model does not accept",
+			plan: true,
+			act: func(f *missionForm) {
+				f.cyclePlanModel(keyRight)
+				f.cyclePlanEffort(keyRight)
+				f.cyclePlanModel(keyRight)
+			},
+			wantModel: "fable",
+		},
+		{
+			name: "no effort without a planning model",
+			plan: true,
+			act:  func(f *missionForm) { f.cyclePlanEffort(keyRight) },
+		},
+		{
+			name: "cleared by a change of agent",
+			plan: true,
+			act: func(f *missionForm) {
+				f.cyclePlanModel(keyRight)
+				f.cycleTool(keyRight)
+			},
+		},
+		{
+			name: "set from the picker",
+			plan: true,
+			act: func(f *missionForm) {
+				picker, ok := f.showPlanModelPicker().(*modelPicker)
+				if !ok {
+					panic("showPlanModelPicker did not return a model picker")
+				}
+
+				picker.pick("haiku")
+			},
+			wantModel: "haiku",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newForm(tc.plan)
+			implementing := form.model
+
+			tc.act(form)
+
+			if form.planModel != tc.wantModel || form.planEffort != tc.wantEffort {
+				t.Errorf("plan = %q/%q, want %q/%q", form.planModel, form.planEffort, tc.wantModel, tc.wantEffort)
+			}
+
+			if form.tool == mission.ToolClaude && form.model != implementing {
+				t.Errorf("model = %q, the implementing model must not move with the planning one", form.model)
+			}
+
+			if got := form.hidden(fieldMissionPlanModel); got != tc.wantHidden {
+				t.Errorf("hidden(plan model) = %v, want %v", got, tc.wantHidden)
+			}
+		})
+	}
+}
+
+// Focus must step over the planning fields when they are not drawn, in both
+// directions.
+func TestMissionFormSkipsHiddenPlanFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		plan  bool
+		delta int
+		from  int
+		want  int
+	}{
+		{name: "forward without plan mode", from: fieldMissionPlan, delta: 1, want: fieldMissionRepos},
+		{name: "back without plan mode", from: fieldMissionRepos, delta: -1, want: fieldMissionPlan},
+		{name: "forward with plan mode", plan: true, from: fieldMissionPlan, delta: 1, want: fieldMissionPlanModel},
+		{name: "back with plan mode", plan: true, from: fieldMissionRepos, delta: -1, want: fieldMissionPlanEffort},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			form := newMissionForm(mission.Mission{Tool: mission.ToolClaude, PlanMode: tc.plan},
+				[]mission.Operation{testOperation("op_1", "T", 0)}, "op_1", Options{}, nil, time.Time{})
+			form.focusField(tc.from)
+
+			form.moveField(tc.delta)
+
+			if form.field != tc.want {
+				t.Errorf("field = %d, want %d", form.field, tc.want)
+			}
+		})
 	}
 }
 
@@ -2716,5 +2882,102 @@ func TestHeaderShowsWhetherThePairingIsUp(t *testing.T) {
 
 	if got := app.linkLabel(); !strings.Contains(got, "offline") || !strings.Contains(got, "1 pending") {
 		t.Errorf("a dropped link shows %q, want it to say so and count what is waiting", got)
+	}
+}
+
+// A card says what a mission plans on only when that differs from what it
+// implements on, since a card is narrow and the common case needs no more than
+// the word.
+func TestPlanPart(t *testing.T) {
+	cases := []struct {
+		name string
+		ms   mission.Mission
+		want string
+	}{
+		{name: "no planning model", ms: mission.Mission{PlanMode: true, Model: "opus"}, want: "plan"},
+		{
+			name: "the same pair",
+			ms:   mission.Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "opus", PlanEffort: "low"},
+			want: "plan",
+		},
+		{
+			name: "another model",
+			ms:   mission.Mission{PlanMode: true, Model: "opus", PlanModel: "fable"},
+			want: "plan fable",
+		},
+		{
+			name: "another model and effort",
+			ms:   mission.Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "fable", PlanEffort: "high"},
+			want: "plan fable/high",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := planPart(tc.ms); got != tc.want {
+				t.Errorf("planPart() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// On a running mission the plan key approves the plan, since by then the flag
+// itself is fixed. Approval restarts the session, so it is confirmed first.
+func TestPlanKeyOnALaunchedMission(t *testing.T) {
+	started := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name        string
+		mutate      func(*mission.Mission)
+		wantConfirm bool
+		wantInBody  string
+	}{
+		{
+			name:        "planning with a plan on the table",
+			mutate:      func(ms *mission.Mission) { ms.PlanPending = true },
+			wantConfirm: true,
+			wantInBody:  "restarts out of plan mode on opus/low",
+		},
+		{
+			name:        "planning with no plan seen yet says so",
+			mutate:      func(*mission.Mission) {},
+			wantConfirm: true,
+			wantInBody:  "has not seen a finished plan",
+		},
+		{
+			name:   "an agent that has to be approved in its own dialog",
+			mutate: func(ms *mission.Mission) { ms.Tool = mission.ToolOpencode; ms.PlanPending = true },
+		},
+		{
+			name:   "already implementing",
+			mutate: func(ms *mission.Mission) { ms.PlanApproved = true },
+		},
+		{
+			name:   "never planned",
+			mutate: func(ms *mission.Mission) { ms.PlanMode = false },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			app := testApp(t)
+
+			ms := testMission("ms_1", "mission", "op_1", mission.StatusDebrief)
+			ms.StartedAt = &started
+			ms.PlanMode = true
+			ms.Model, ms.Effort = "opus", "low"
+			tc.mutate(&ms)
+
+			app.handleTogglePlan(ms)
+
+			confirm, ok := app.modal.(*confirmModal)
+			if ok != tc.wantConfirm {
+				t.Fatalf("confirm shown = %v, want %v", ok, tc.wantConfirm)
+			}
+
+			if ok && !strings.Contains(confirm.body, tc.wantInBody) {
+				t.Errorf("body = %q, want it to contain %q", confirm.body, tc.wantInBody)
+			}
+		})
 	}
 }

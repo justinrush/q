@@ -29,6 +29,10 @@ type modelPicker struct {
 	current string
 	cursor  int
 	parent  *missionForm
+	// title and onPick let the same picker choose something other than the
+	// mission's own model. Both are optional.
+	title  string
+	onPick func(string)
 }
 
 // maxModelChoices bounds how many rows the picker draws.
@@ -118,6 +122,12 @@ func (p *modelPicker) accept() {
 
 // pick sets the form's chosen model, dropping an effort the model does not take.
 func (p *modelPicker) pick(value string) {
+	if p.onPick != nil {
+		p.onPick(value)
+
+		return
+	}
+
 	p.parent.model = value
 	p.parent.clampEffort()
 }
@@ -167,12 +177,21 @@ func matchModelOptions(options []mission.ModelOption, fragment string) []mission
 	return out
 }
 
+// heading names what is being chosen.
+func (p *modelPicker) heading() string {
+	if p.title != "" {
+		return p.title
+	}
+
+	return "Model for " + p.tool.String()
+}
+
 // View implements modal.
 func (p *modelPicker) View(width, height int) string {
 	inner := min(max(width-20, 30), 90)
 
 	rows := []string{
-		styles.ModalTitle.Render("Model for " + p.tool.String()),
+		styles.ModalTitle.Render(p.heading()),
 		styles.FieldLabel.Render("type to filter; any model containing it matches"),
 		"",
 		p.query.View(inner),

@@ -161,8 +161,8 @@ wins, and a `--repo` or `--base` you name replaces the parent's list outright
 rather than adding to it — so naming one repo narrows the mission's worktrees
 instead of quietly widening them.
 
-`--plan` is the exception: it is never inherited. Whether a mission stops for
-approval is the launcher's decision, not the parent brief's.
+`--plan` is the exception, with `--plan-model` and `--plan-effort`: none is inherited.
+Whether a mission stops for approval is the launcher's decision, not the parent brief's.
 
 Created missions land in briefing either way. Nothing runs until a mission is
 moved to active, or queued.
@@ -818,19 +818,62 @@ kept.
 
 ### Plan mode
 
-A claude mission can start in plan mode. When the agent finishes planning it asks to leave
-plan mode, q routes that to **debrief** rather than to *awaiting orders*, and opening the
-debrief drops you into the live approval dialog. Approving it there switches claude into
-accept-edits and the card returns to *active*. Nothing is killed or restarted.
+A claude, codex, or opencode mission can start in plan mode (`--plan`, or the *Plan mode*
+field on the form). When the plan is ready q routes the card to **debrief** rather than to
+*awaiting orders*, and opening the debrief drops you into the agent's own approval dialog.
 
 Asking for revisions instead also returns the card to *active*. claude reports nothing
 when a plan is turned down in the dialog, so q takes the agent's next tool call as the
 sign that it is planning again.
 
-OpenCode missions also support `--plan`; q launches the plan agent and handles its
-`plan_exit` approval event.
+How each agent gets there differs, and q hides the difference:
 
-codex has no plan mode, so the toggle is disabled for codex missions and says why. The toggle is also disabled for agy: its CLI has a plan mode, but q does not yet have a verified plan-approval event for it.
+- **claude** is launched with `--permission-mode plan` and asks permission to leave it.
+- **opencode** is launched on its plan agent and raises a `plan_exit` approval.
+- **codex** has no flag for plan mode, only its `/plan` command, so q starts it with no
+  prompt and types `/plan` once its composer is up. The command names the brief
+  (`.q/prompt.md`) rather than containing it, because codex folds a long paste into a
+  placeholder and then no longer reads the line as a command. A codex plan is a turn that
+  ends without a closing message, and approval is the prompt codex submits when you answer
+  *Implement this plan?*
+
+The toggle is disabled for agy: its CLI has a plan mode, but q has no verified event for a
+plan being ready or accepted.
+
+#### Planning on one model, implementing on another
+
+A plan-mode mission can name a second model and effort to plan with:
+
+```sh
+q mission add redesign --operation "$op" --prompt "…" \
+  --plan --plan-model fable --plan-effort high --model opus --effort low
+```
+
+`--model` and `--effort` are what the mission *implements* on; `--plan-model` and
+`--plan-effort` are what it plans on. On the form the two extra fields appear under *Plan
+mode* once it is on. Leave the plan model unset and the mission plans on its one model, as
+before. The pair is taken together: an effort belongs to a model, so a plan effort needs a
+plan model, and naming the same model twice is how you vary only the effort.
+
+No agent can be asked to change its own model, so q arranges it, in whichever way the
+agent allows:
+
+- **claude and codex** are restarted. When the plan is approved q resumes the same
+  conversation out of plan mode on the implementing model and effort. The plan and
+  everything said while making it are still there. You can approve from q (`p` on the
+  card, or `q mission approve <id>`) or in the agent's own dialog; in the second case q
+  sees the approval and restarts the session a moment later. Approving from q does not
+  wait for q to have noticed the plan: the events that announce one can be missed, and
+  you may be looking at a finished plan in the pane before the card moves.
+- **opencode** changes by itself. Its plan and build agents each take a model of their
+  own, so q writes both into the mission's `.opencode/opencode.json` at launch and
+  accepting the plan hands the session from one to the other, with nothing restarted. It
+  has to be approved in opencode's own dialog: a resumed opencode session takes its model
+  from its last message whatever it is told, so a restart would leave it on the planning
+  model, and `p` says so rather than doing it.
+
+A mission that plans and implements on the same settings is never restarted, exactly as
+before.
 
 ## Operating it
 
@@ -935,7 +978,7 @@ and relaunch if hooks are silent. Global agy configuration stays in place.
 The [agy hook contract](https://antigravity.google/docs/hooks/) supports activity,
 turn completion, errors, and whether background work remains. Permission waits
 are not reported, so attach to the mission to answer permission prompts even if
-its card still shows active. q's plan-approval toggle is unavailable for agy.
+its card still shows active. q's plan mode is unavailable for agy.
 
 Agy participates in `q models`, automatic catalog refresh, and the board's model
 and effort pickers. q reads `agy models` and passes mission selections through

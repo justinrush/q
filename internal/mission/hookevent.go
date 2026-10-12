@@ -196,6 +196,26 @@ func (p HookEvent) IsPlanApproval() bool {
 	return p.ToolName == ExitPlanModeTool || p.ToolName == "plan_exit"
 }
 
+// The prompts codex submits on the human's behalf when its "Implement this
+// plan?" question is answered yes: the first to carry on in the same thread,
+// the second to start a fresh one that is handed the plan.
+const (
+	codexImplementPrompt      = "Implement the plan."
+	codexImplementFreshPrefix = "A previous agent produced the plan below"
+)
+
+// IsPlanGoAhead reports whether a submitted prompt is the one an agent writes
+// itself when its plan is accepted.
+//
+// It is how approval is recognized for an agent that asks in its own UI and
+// raises no permission event. Anything else typed while a plan is on the table
+// is the human still shaping it.
+func (p HookEvent) IsPlanGoAhead() bool {
+	prompt := strings.TrimSpace(p.Prompt)
+
+	return prompt == codexImplementPrompt || strings.HasPrefix(prompt, codexImplementFreshPrefix)
+}
+
 // CanonicalEvent converts a command-line event slug such as "session-start" to its
 // canonical name.
 func CanonicalHookEvent(slug string) (string, error) {

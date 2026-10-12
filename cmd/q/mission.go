@@ -28,6 +28,7 @@ func buildMissionSubcommand() *cobra.Command {
 		buildMissionListSubcommand(),
 		buildMissionAddSubcommand(),
 		buildMissionMoveSubcommand(),
+		buildMissionApproveSubcommand(),
 		buildMissionQueueSubcommand(),
 		buildMissionUnqueueSubcommand(),
 		buildMissionTakeSubcommand(),
@@ -92,6 +93,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 		model     string
 		effort    string
 		planMode  bool
+		planModel string
+		planEff   string
 		repos     []string
 		bases     []string
 		fromFlag  string
@@ -128,6 +131,14 @@ func buildMissionAddSubcommand() *cobra.Command {
 				return err
 			}
 
+			// Said here rather than left to pass: the daemon keeps planning
+			// settings on a mission that never plans, and a flag that quietly
+			// did nothing would be discovered only once the work was done on
+			// the wrong model.
+			if !planMode && (planModel != "" || planEff != "") {
+				return errors.New("--plan-model and --plan-effort need --plan")
+			}
+
 			// Q_MISSION_ID is set only by the launch script q writes, so its
 			// presence means an agent is running inside a mission and is exactly
 			// the mission whose setup a follow-up should match.
@@ -152,6 +163,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 				Model:        model,
 				Effort:       effort,
 				PlanMode:     planMode,
+				PlanModel:    planModel,
+				PlanEffort:   planEff,
 				ExtraRepos:   parsedRepos,
 				BaseBranches: parsedBases,
 				Queued:       where.queued,
@@ -181,7 +194,11 @@ func buildMissionAddSubcommand() *cobra.Command {
 	cmd.Flags().StringVar(&effort, "effort", "",
 		"Reasoning effort, for a model that takes one (see q models)")
 	cmd.Flags().BoolVar(&planMode, "plan", false,
-		"Start in plan mode and stop for approval (claude and opencode); never inherited")
+		"Start in plan mode and stop for approval (claude, codex, and opencode); never inherited")
+	cmd.Flags().StringVar(&planModel, "plan-model", "",
+		"Model to plan on, leaving --model for implementing the approved plan; needs --plan")
+	cmd.Flags().StringVar(&planEff, "plan-effort", "",
+		"Reasoning effort to plan with; needs --plan-model")
 	cmd.Flags().StringArrayVar(&repos, "repo", nil,
 		"Add a repo to this mission; repeatable, accepts name=path. Replaces the inherited list")
 	cmd.Flags().StringArrayVar(&bases, "base", nil,
@@ -394,6 +411,45 @@ func buildMissionMoveSubcommand() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "Discard uncommitted changes when moving to closed")
 
 	return cmd
+}
+
+func buildMissionApproveSubcommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "approve <mission-id>",
+		Short: "Approve a planning mission's plan and start implementing it",
+		Long: "Approve the plan of a mission started with --plan. Its session is restarted out of " +
+			"plan mode, on the model and effort chosen for implementing, with the planning " +
+			"conversation intact.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := connectDaemon(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			ms, err := c.SetStatus(cmd.Context(), mission.MissionID(args[0]), api.SetStatusRequest{
+				To:          mission.StatusActive,
+				ApprovePlan: true,
+			})
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is implementing its plan on %s\n",
+				ms.Name, implementLabel(ms))
+
+			return err
+		},
+	}
+}
+
+// implementLabel names what an approved mission implements on.
+func implementLabel(ms mission.Mission) string {
+	if ms.Model == "" {
+		return "its agent's default model"
+	}
+
+	return modelLabel(ms)
 }
 
 func buildMissionQueueSubcommand() *cobra.Command {
@@ -669,7 +725,7 @@ func missionDetail(ms mission.Mission) string {
 	}
 
 	if ms.PlanMode {
-		parts = append(parts, "plan")
+		parts = append(parts, planLabel(ms))
 	}
 
 	if ms.Queued {
@@ -780,6 +836,20 @@ func defaultModelFor(
 	}
 
 	return set.Default, effort
+}
+
+// planLabel marks a plan-mode mission, naming what it plans on when that is
+// not what it implements on, e.g. "plan fable/high".
+func planLabel(ms mission.Mission) string {
+	if !ms.SplitsPlan() {
+		return "plan"
+	}
+
+	if ms.PlanEffort == "" {
+		return "plan " + ms.PlanModel
+	}
+
+	return "plan " + ms.PlanModel + "/" + ms.PlanEffort
 }
 
 // modelLabel renders a mission's model, with its effort appended when it has

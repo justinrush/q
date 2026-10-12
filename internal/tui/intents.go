@@ -288,7 +288,24 @@ func (a *App) confirmDeleteOperation(operation mission.Operation) tea.Cmd {
 }
 
 // handleTogglePlan flips plan mode, explaining when it cannot be flipped.
+//
+// On a mission that is running and still planning, the same key approves the
+// plan: by then the flag is fixed, and what is left to decide about plan mode
+// is when it ends.
 func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
+	if ms.Launched() && ms.Planning() && !ms.Status.Terminal() {
+		if ms.Tool.PlanSwitchesItself() {
+			return emit(toastMsg{
+				text: "approve the plan in " + ms.Tool.String() + " itself: press enter to open it",
+				err:  true,
+			})
+		}
+
+		a.modal = newConfirm("Approve plan", approvePlanBody(ms), "approve", false, a.approvePlan(ms))
+
+		return nil
+	}
+
 	if ms.Launched() {
 		return emit(toastMsg{
 			text: "plan mode is fixed once a mission has launched",
@@ -304,6 +321,28 @@ func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
 	}
 
 	return a.setPlanMode(ms, !ms.PlanMode)
+}
+
+// approvePlanBody says what approving a plan will do to the session.
+func approvePlanBody(ms mission.Mission) string {
+	lines := []string{"Approve " + ms.Name + "'s plan and start implementing it?"}
+
+	if !ms.PlanPending {
+		lines = append(lines, "", "q has not seen a finished plan from this agent yet.")
+	}
+
+	target := "the agent's default model"
+	if ms.Model != "" {
+		target = ms.Model
+		if ms.Effort != "" {
+			target += "/" + ms.Effort
+		}
+	}
+
+	lines = append(lines, "",
+		"The session restarts out of plan mode on "+target+", with the planning conversation intact.")
+
+	return strings.Join(lines, "\n")
 }
 
 // handleToggleQueued flips whether q starts the mission on its own, explaining
