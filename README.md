@@ -823,6 +823,10 @@ plan mode, q routes that to **debrief** rather than to *awaiting orders*, and op
 debrief drops you into the live approval dialog. Approving it there switches claude into
 accept-edits and the card returns to *active*. Nothing is killed or restarted.
 
+Asking for revisions instead also returns the card to *active*. claude reports nothing
+when a plan is turned down in the dialog, so q takes the agent's next tool call as the
+sign that it is planning again.
+
 OpenCode missions also support `--plan`; q launches the plan agent and handles its
 `plan_exit` approval event.
 
