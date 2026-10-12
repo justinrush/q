@@ -115,6 +115,10 @@ Launch a claude mission with `--plan`. The card should reach **debrief** when th
 ready, *not* awaiting orders. Press `enter`: you should land in the live approval dialog.
 Approve it there and the card should return to **active** with nothing restarted.
 
+Repeat, but answer the dialog with a revision instead of approving. The card should return
+to **active** as soon as the agent calls its next tool, and come back to **debrief** when
+the revised plan is ready.
+
 ### Review sessions
 
 With a mission that has changed something, press `enter`. Expect one tmux window with the
