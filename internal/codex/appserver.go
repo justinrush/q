@@ -1,8 +1,8 @@
 // Codex's app-server JSON-RPC protocol.
 //
 // The protocol deliberately lives behind a small standard-library-only client.
-// Q reaches a running app-server through `codex app-server proxy`, whose
-// stdin and stdout are newline-delimited JSON messages.
+// Standalone app-server uses JSON lines. The managed-server proxy forwards
+// WebSocket bytes, adapted to this client's JSON-line interface by transport.go.
 
 package codex
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/justinrush/q/internal/mission"
+	"io"
 	"sync"
 	"time"
 
@@ -50,7 +51,8 @@ func StartAppServer(ctx context.Context, codexBin, version string, run runner.OS
 	return startAppServer(ctx, codexBin, version, run, []string{"app-server"})
 }
 
-// startAppServer brings up a client over one of Codex's stdio transports.
+// startAppServer brings up a JSON-lines client for standalone app-server, or
+// upgrades the raw proxy pipes to the managed server's WebSocket transport.
 func startAppServer(
 	ctx context.Context,
 	codexBin, version string,
@@ -67,7 +69,28 @@ func startAppServer(
 	// Reap the process on every path, including a failed initialization.
 	go func() { _ = process.Wait() }()
 
-	client := NewClient(process.Stdout, process.Stdin)
+	initCtx, cancel := context.WithTimeout(ctx, initializeTimeout)
+	defer cancel()
+	// Closing the pipes also interrupts a server that never finishes the HTTP
+	// upgrade. The process itself must outlive this initialization deadline.
+	stopInitialization := context.AfterFunc(initCtx, func() { _ = process.Stop() })
+	defer stopInitialization()
+
+	var reader io.Reader = process.Stdout
+	var writer io.Writer = process.Stdin
+	if len(args) > 1 && args[1] == "proxy" {
+		transport, upgradeErr := newProxyTransport(process.Stdout, process.Stdin)
+		if upgradeErr != nil {
+			_ = process.Stop()
+			if initCtx.Err() != nil {
+				return nil, initCtx.Err()
+			}
+			return nil, fmt.Errorf("upgrading Codex proxy to WebSocket: %w", upgradeErr)
+		}
+		reader, writer = transport, transport.conn
+	}
+
+	client := NewClient(reader, writer)
 	notifications := make(chan Notification, 64)
 
 	go func() {
@@ -80,16 +103,20 @@ func startAppServer(
 		close(notifications)
 	}()
 
-	initCtx, cancel := context.WithTimeout(ctx, initializeTimeout)
-	defer cancel()
-
 	err = client.Initialize(initCtx, "q", "Q", version)
 	if err != nil {
 		_ = process.Stop()
+		if initCtx.Err() != nil {
+			err = initCtx.Err()
+		}
 
 		return nil, fmt.Errorf("initializing Codex app-server: %w", err)
 	}
 
+	if !stopInitialization() {
+		_ = process.Stop()
+		return nil, initCtx.Err()
+	}
 	return &Proxy{client: client, process: process}, nil
 }
 

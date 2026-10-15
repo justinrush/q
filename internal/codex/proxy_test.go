@@ -21,17 +21,30 @@ func TestFailedProxyInitializationReapsProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		_, err := startAppServer(ctx, bin, "test", runner.OS{}, nil)
+		finished <- err
+	}()
 
-	_, err := startAppServer(ctx, bin, "test", runner.OS{}, nil)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("startAppServer() error = %v, want deadline exceeded", err)
+	var data []byte
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, _ = os.ReadFile(bin + ".pid")
+		if len(data) > 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-
-	data, err := os.ReadFile(bin + ".pid")
-	if err != nil {
-		t.Fatalf("reading child PID: %v", err)
+	if len(data) == 0 {
+		t.Fatal("proxy did not report its PID")
+	}
+	cancel()
+	err := <-finished
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("startAppServer() error = %v, want cancellation", err)
 	}
 
 	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
@@ -39,7 +52,7 @@ func TestFailedProxyInitializationReapsProcess(t *testing.T) {
 		t.Fatalf("parsing child PID: %v", err)
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline = time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
 			return
