@@ -230,3 +230,28 @@ func TestReady(t *testing.T) {
 		})
 	}
 }
+
+// TestPrologueStartsDaemonWithoutProfile guards the managed path. codex rejects
+// --profile on app-server subcommands, so a prologue that passed it would always
+// fail and fall back to a session q cannot observe — one whose questions and
+// approvals never reach the board.
+func TestPrologueStartsDaemonWithoutProfile(t *testing.T) {
+	prologue := New("/bin/codex", Options{}).Prologue(mission.Invocation{MissionDir: "/m"})
+
+	start, _, ok := strings.Cut(prologue, "; then")
+	if !ok {
+		t.Fatalf("prologue = %q, want an if ...; then guard", prologue)
+	}
+
+	if !strings.Contains(start, "app-server daemon start") {
+		t.Errorf("guard = %q, want it to start the app-server daemon", start)
+	}
+
+	if strings.Contains(start, "--profile") {
+		t.Errorf("guard = %q, want no --profile on the daemon command", start)
+	}
+
+	if !strings.Contains(prologue, "--remote") || !strings.Contains(prologue, "--profile") {
+		t.Errorf("prologue = %q, want the remote terminal UI to keep its profile", prologue)
+	}
+}
