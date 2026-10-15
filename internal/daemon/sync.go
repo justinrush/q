@@ -72,6 +72,12 @@ func WithRemote(r Remote) Option {
 	return func(s *Service) { s.remote = r }
 }
 
+// WithWakeProbe gives the daemon a way to tell a full wake from a dark one.
+// See [Service.dozing].
+func WithWakeProbe(awake func(context.Context) bool) Option {
+	return func(s *Service) { s.awake = awake }
+}
+
 // WithSyncInterval overrides how often the primary starts an exchange.
 func WithSyncInterval(d time.Duration) Option {
 	return func(s *Service) {
@@ -259,10 +265,41 @@ func (s *Service) kickSync() {
 // laptop off the network fails every few seconds for hours, and that is one
 // event, not several thousand.
 func (s *Service) syncOnce(ctx context.Context) {
+	if s.dozing(ctx) {
+		return
+	}
+
 	if err := s.SyncNow(ctx); err != nil && s.link.fail(err) {
 		s.warn("exchanging state with the paired q", "error", err)
 		s.publishRemote()
 	}
+}
+
+// dozing reports whether this host is a primary in a dark wake: running for a
+// few seconds with its lid closed, and about to sleep again.
+//
+// Such a host must not look present to its peer. An exchange would tell the
+// secondary the primary is back, and the secondary would hand it missions to
+// sit on, asleep, until the takeover window had passed all over again. Nor
+// should it renew its claim on the witness or start queued missions. So it
+// does nothing it would not have done asleep, and the exchanges a person asks
+// for by hand, which mean someone is there, are not held back.
+func (s *Service) dozing(ctx context.Context) bool {
+	if s.remote == nil || s.awake == nil {
+		return false
+	}
+
+	dozing := !s.awake(ctx)
+
+	if s.dozed.Swap(dozing) != dozing {
+		if dozing {
+			s.logger.Info("in a dark wake: not exchanging with the paired q until fully awake")
+		} else {
+			s.logger.Info("fully awake again")
+		}
+	}
+
+	return dozing
 }
 
 // SyncNow performs one exchange with the peer and applies the result.
@@ -798,11 +835,12 @@ func (s *Service) RemoteStatus() api.RemoteStatus {
 	last, errText := s.link.state()
 
 	status := api.RemoteStatus{
-		Self:       snap.Self,
-		Role:       s.roleOf(snap),
-		LastSyncAt: last,
-		Error:      errText,
-		Pending:    len(snap.Outbox),
+		Self:          snap.Self,
+		Role:          s.roleOf(snap),
+		LastSyncAt:    last,
+		TakeoverAfter: s.takeoverWindow(snap),
+		Error:         errText,
+		Pending:       len(snap.Outbox),
 	}
 
 	if snap.Peer != nil {

@@ -1,11 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/justinrush/q/internal/api"
@@ -85,6 +87,10 @@ type Service struct {
 	// is what it last said.
 	witness Witness
 	vouch   vouch
+	// awake reports whether this machine is fully awake, nil where that cannot
+	// be told. dozed is what it last said, so the change is logged once.
+	awake func(context.Context) bool
+	dozed atomic.Bool
 	// started is when this service was built, which a secondary treats as the
 	// last time it heard from its primary until an exchange says otherwise.
 	started  time.Time

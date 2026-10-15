@@ -433,6 +433,11 @@ func describeRemote(rep *report, status api.RemoteStatus) {
 		rep.row("link\tdown: %s", status.Error)
 	case status.LastSyncAt.IsZero():
 		rep.row("link\tno exchange since this daemon started")
+	case status.TakeoverAfter > 0 && time.Since(status.LastSyncAt) > status.TakeoverAfter:
+		// No error only means the last exchange worked. Past the window the
+		// secondary treats the primary as away, and so should this.
+		rep.row("link\tquiet for %s; past %s the primary counts as away",
+			time.Since(status.LastSyncAt).Round(time.Second), status.TakeoverAfter)
 	default:
 		rep.row("link\tup, last exchange %s ago", time.Since(status.LastSyncAt).Round(time.Second))
 	}

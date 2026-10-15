@@ -433,6 +433,11 @@ part that happened where it runs.
   next speak.
 - With one, a laptop waking after a long sleep has its agents running for the
   few seconds it takes the daemon to notice and stop them.
+- A Mac with its lid closed still wakes for a few seconds at a time (a dark
+  wake). A macOS primary checks `pmset -g systemstate` and, until the graphics
+  subsystem is up again, neither exchanges, renews its claim, nor starts
+  anything, so the other machine does not take a dark wake for the laptop's
+  return and hand it missions to sleep on. `q remote sync` still runs when asked.
 - A takeover loses at most `remote.interval` of the laptop's work until the
   laptop returns with it.
 - Both machines must run the same q. A mismatch stops the exchange and says so

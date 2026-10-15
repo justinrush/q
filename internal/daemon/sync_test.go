@@ -625,3 +625,73 @@ func TestAPrimaryPairedElsewhereLeavesNoTraceOnTheWrongMachine(t *testing.T) {
 		t.Errorf("the wrong machine took %d of the laptop's missions", n)
 	}
 }
+
+// dozeSwitch is a wake probe a test can flip.
+type dozeSwitch struct{ asleep bool }
+
+func (d *dozeSwitch) awake(context.Context) bool { return !d.asleep }
+
+// A laptop in a dark wake runs its daemon for a few seconds and sleeps again.
+// Had it exchanged, the secondary would take it for back and hand it missions
+// to sit on while it slept.
+func TestADozingPrimaryDoesNotExchange(t *testing.T) {
+	primary, secondary, _ := pairedServices(t)
+	doze := &dozeSwitch{asleep: true}
+	primary.apply(WithWakeProbe(doze.awake))
+
+	primary.syncOnce(t.Context())
+
+	if peer := secondary.RemoteStatus().Peer; peer != nil {
+		t.Fatalf("the secondary heard from %v during a dark wake", *peer)
+	}
+
+	doze.asleep = false
+	primary.syncOnce(t.Context())
+
+	if secondary.RemoteStatus().Peer == nil {
+		t.Fatal("the secondary did not hear from a primary that is fully awake")
+	}
+}
+
+// An exchange asked for by hand means someone is at the machine, whatever the
+// probe says.
+func TestADozingPrimaryStillExchangesWhenAsked(t *testing.T) {
+	primary, secondary, _ := pairedServices(t)
+	primary.apply(WithWakeProbe((&dozeSwitch{asleep: true}).awake))
+
+	exchange(t, primary)
+
+	if secondary.RemoteStatus().Peer == nil {
+		t.Fatal("an exchange run by hand did not reach the secondary")
+	}
+}
+
+// Nor does a dozing primary start its queue: an agent started now would be
+// frozen by the next sleep and run a second time by the secondary.
+func TestADozingPrimaryStartsNothing(t *testing.T) {
+	primary, _, _ := pairedServices(t)
+	launcher := &recordingLauncher{fail: map[string]error{}}
+	doze := &dozeSwitch{asleep: true}
+	primary.apply(WithLauncher(launcher), WithWakeProbe(doze.awake))
+
+	operation := seedOperation(t, primary)
+	if _, err := primary.CreateMission(api.CreateMissionRequest{
+		OperationID: operation.ID, Name: "queued", Prompt: "do it", Queued: true,
+	}); err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	exchange(t, primary)
+	primary.tick(t.Context())
+
+	if len(launcher.launched) != 0 {
+		t.Fatalf("launched %v during a dark wake", launcher.launched)
+	}
+
+	doze.asleep = false
+	primary.tick(t.Context())
+
+	if !slices.Equal(launcher.launched, []string{"queued"}) {
+		t.Fatalf("launched %v once fully awake, want the queued mission", launcher.launched)
+	}
+}

@@ -568,6 +568,21 @@ func hostName(id mission.HostID, status api.RemoteStatus) string {
 	}
 }
 
+// claimReason says why the witness names the host it does, when that is the
+// secondary: it holds the claim only while covering for an absent primary.
+func claimReason(holder mission.HostID, status api.RemoteStatus) string {
+	switch {
+	case holder == "" || status.Peer == nil:
+		return ""
+	case status.Role == mission.RoleSecondary && holder == status.Self.ID:
+		return ", covering while " + status.Peer.Name + " is away"
+	case status.Role == mission.RolePrimary && holder == status.Peer.ID:
+		return ", which covered while this machine was away"
+	default:
+		return ""
+	}
+}
+
 // claimLabel renders a claim for a person.
 func claimLabel(claim mission.Claim, status api.RemoteStatus, now time.Time) string {
 	if claim.Holder == "" {
@@ -617,7 +632,7 @@ func describeWitness(rep *report, status api.RemoteStatus) {
 	case w.AskedAt.IsZero():
 		rep.row("\tnot asked yet")
 	default:
-		rep.row("\tnames %s", hostName(w.Holder, status))
+		rep.row("\tnames %s%s", hostName(w.Holder, status), claimReason(w.Holder, status))
 	}
 
 	if w.Standby {

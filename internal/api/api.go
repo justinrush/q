@@ -313,6 +313,9 @@ type RemoteStatus struct {
 	// LastSyncAt is the last completed exchange, zero if there has been none
 	// since this daemon started.
 	LastSyncAt time.Time `json:"lastSyncAt,omitzero"`
+	// TakeoverAfter is how long a silent primary goes before the secondary
+	// counts it as away. Past it, a link with no error is quiet, not up.
+	TakeoverAfter time.Duration `json:"takeoverAfter,omitempty"`
 	// Error is why the most recent exchange failed, empty when it succeeded.
 	Error string `json:"error,omitempty"`
 	// Pending counts commands waiting to reach the peer.
