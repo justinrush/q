@@ -199,6 +199,7 @@ func TestDescribeRemoteExplainsTheWitness(t *testing.T) {
 
 	cases := []struct {
 		name    string
+		role    mission.Role
 		witness api.WitnessStatus
 		want    []string
 	}{
@@ -210,7 +211,13 @@ func TestDescribeRemoteExplainsTheWitness(t *testing.T) {
 		{
 			name:    "standing by behind the other machine",
 			witness: api.WitnessStatus{Name: "w", PeerName: "w", Holder: "h_bbbbbbbbbbbb", AskedAt: time.Now(), Standby: true},
-			want:    []string{"names mini", "standing by", "q remote witness take"},
+			want:    []string{"names mini", "covered while this machine was away", "standing by", "q remote witness take"},
+		},
+		{
+			name:    "covering on the secondary",
+			role:    mission.RoleSecondary,
+			witness: api.WitnessStatus{Name: "w", PeerName: "w", Holder: "h_aaaaaaaaaaaa", AskedAt: time.Now()},
+			want:    []string{"names this machine, covering while mini is away"},
 		},
 		{
 			name:    "unreachable",
@@ -238,6 +245,10 @@ func TestDescribeRemoteExplainsTheWitness(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			status := base
 			status.Witness = &tc.witness
+
+			if tc.role != "" {
+				status.Role = tc.role
+			}
 
 			rep := newReport()
 			describeRemote(rep, status)

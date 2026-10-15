@@ -146,6 +146,14 @@ func TestDescribeRemote(t *testing.T) {
 			want:   []string{"primary", "mini (h_bbbbbbbbbbbb)", "up, last exchange"},
 		},
 		{
+			name: "quiet past the takeover window",
+			status: api.RemoteStatus{
+				Role: mission.RoleSecondary, Peer: &peer,
+				LastSyncAt: time.Now().Add(-26 * time.Minute), TakeoverAfter: 5 * time.Minute,
+			},
+			want: []string{"quiet for 26m", "past 5m0s the primary counts as away"},
+		},
+		{
 			name:   "down with work waiting",
 			status: api.RemoteStatus{Role: mission.RolePrimary, Peer: &peer, Error: "connection timed out", Pending: 2},
 			want:   []string{"down: connection timed out", "2 request(s) waiting"},

@@ -22,6 +22,7 @@ import (
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/opencode"
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/power"
 	"github.com/justinrush/q/internal/remote"
 	"github.com/justinrush/q/internal/runner"
 	"github.com/justinrush/q/internal/terminal"
@@ -162,7 +163,10 @@ func pairingOptions(
 	}
 
 	if link != nil {
-		opts = append(opts, daemon.WithRemote(remote.NewPeer(*link)))
+		opts = append(opts,
+			daemon.WithRemote(remote.NewPeer(*link)),
+			daemon.WithWakeProbe(power.Probe(run)),
+		)
 	}
 
 	witness, err := witnessFor(s)

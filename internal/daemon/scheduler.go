@@ -43,12 +43,21 @@ func (s *Service) RunScheduler(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Leases first: a mission that has just been taken over, or handed
-			// back, changes what this host has room to start.
-			s.tendLeases(ctx)
-			s.Schedule(ctx)
+			s.tick(ctx)
 		}
 	}
+}
+
+// tick tends the leases and the queue once.
+func (s *Service) tick(ctx context.Context) {
+	if s.dozing(ctx) {
+		return
+	}
+
+	// Leases first: a mission that has just been taken over, or handed back,
+	// changes what this host has room to start.
+	s.tendLeases(ctx)
+	s.Schedule(ctx)
 }
 
 // Schedule makes one pass over the queue, starting what this host should run
