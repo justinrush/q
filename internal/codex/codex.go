@@ -131,17 +131,42 @@ func (a *Agent) Prologue(inv mission.Invocation) string {
 // in the profile, which is also where directory trust lives because codex will
 // not accept it on the command line.
 func (a *Agent) Args(inv mission.Invocation) []string {
+	return a.launchArgs(inv, outsideRoots(inv))
+}
+
+// launchArgs is a fresh launch or a resume, granting each of roots with
+// --add-dir.
+func (a *Agent) launchArgs(inv mission.Invocation, roots []string) []string {
 	if inv.Resume && inv.SessionID != "" {
 		return a.resumeArgs(inv)
 	}
 
 	args := a.commonArgs(inv)
 
-	for _, wt := range inv.Worktrees {
-		args = append(args, "--add-dir", mission.ShellQuote(wt))
+	for _, root := range roots {
+		args = append(args, "--add-dir", mission.ShellQuote(root))
 	}
 
 	return a.withPrompt(args, inv)
+}
+
+// outsideRoots are the worktrees that do not live beneath the mission
+// directory.
+//
+// A mission's own worktrees are created inside it, and --cd already makes it
+// the workspace root, so granting them again adds nothing. Only a review has
+// any: it is handed the worktrees of the mission it reviews, where they are.
+func outsideRoots(inv mission.Invocation) []string {
+	var out []string
+
+	for _, wt := range inv.Worktrees {
+		rel, err := filepath.Rel(inv.MissionDir, wt)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			out = append(out, wt)
+		}
+	}
+
+	return out
 }
 
 // withPrompt ends an argument list with the composed prompt.
@@ -216,8 +241,14 @@ func isMenuChoice(rest string) bool {
 }
 
 // remoteArgs points codex at the managed app-server.
+//
+// No --add-dir is passed: codex refuses it alongside --remote, and exits
+// before drawing anything, which left every multi-repo mission a dead pane.
+// The mission's own worktrees are already inside the workspace root, and a
+// review only reads the worktrees it is given, which the sandbox allows
+// anywhere.
 func (a *Agent) remoteArgs(inv mission.Invocation) []string {
-	args := a.Args(inv)
+	args := a.launchArgs(inv, nil)
 
 	// The empty Unix URL selects Codex's managed app-server control socket.
 	// Keeping the transport local avoids a TCP listener and any credential.

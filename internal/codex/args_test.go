@@ -114,6 +114,74 @@ func TestRemoteArgsKeepModel(t *testing.T) {
 	}
 }
 
+// TestAddDir guards both launch paths against codex's refusal of --add-dir
+// with --remote, which exits before drawing and leaves a multi-repo mission a
+// dead pane. Worktrees inside the mission directory are covered by --cd, so
+// only a review's, which live elsewhere, are granted, and then only locally.
+func TestAddDir(t *testing.T) {
+	agent := New("/bin/codex", Options{})
+
+	cases := []struct {
+		name      string
+		inv       mission.Invocation
+		wantLocal []string
+		absent    []string
+	}{
+		{
+			name: "a mission's own worktrees are not granted again",
+			inv: mission.Invocation{
+				MissionDir: "/m",
+				Worktrees:  []string{"/m/pac", "/m/eds"},
+			},
+			absent: []string{"--add-dir"},
+		},
+		{
+			name: "a sibling whose name shares the prefix is still outside",
+			inv: mission.Invocation{
+				MissionDir: "/m",
+				Worktrees:  []string{"/m-other/pac"},
+			},
+			wantLocal: []string{"--add-dir '/m-other/pac'"},
+		},
+		{
+			name: "a review's worktrees are granted locally",
+			inv: mission.Invocation{
+				MissionDir: "/review",
+				Worktrees:  []string{"/m/pac", "/m/eds"},
+			},
+			wantLocal: []string{"--add-dir '/m/pac'", "--add-dir '/m/eds'"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			local := strings.Join(agent.Args(tc.inv), " ")
+
+			for _, want := range tc.wantLocal {
+				if !strings.Contains(local, want) {
+					t.Errorf("argv = %q, want it to contain %q", local, want)
+				}
+			}
+
+			for _, absent := range tc.absent {
+				if strings.Contains(local, absent) {
+					t.Errorf("argv = %q, want it not to contain %q", local, absent)
+				}
+			}
+
+			remote := strings.Join(agent.remoteArgs(tc.inv), " ")
+
+			if strings.Contains(remote, "--add-dir") {
+				t.Errorf("remote argv = %q, want no --add-dir, which codex rejects with --remote", remote)
+			}
+
+			if !strings.Contains(remote, "--remote unix://") {
+				t.Errorf("remote argv = %q, want the remote transport", remote)
+			}
+		})
+	}
+}
+
 // codex enters plan mode only through its /plan command, and a prompt on the
 // command line is submitted as written, so a planning session is started with
 // no prompt and told what to do once it is listening.
