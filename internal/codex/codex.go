@@ -99,13 +99,16 @@ func (*Agent) HookEvents() []string {
 // Prologue starts Codex's managed app-server and makes the terminal UI its
 // client. [Agent.Args] remains the fallback for an older Codex release or a
 // local app-server startup failure.
+//
+// The daemon is started without --profile: codex rejects it on anything but
+// a runtime command, and that failure silently sent every mission down the
+// fallback path, where q cannot observe the session. The profile still applies
+// to the terminal UI, which is the runtime command.
 func (a *Agent) Prologue(inv mission.Invocation) string {
 	var b strings.Builder
 
 	b.WriteString("\nif ")
 	b.WriteString(mission.ShellQuote(a.bin))
-	b.WriteString(" --profile ")
-	b.WriteString(mission.ShellQuote(a.profile))
 	b.WriteString(" app-server daemon start >/dev/null 2>&1; then\n")
 	b.WriteString("  exec ")
 	b.WriteString(mission.ShellQuote(a.bin))
