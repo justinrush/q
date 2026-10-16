@@ -357,3 +357,72 @@ func seedCodexMission(
 
 	return ms
 }
+
+func TestRuntimeOutageAndRecovery(t *testing.T) {
+	tests := map[string]struct{ runtime fakeRuntime }{
+		"connection failure": {fakeRuntime{err: errors.New("connection unavailable")}},
+		"thread missing":     {fakeRuntime{}},
+		"thread not loaded":  {fakeRuntime{found: true, reading: waitingReading(mission.ActivityUnknown)}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			ms := seedCodexMission(t, svc, mission.StatusAwaiting, startupPromptPrefix+"old prompt")
+			svc.apply(WithRuntime(mission.ToolCodex, tc.runtime))
+			svc.pollRuntimes(t.Context())
+			got, _ := svc.Snapshot().Mission(ms.ID)
+			if !got.HasBadge(mission.BadgeRuntimeUnavailable) || got.Status != mission.StatusAwaiting {
+				t.Fatalf("outage state: %+v", got)
+			}
+			svc.apply(WithRuntime(mission.ToolCodex, fakeRuntime{found: true, reading: waitingReading(mission.ActivityIdle)}))
+			svc.pollRuntimes(t.Context())
+			got, _ = svc.Snapshot().Mission(ms.ID)
+			if got.HasBadge(mission.BadgeRuntimeUnavailable) || got.Status != mission.StatusDebrief || got.WaitingFor != "" {
+				t.Fatalf("recovered state: %+v", got)
+			}
+		})
+	}
+}
+
+func TestRuntimePlanAndSessionGuards(t *testing.T) {
+	tests := map[string]struct {
+		reading                   mission.Reading
+		wantID                    string
+		wantPending, wantApproved bool
+		wantStatus                mission.Status
+	}{
+		"structured plan":        {mission.Reading{SessionID: "thr-1", Activity: mission.ActivityIdle, PlanKnown: true, PlanPending: true}, "thr-1", true, false, mission.StatusDebrief},
+		"explicit acceptance":    {mission.Reading{SessionID: "thr-1", Activity: mission.ActivityBusy, PlanKnown: true, PlanApproved: true}, "thr-1", false, true, mission.StatusActive},
+		"verified replacement":   {mission.Reading{SessionID: "new", PreviousSessionID: "thr-1", Activity: mission.ActivityBusy}, "new", false, false, mission.StatusActive},
+		"unverified replacement": {mission.Reading{SessionID: "new", Activity: mission.ActivityBusy}, "thr-1", false, false, mission.StatusAwaiting},
+		"old launch":             {mission.Reading{SessionID: "thr-1", HookEpoch: 1, Activity: mission.ActivityBusy}, "thr-1", false, false, mission.StatusAwaiting},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			ms := seedCodexMission(t, svc, mission.StatusAwaiting, "old wait")
+			err := svc.store.Mutate("test.plan", func(snap *mission.Snapshot) error {
+				ms.PlanMode = true
+				ms.HookEpoch = 2
+				snap.PutMission(ms)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			svc.applyRuntimeReading(ms.ID, tc.reading)
+			got, _ := svc.Snapshot().Mission(ms.ID)
+			if got.AgentSessionID != tc.wantID || got.PlanPending != tc.wantPending || got.PlanApproved != tc.wantApproved || got.Status != tc.wantStatus {
+				t.Fatalf("state: %+v", got)
+			}
+		})
+	}
+}
+
+func TestBusyReadingPreservesPendingPlanWithoutPlanEvidence(t *testing.T) {
+	ms := mission.Mission{PlanMode: true, PlanPending: true, Status: mission.StatusDebrief}
+	applyActivity(&ms, waitingReading(mission.ActivityBusy), time.Now())
+	if ms.Status != mission.StatusDebrief || ms.AgentState != mission.AgentWaiting {
+		t.Fatalf("state: %+v", ms)
+	}
+}

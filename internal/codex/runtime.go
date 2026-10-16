@@ -42,7 +42,9 @@ func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading
 			return mission.Reading{}, false, err
 		}
 
-		return reading(ms.AgentSessionID, status), true, nil
+		if status.Type != statusNotLoaded {
+			return r.reading(ctx, ms, ms.AgentSessionID, status), true, nil
+		}
 	}
 
 	thread, found, err := r.threads.FindThread(ctx, ms.MissionDir)
@@ -50,7 +52,24 @@ func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading
 		return mission.Reading{}, false, err
 	}
 
-	return reading(thread.ID, thread.Status), true, nil
+	out := r.reading(ctx, ms, thread.ID, thread.Status)
+	out.PreviousSessionID = ms.AgentSessionID
+	return out, true, nil
+}
+
+func (r *Runtime) reading(ctx context.Context, ms mission.Mission, id string, status ThreadStatus) mission.Reading {
+	out := reading(id, status)
+	out.HookEpoch = ms.HookEpoch
+	if ms.Planning() {
+		plans, ok := r.threads.(planReader)
+		if ok {
+			plan, err := plans.ReadPlan(ctx, id)
+			if err == nil {
+				out.PlanKnown, out.PlanPending, out.PlanApproved = plan.Known, plan.Pending, plan.Approved
+			}
+		}
+	}
+	return out
 }
 
 // Close releases the app-server connection.

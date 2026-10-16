@@ -110,6 +110,15 @@ func (a *Agent) Prologue(inv mission.Invocation) string {
 	b.WriteString("\nif ")
 	b.WriteString(mission.ShellQuote(a.bin))
 	b.WriteString(" app-server daemon start >/dev/null 2>&1; then\n")
+	if inv.QBin != "" {
+		b.WriteString("  ")
+		b.WriteString(mission.ShellQuote(inv.QBin))
+		b.WriteString(" codex-prepare ")
+		b.WriteString(mission.ShellQuote(a.bin))
+		b.WriteString(" ")
+		b.WriteString(mission.ShellQuote(inv.MissionDir))
+		b.WriteString(" || exit $?\n")
+	}
 	b.WriteString("  exec ")
 	b.WriteString(mission.ShellQuote(a.bin))
 

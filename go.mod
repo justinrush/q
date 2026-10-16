@@ -11,6 +11,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
+	golang.org/x/net v0.58.0
 	k8s.io/client-go v0.37.1
 )
 
@@ -47,7 +48,6 @@ require (
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
-	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

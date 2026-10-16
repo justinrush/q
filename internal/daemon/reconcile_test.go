@@ -227,3 +227,38 @@ func TestReconcileDoesNotOverwriteConcurrentHook(t *testing.T) {
 		t.Fatalf("correction not persisted: %+v", stored)
 	}
 }
+
+type startupProbe struct {
+	stubProbe
+	text string
+}
+
+func (p startupProbe) CapturePane(context.Context, terminal.Target, int) (string, error) {
+	return p.text, nil
+}
+
+func TestStartupWaitIsRechecked(t *testing.T) {
+	tests := map[string]struct {
+		pane    string
+		waiting bool
+	}{
+		"still at trust gate": {codexTrustPane, true},
+		"now working":         {"• Running tests\n› Ask Codex to do anything", false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			svc.probe = startupProbe{text: tc.pane}
+			ms := mission.Mission{AgentPaneID: "%1", AgentState: mission.AgentWaiting, Status: mission.StatusAwaiting, WaitingFor: startupPromptPrefix + "old prompt"}
+			ms.Badges = ms.WithBadge(mission.BadgeHooksSilent, "")
+			svc.detectStartupPrompt(t.Context(), &ms, time.Now())
+			if tc.waiting {
+				if ms.AgentState != mission.AgentWaiting {
+					t.Fatal("lost real prompt")
+				}
+			} else if ms.AgentState != mission.AgentUnknown || ms.WaitingFor != "" || ms.Status != mission.StatusActive {
+				t.Fatalf("stale wait survived: %+v", ms)
+			}
+		})
+	}
+}

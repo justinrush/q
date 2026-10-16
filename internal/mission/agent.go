@@ -128,6 +128,15 @@ const (
 type Reading struct {
 	// SessionID is the agent's own identifier for the session observed.
 	SessionID string
+	// PreviousSessionID permits replacement only after that recorded thread
+	// was observed unloaded and a live root thread was found in the mission cwd.
+	PreviousSessionID string
+	HookEpoch         int
+	// PlanKnown distinguishes a structured observation from an unavailable
+	// plan-history endpoint. Busy status alone cannot dismiss a plan dialog.
+	PlanKnown    bool
+	PlanPending  bool
+	PlanApproved bool
 	// PaneID is the tmux pane the session occupies, when the agent knows it.
 	// An agent that reports this beats anything q inferred.
 	PaneID string

@@ -323,3 +323,16 @@ func TestPrologueStartsDaemonWithoutProfile(t *testing.T) {
 		t.Errorf("prologue = %q, want the remote terminal UI to keep its profile", prologue)
 	}
 }
+
+func TestManagedLaunchPreparesTrustBeforeTerminal(t *testing.T) {
+	inv := mission.Invocation{QBin: "/a path/q", MissionDir: "/mission's directory"}
+	prologue := New("/a path/codex", Options{}).Prologue(inv)
+	prepare := strings.Index(prologue, " codex-prepare ")
+	terminal := strings.Index(prologue, "  exec ")
+	if prepare < 0 || terminal < prepare {
+		t.Fatalf("trust must precede terminal: %s", prologue)
+	}
+	if !strings.Contains(prologue, mission.ShellQuote(inv.QBin)+" codex-prepare "+mission.ShellQuote("/a path/codex")+" "+mission.ShellQuote(inv.MissionDir)+" || exit $?") {
+		t.Fatalf("missing quoted, checked preparation: %s", prologue)
+	}
+}

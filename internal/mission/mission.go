@@ -293,6 +293,8 @@ const (
 	// matters more than it seems: the alternative is a card that quietly stops
 	// telling the truth.
 	BadgeHooksSilent = "hooks-silent"
+	// BadgeRuntimeUnavailable means live status could not be verified.
+	BadgeRuntimeUnavailable = "status-unavailable"
 	// BadgeBackground marks a mission paused on background work rather than done.
 	BadgeBackground = "bg"
 	// BadgeAPIError marks a turn that ended in an API failure.
