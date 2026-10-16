@@ -415,10 +415,14 @@ func (l *Launcher) open(ms mission.Mission, resume bool) {
 }
 
 // submitWhenReady watches an agent's pane and submits text once it shows the
-// agent waiting for input.
+// agent waiting for input, then presses Enter again for as long as the text is
+// left sitting in the input.
 //
 // Readiness has to hold across two looks, because an agent's UI can draw its
-// input line a moment before it is listening on it.
+// input line a moment before it is listening on it. Even that is not proof:
+// codex draws its composer seconds before it will take a command, and turns an
+// early one away while leaving it typed in, so the opening is only done once
+// the agent has taken it.
 func (l *Launcher) submitWhenReady(ms mission.Mission, opener mission.Opener, text string) {
 	ctx, cancel := context.WithTimeout(context.Background(), openingTimeout)
 	defer cancel()
@@ -426,12 +430,20 @@ func (l *Launcher) submitWhenReady(ms mission.Mission, opener mission.Opener, te
 	ticker := time.NewTicker(l.openingPoll)
 	defer ticker.Stop()
 
-	ready := false
+	if !l.awaitReady(ctx, ms, opener, ticker) {
+		return
+	}
+
+	if err := l.SendMessage(ctx, ms, text); err != nil {
+		l.logger.Warn("submitting an agent's opening", "mission", ms.ID, "error", err)
+
+		return
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			l.logger.Warn("agent never became ready for its opening", "mission", ms.ID)
+			l.logger.Warn("agent never took its opening", "mission", ms.ID)
 
 			return
 		case <-ticker.C:
@@ -439,9 +451,52 @@ func (l *Launcher) submitWhenReady(ms mission.Mission, opener mission.Opener, te
 
 		pane, err := l.tmux.CapturePane(ctx, terminal.Pane(ms.AgentPaneID), 0)
 		if err != nil {
+			return
+		}
+
+		if !opener.Pending(pane, text) {
+			return
+		}
+
+		// A question drawn over the composer would take the Enter as its
+		// answer, so wait for it to be dealt with.
+		if !opener.Ready(pane) {
+			continue
+		}
+
+		if err := l.verifyAgentPane(ctx, ms); err != nil {
+			l.logger.Warn("resubmitting an agent's opening", "mission", ms.ID, "error", err)
+
+			return
+		}
+
+		if err := l.tmux.SendKeys(ctx, terminal.Pane(ms.AgentPaneID), "Enter"); err != nil {
+			l.logger.Warn("resubmitting an agent's opening", "mission", ms.ID, "error", err)
+
+			return
+		}
+	}
+}
+
+// awaitReady polls an agent's pane until it has shown the agent waiting for
+// input on two looks in a row, and reports false if that never happens.
+func (l *Launcher) awaitReady(ctx context.Context, ms mission.Mission, opener mission.Opener, ticker *time.Ticker) bool {
+	ready := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			l.logger.Warn("agent never became ready for its opening", "mission", ms.ID)
+
+			return false
+		case <-ticker.C:
+		}
+
+		pane, err := l.tmux.CapturePane(ctx, terminal.Pane(ms.AgentPaneID), 0)
+		if err != nil {
 			// The pane is gone, so the session was ended or replaced and the
 			// opening belongs to nothing.
-			return
+			return false
 		}
 
 		if !opener.Ready(pane) {
@@ -450,17 +505,11 @@ func (l *Launcher) submitWhenReady(ms mission.Mission, opener mission.Opener, te
 			continue
 		}
 
-		if !ready {
-			ready = true
-
-			continue
+		if ready {
+			return true
 		}
 
-		if err := l.SendMessage(ctx, ms, text); err != nil {
-			l.logger.Warn("submitting an agent's opening", "mission", ms.ID, "error", err)
-		}
-
-		return
+		ready = true
 	}
 }
 

@@ -92,6 +92,9 @@ type Opener interface {
 	// Ready reports whether a capture of the agent's pane shows it waiting for
 	// input, as opposed to still starting or stopped at a question of its own.
 	Ready(pane string) bool
+	// Pending reports whether a capture of the agent's pane shows text still
+	// sitting in its input, typed but not yet taken.
+	Pending(pane, text string) bool
 }
 
 // Artifact is a file an agent needs written before it starts.
