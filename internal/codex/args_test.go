@@ -299,6 +299,56 @@ func TestReady(t *testing.T) {
 	}
 }
 
+// codex shows its composer seconds before it takes a command, and an opening
+// sent in that time is left in the composer. These panes are what codex
+// 0.162.1 draws.
+func TestPending(t *testing.T) {
+	agent := New("/bin/codex", Options{})
+
+	opening, _ := agent.Opening(mission.Invocation{PlanMode: true})
+
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{
+			name: "turned away while starting",
+			pane: "■ '/plan' is disabled while a task is in progress.\n\n› " + opening + "\n\n" +
+				"  GPT-6-Astra low · ~/mission\n",
+			want: true,
+		},
+		{
+			name: "wrapped in a narrow pane",
+			pane: "› " + opening[:40] + "\n  " + opening[40:] + "\n\n  GPT-6-Astra low · ~/mission\n",
+			want: true,
+		},
+		{
+			name: "taken",
+			pane: "• Model changed to gpt-6-astra medium for Plan mode.\n\n" +
+				"› Read .q/prompt.md in this directory for your instructions, then plan the work.\n\n" +
+				"• Working (1s • esc to interrupt)\n\n› Ask Codex to do anything\n\n" +
+				"  GPT-6-Astra medium · ~/mission  Plan mode\n",
+		},
+		{
+			name: "the empty composer",
+			pane: "› Ask Codex to do anything\n  ? for shortcuts\n",
+		},
+		{
+			name: "something else typed in",
+			pane: "› /model\n",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := agent.Pending(tc.pane, opening); got != tc.want {
+				t.Errorf("Pending() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestPrologueStartsDaemonWithoutProfile guards the managed path. codex rejects
 // --profile on app-server subcommands, so a prologue that passed it would always
 // fail and fall back to a session q cannot observe — one whose questions and

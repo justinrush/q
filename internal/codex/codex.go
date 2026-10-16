@@ -230,6 +230,30 @@ func (*Agent) Ready(pane string) bool {
 	return composer
 }
 
+// Pending reports whether codex's composer still holds the opening, unsent.
+//
+// codex draws its composer well before it can take a command: the app-server
+// is still starting the thread, which includes a login-shell snapshot that
+// takes seconds, and nothing on screen marks the end of that. A /plan
+// submitted in that window is refused as "disabled while a task is in
+// progress" and left in the composer, and an Enter that arrives on the heels of
+// a paste is taken as part of the paste and submits nothing. Either way the
+// text is still there, and pressing Enter again once codex is listening sends
+// it.
+//
+// A long opening wraps, so the composer line need only begin the opening.
+func (*Agent) Pending(pane, text string) bool {
+	held := ""
+
+	for line := range strings.SplitSeq(pane, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), composerMarker); ok && !isMenuChoice(rest) {
+			held = strings.TrimSpace(rest)
+		}
+	}
+
+	return held != "" && strings.HasPrefix(text, held)
+}
+
 // isDialogHint reports whether a line is the key hint codex draws under a
 // question, e.g. "enter confirm · esc skip" or "enter continue · esc quit".
 func isDialogHint(line string) bool {
