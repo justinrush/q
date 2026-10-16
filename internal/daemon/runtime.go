@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/justinrush/q/internal/mission"
@@ -63,7 +64,8 @@ func (s *Service) pollRuntimes(ctx context.Context) {
 		reading, found, err := runtime.Read(readCtx, ms)
 		cancel()
 
-		if err != nil || !found {
+		if err != nil || !found || reading.Activity == mission.ActivityUnknown {
+			s.markRuntimeUnavailable(ms, err)
 			continue
 		}
 
@@ -191,6 +193,9 @@ func (s *Service) promoteMatureApprovals() {
 
 // applyActivity moves a card to match what the agent's runtime reports.
 func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) {
+	if reading.Activity != mission.ActivityUnknown {
+		ms.Badges = ms.WithoutBadge(mission.BadgeRuntimeUnavailable)
+	}
 	switch reading.Activity {
 	case mission.ActivityBusy:
 		ms.AgentState = mission.AgentBusy
@@ -208,15 +213,16 @@ func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) 
 	case mission.ActivityIdle:
 		// A Stop hook may have classified the closing message as a question.
 		// Preserve that semantic wait while using the runtime for process truth.
-		if ms.Status == mission.StatusAwaiting {
+		if ms.Status == mission.StatusAwaiting && !strings.HasPrefix(ms.WaitingFor, startupPromptPrefix) {
 			return
 		}
 
 		ms.AgentState = mission.AgentIdle
 		ms.Badges = ms.WithoutBadge(mission.BadgeStale)
 
-		if ms.Status == mission.StatusActive {
+		if ms.Status == mission.StatusActive || strings.HasPrefix(ms.WaitingFor, startupPromptPrefix) {
 			ms.Status = mission.StatusDebrief
+			ms.WaitingFor = ""
 			finished := now
 			ms.FinishedAt = &finished
 		}

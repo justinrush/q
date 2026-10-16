@@ -68,6 +68,8 @@ var promptMarkers = []string{
 // capturedPromptLines is how much of the pane to read when looking for a question.
 const capturedPromptLines = 40
 
+const startupPromptPrefix = "waiting at prompt: "
+
 // Reconcile brings mission records back in line with observable reality.
 //
 // It exists because hooks can be missed: the daemon may have been down, a hook may
@@ -158,7 +160,8 @@ func (s *Service) detectStartupPrompt(ctx context.Context, ms *mission.Mission, 
 		return
 	}
 
-	if ms.AgentState != mission.AgentUnknown || !ms.HasBadge(mission.BadgeHooksSilent) {
+	startupWait := strings.HasPrefix(ms.WaitingFor, startupPromptPrefix)
+	if (ms.AgentState != mission.AgentUnknown && !startupWait) || !ms.HasBadge(mission.BadgeHooksSilent) {
 		return
 	}
 
@@ -169,6 +172,14 @@ func (s *Service) detectStartupPrompt(ctx context.Context, ms *mission.Mission, 
 
 	question, ok := findPrompt(pane)
 	if !ok {
+		if startupWait {
+			// The screen no longer supports the old startup question. Clear the
+			// claim, but leave activity unknown until hooks or runtime recover.
+			ms.AgentState = mission.AgentUnknown
+			ms.WaitingFor = ""
+			ms.Status = mission.StatusActive
+			ms.StatusChangedAt = now
+		}
 		return
 	}
 
@@ -216,7 +227,7 @@ func findPrompt(pane string) (string, bool) {
 		question = strings.TrimSpace(question[:maxPromptLength]) + "…"
 	}
 
-	return "waiting at prompt: " + question, true
+	return startupPromptPrefix + question, true
 }
 
 // maxPromptLength bounds the captured question, which is screen text of any length.

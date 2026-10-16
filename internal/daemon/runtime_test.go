@@ -357,3 +357,29 @@ func seedCodexMission(
 
 	return ms
 }
+
+func TestRuntimeOutageAndRecovery(t *testing.T) {
+	tests := map[string]struct{ runtime fakeRuntime }{
+		"connection failure": {fakeRuntime{err: errors.New("connection unavailable")}},
+		"thread missing":     {fakeRuntime{}},
+		"thread not loaded":  {fakeRuntime{found: true, reading: waitingReading(mission.ActivityUnknown)}},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			ms := seedCodexMission(t, svc, mission.StatusAwaiting, startupPromptPrefix+"old prompt")
+			svc.apply(WithRuntime(mission.ToolCodex, tc.runtime))
+			svc.pollRuntimes(t.Context())
+			got, _ := svc.Snapshot().Mission(ms.ID)
+			if !got.HasBadge(mission.BadgeRuntimeUnavailable) || got.Status != mission.StatusAwaiting {
+				t.Fatalf("outage state: %+v", got)
+			}
+			svc.apply(WithRuntime(mission.ToolCodex, fakeRuntime{found: true, reading: waitingReading(mission.ActivityIdle)}))
+			svc.pollRuntimes(t.Context())
+			got, _ = svc.Snapshot().Mission(ms.ID)
+			if got.HasBadge(mission.BadgeRuntimeUnavailable) || got.Status != mission.StatusDebrief || got.WaitingFor != "" {
+				t.Fatalf("recovered state: %+v", got)
+			}
+		})
+	}
+}
