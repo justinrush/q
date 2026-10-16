@@ -37,6 +37,7 @@ func BuildRootCommand() *cobra.Command {
 
 	cmd.AddCommand(
 		buildConfigSubcommand(),
+		buildCodexPrepareSubcommand(),
 		buildDaemonSubcommand(),
 		buildDoctorSubcommand(),
 		buildHookSubcommand(),

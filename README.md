@@ -901,7 +901,10 @@ Look for a `hooks-silent` badge. It means the agent has never reported, so q can
 hook-specific details. Usually the agent is stopped at a startup prompt; q reads the pane
 and puts the question on the card, so attach to the session and answer it. For codex,
 app-server status still supplies busy, waiting, and idle state and can recover the session
-id from the mission directory even when the startup hook was missed.
+id from the mission directory even when the startup hook was missed. A
+`status-unavailable` badge means this observation failed; q logs the outage once
+and removes the badge after recovery. A startup question is rechecked rather than
+remaining on the card after the dialog disappears.
 
 The first codex mission ever run needs a one-time approval of q's hooks. Attach and choose
 *Trust all and continue*. Codex records the approval in `[hooks.state]` within q's
@@ -912,13 +915,20 @@ entries.
 
 q writes `~/.codex/q.config.toml` and selects it with `--profile q`. That file pre-trusts
 mission directories, because codex otherwise stops to ask about them in a detached session
-where nobody would see the question. Your own `~/.codex/config.toml`, including your
-approval policy, sandbox mode, and MCP servers, is never modified.
+where nobody would see the question. For managed-server launches, q also asks
+Codex's `config/value/write` API to
+persist the exact mission directory's trust entry in the server's base user config.
+The remote terminal checks this before the thread profile is available. This changes
+only `projects.<mission-directory>.trust_level`; approval policy, sandbox settings,
+and MCP configuration are preserved. q does not read or rewrite the base config itself.
+The entry remains after the mission closes, like a directory trusted in Codex's UI.
 
 Codex missions start the managed app-server and connect the ordinary terminal UI to its
-local Unix socket. The q daemon uses a separate read-only proxy connection and polls
+local Unix socket. The q daemon upgrades a separate proxy connection to WebSocket and polls
 `thread/read`; it never resumes the thread and therefore never receives or answers the
-terminal's approval requests. Structured runtime states distinguish active work,
+terminal's approval requests. For planning missions, it also reads the newest turn's
+structured plan item and explicit implementation prompt to recover missed plan hooks.
+Structured runtime states distinguish active work,
 approvals, user input, idle turns, and system errors. If app-server is unavailable, the
 launch script falls back to the direct codex invocation and existing hooks.
 
