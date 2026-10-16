@@ -191,6 +191,80 @@ func TestPostToolUseHealsAWaitingCard(t *testing.T) {
 	}
 }
 
+// A background subagent keeps completing tool calls while the main session sits on
+// an AskUserQuestion. Those calls must not heal the card, or it bounces back to
+// in-progress with the question still on screen.
+func TestBackgroundSubagentDoesNotHealAMainSessionPrompt(t *testing.T) {
+	asked := Reduce(missionIn(StatusActive), HookEvent{
+		Event: EventPermissionRequest, SessionID: "sess-1", ToolName: "AskUserQuestion",
+	}, testNow)
+
+	ms := asked.Mission
+	ms.Status = asked.ProposedStatus
+
+	for _, event := range []string{EventPreToolUse, EventPostToolUse} {
+		res := Reduce(ms, HookEvent{
+			Event: event, SessionID: "sess-1", ToolName: "Bash", AgentID: "agent-7",
+		}, testNow)
+
+		if res.ProposedStatus != "" {
+			t.Errorf("%s: ProposedStatus = %q, want no proposal", event, res.ProposedStatus)
+		}
+
+		if res.Mission.AgentState != AgentWaiting || res.Mission.WaitingFor != "AskUserQuestion" {
+			t.Errorf("%s: AgentState, WaitingFor = %q, %q, want still waiting on AskUserQuestion",
+				event, res.Mission.AgentState, res.Mission.WaitingFor)
+		}
+	}
+
+	answered := Reduce(ms, HookEvent{
+		Event: EventPostToolUse, SessionID: "sess-1", ToolName: "AskUserQuestion",
+	}, testNow)
+
+	if answered.ProposedStatus != StatusActive {
+		t.Errorf("ProposedStatus = %q, want active once the main session's call completes",
+			answered.ProposedStatus)
+	}
+}
+
+// A subagent's own prompt is healed by that subagent's completed call, and by
+// nothing else that keeps running alongside it.
+func TestSubagentPromptIsHealedOnlyByThatSubagent(t *testing.T) {
+	asked := Reduce(missionIn(StatusActive), HookEvent{
+		Event: EventPermissionRequest, SessionID: "sess-1", ToolName: "Bash", AgentID: "agent-7",
+	}, testNow)
+
+	ms := asked.Mission
+	ms.Status = asked.ProposedStatus
+
+	if ms.WaitingAgent != "agent-7" {
+		t.Fatalf("WaitingAgent = %q, want agent-7", ms.WaitingAgent)
+	}
+
+	for _, agent := range []string{"", "agent-8"} {
+		res := Reduce(ms, HookEvent{
+			Event: EventPostToolUse, SessionID: "sess-1", ToolName: "Read", AgentID: agent,
+		}, testNow)
+
+		if res.ProposedStatus != "" {
+			t.Errorf("agent %q: ProposedStatus = %q, want no proposal", agent, res.ProposedStatus)
+		}
+	}
+
+	healed := Reduce(ms, HookEvent{
+		Event: EventPostToolUse, SessionID: "sess-1", ToolName: "Bash", AgentID: "agent-7",
+	}, testNow)
+
+	if healed.ProposedStatus != StatusActive {
+		t.Errorf("ProposedStatus = %q, want active", healed.ProposedStatus)
+	}
+
+	if healed.Mission.WaitingFor != "" || healed.Mission.WaitingAgent != "" {
+		t.Errorf("WaitingFor, WaitingAgent = %q, %q, want both cleared",
+			healed.Mission.WaitingFor, healed.Mission.WaitingAgent)
+	}
+}
+
 // A completed tool call on a card that was never blocked must not reshuffle it.
 func TestPostToolUseDoesNotDisturbAnInProgressCard(t *testing.T) {
 	res := Reduce(missionIn(StatusActive), HookEvent{
