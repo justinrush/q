@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/justinrush/q/internal/mission"
 	"io"
@@ -28,8 +29,10 @@ type Proxy struct {
 
 // ThreadSnapshot identifies one thread and its current runtime status.
 type ThreadSnapshot struct {
-	ID     string       `json:"id"`
-	Status ThreadStatus `json:"status"`
+	ID             string       `json:"id"`
+	Status         ThreadStatus `json:"status"`
+	CWD            string       `json:"cwd"`
+	ParentThreadID string       `json:"parentThreadId"`
 }
 
 // StartProxy connects to the managed app-server through Codex's stdio proxy.
@@ -154,29 +157,36 @@ func (p *Proxy) ReadThread(ctx context.Context, threadID string) (ThreadStatus, 
 // hooks were missed.
 func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
 	params := struct {
-		CWD   string `json:"cwd"`
-		Limit int    `json:"limit"`
-	}{
-		CWD:   cwd,
-		Limit: 20,
-	}
-
-	var result struct {
-		Data []ThreadSnapshot `json:"data"`
-	}
-
-	err := p.client.Request(ctx, "thread/list", params, &result)
-	if err != nil {
-		return ThreadSnapshot{}, false, err
-	}
-
-	for _, thread := range result.Data {
-		if thread.ID != "" && thread.Status.Classify() != mission.ActivityUnknown {
-			return thread, true, nil
+		CWD    string `json:"cwd"`
+		Limit  int    `json:"limit"`
+		Cursor string `json:"cursor,omitempty"`
+	}{CWD: cwd, Limit: 100}
+	for range 20 {
+		var result struct {
+			Data       []ThreadSnapshot `json:"data"`
+			NextCursor string           `json:"nextCursor"`
 		}
+		err := p.client.Request(ctx, "thread/list", params, &result)
+		if err != nil {
+			return ThreadSnapshot{}, false, err
+		}
+		for _, thread := range result.Data {
+			if thread.ParentThreadID != "" || thread.CWD != "" && thread.CWD != cwd {
+				continue
+			}
+			if thread.ID != "" && thread.Status.Classify() != mission.ActivityUnknown {
+				return thread, true, nil
+			}
+		}
+		if result.NextCursor == "" {
+			return ThreadSnapshot{}, false, nil
+		}
+		if result.NextCursor == params.Cursor {
+			return ThreadSnapshot{}, false, fmt.Errorf("thread/list repeated its cursor")
+		}
+		params.Cursor = result.NextCursor
 	}
-
-	return ThreadSnapshot{}, false, nil
+	return ThreadSnapshot{}, false, fmt.Errorf("thread/list exceeded page limit")
 }
 
 // Model is one entry of codex's own model catalog, as model/list reports it.
@@ -332,6 +342,12 @@ func (m *Manager) withProxy(call func(*Proxy) error) error {
 	err = call(proxy)
 	if err == nil {
 		return nil
+	}
+	// A valid RPC error (including an unsupported optional history method)
+	// does not mean the transport died. Reconnecting cannot repair it.
+	var rpcErr *RPCError
+	if errors.As(err, &rpcErr) {
+		return err
 	}
 
 	m.discard(proxy)

@@ -2,7 +2,9 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -141,5 +143,34 @@ func TestProxyFindThreadPrefersLoadedThread(t *testing.T) {
 
 	if thread.ID != "live" {
 		t.Errorf("thread ID = %q, want live", thread.ID)
+	}
+}
+
+func TestFindThreadSkipsSubagentsAndPaginates(t *testing.T) {
+	conn, server := net.Pipe()
+	defer conn.Close()
+	defer server.Close()
+	go func() {
+		decoder := json.NewDecoder(server)
+		for _, response := range [...]string{
+			`{"id":1,"result":{"data":[{"id":"child","cwd":"/mission","parentThreadId":"root","status":{"type":"active","activeFlags":[]}}],"nextCursor":"next"}}`,
+			`{"id":2,"result":{"data":[{"id":"root","cwd":"/mission","status":{"type":"idle"}}]}}`,
+		} {
+			var request json.RawMessage
+			err := decoder.Decode(&request)
+			if err != nil {
+				return
+			}
+			_, err = server.Write([]byte(response + "\n"))
+			if err != nil {
+				return
+			}
+		}
+	}()
+	client := NewClient(conn, conn)
+	go func() { _ = client.Run(t.Context(), make(chan Notification)) }()
+	thread, found, err := (&Proxy{client: client}).FindThread(t.Context(), "/mission")
+	if err != nil || !found || thread.ID != "root" {
+		t.Fatalf("thread=%+v found=%v err=%v", thread, found, err)
 	}
 }

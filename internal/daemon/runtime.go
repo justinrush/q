@@ -94,14 +94,17 @@ func (s *Service) applyRuntimeReading(id mission.MissionID, reading mission.Read
 // applyRuntimeReadingNow writes a reading through to the card.
 func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.Reading) {
 	var updated mission.Mission
+	var switchModel bool
 
 	err := s.store.Mutate("mission.runtime_status", func(snap *mission.Snapshot) error {
 		ms, ok := snap.Mission(id)
-		if !ok || ms.Status.Terminal() {
+		if !ok || ms.Status.Terminal() || !s.holds(ms) ||
+			reading.HookEpoch != 0 && reading.HookEpoch != ms.HookEpoch {
 			return nil
 		}
 
-		if ms.AgentSessionID != "" && ms.AgentSessionID != reading.SessionID {
+		if ms.AgentSessionID != "" && ms.AgentSessionID != reading.SessionID &&
+			ms.AgentSessionID != reading.PreviousSessionID {
 			return nil
 		}
 
@@ -109,6 +112,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		now := s.now()
 		ms.AgentSessionID = reading.SessionID
 		applyActivity(&ms, reading, now)
+		switchModel = !before.PlanApproved && ms.PlanApproved && ms.SplitsPlan() && !ms.Tool.PlanSwitchesItself()
 
 		if sameRuntimeState(before, ms) {
 			return nil
@@ -134,6 +138,9 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 
 	if updated.ID != "" {
 		s.publishMission(updated)
+		if switchModel {
+			go s.implementPlan(id)
+		}
 	}
 }
 
@@ -196,8 +203,25 @@ func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) 
 	if reading.Activity != mission.ActivityUnknown {
 		ms.Badges = ms.WithoutBadge(mission.BadgeRuntimeUnavailable)
 	}
+	if ms.Planning() && reading.PlanKnown {
+		if reading.PlanApproved {
+			ms.PlanApproved = true
+			ms.PlanPending = false
+		} else {
+			ms.PlanPending = reading.PlanPending
+		}
+	}
+	if ms.PlanPending && (reading.Activity == mission.ActivityIdle || reading.Activity == mission.ActivityBusy) {
+		ms.AgentState = mission.AgentWaiting
+		ms.Status = mission.StatusDebrief
+		ms.WaitingFor = "plan debrief"
+		ms.TurnEnded = true
+		ms.FinishedAt = nil
+		return
+	}
 	switch reading.Activity {
 	case mission.ActivityBusy:
+		ms.TurnEnded = false
 		ms.AgentState = mission.AgentBusy
 		ms.Status = mission.StatusActive
 		ms.WaitingFor = ""
@@ -211,6 +235,7 @@ func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) 
 		ms.FinishedAt = nil
 		ms.Badges = ms.WithoutBadge(mission.BadgeStale)
 	case mission.ActivityIdle:
+		ms.TurnEnded = true
 		// A Stop hook may have classified the closing message as a question.
 		// Preserve that semantic wait while using the runtime for process truth.
 		if ms.Status == mission.StatusAwaiting && !strings.HasPrefix(ms.WaitingFor, startupPromptPrefix) {
@@ -239,6 +264,7 @@ func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) 
 // sameRuntimeState reports whether a reading changed anything worth persisting.
 func sameRuntimeState(a, b mission.Mission) bool {
 	if a.Status != b.Status || a.AgentState != b.AgentState ||
+		a.PlanPending != b.PlanPending || a.PlanApproved != b.PlanApproved || a.TurnEnded != b.TurnEnded ||
 		a.WaitingFor != b.WaitingFor || a.AgentSessionID != b.AgentSessionID ||
 		len(a.Badges) != len(b.Badges) {
 		return false
