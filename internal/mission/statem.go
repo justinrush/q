@@ -99,6 +99,12 @@ func Reduce(ms Mission, ev HookEvent, now time.Time) Reduction {
 	proposed := apply(&ms, ev, now)
 	ms.TurnEnded = turnEnded(before.TurnEnded, ev.Event, proposed)
 
+	// Every transition that resolves a block clears WaitingFor, so the blocked
+	// agent is forgotten with it rather than being cleared at each site.
+	if ms.WaitingFor == "" {
+		ms.WaitingAgent = ""
+	}
+
 	return Reduction{
 		Mission:        ms,
 		ProposedStatus: proposed,
@@ -275,9 +281,23 @@ func applyPreToolUse(ms *Mission, ev HookEvent) Status {
 		return StatusActive
 	}
 
+	if blockedOnAnother(*ms, ev) {
+		return ""
+	}
+
 	ms.AgentState = AgentBusy
 
 	return ""
+}
+
+// blockedOnAnother reports whether a card is waiting on a prompt that the
+// event's agent did not raise.
+//
+// A background subagent keeps calling tools while the main session sits on a
+// prompt, and the main session's own subagents can raise prompts of their own.
+// Neither's activity says anything about the other's prompt.
+func blockedOnAnother(ms Mission, ev HookEvent) bool {
+	return ms.Status == StatusAwaiting && ev.AgentID != ms.WaitingAgent
 }
 
 // applyPostToolUse is the self-healing transition.
@@ -288,9 +308,19 @@ func applyPreToolUse(ms *Mission, ev HookEvent) Status {
 //
 // ExitPlanMode completing means the plan was approved and the agent is working
 // again, which is how a plan card returns to in-progress without being restarted.
+//
+// Only the blocked agent's own tool call heals the card. A subagent running in
+// the background completes tool calls every few seconds while the main session
+// waits on an AskUserQuestion, and letting those through bounces the card back to
+// in-progress with the question still on screen.
 func applyPostToolUse(ms *Mission, ev HookEvent) Status {
-	ms.AgentState = AgentBusy
 	ms.Badges = ms.WithoutBadge(BadgeStale)
+
+	if blockedOnAnother(*ms, ev) {
+		return ""
+	}
+
+	ms.AgentState = AgentBusy
 
 	if ev.IsPlanApproval() {
 		ms.PlanPending = false
@@ -326,6 +356,7 @@ func applyPermissionRequest(ms *Mission, ev HookEvent) Status {
 	}
 
 	ms.WaitingFor = describeTool(ev)
+	ms.WaitingAgent = ev.AgentID
 
 	return StatusAwaiting
 }
@@ -502,6 +533,7 @@ func describeTool(ev HookEvent) string {
 func equivalent(a, b Mission) bool {
 	if a.AgentState != b.AgentState ||
 		a.WaitingFor != b.WaitingFor ||
+		a.WaitingAgent != b.WaitingAgent ||
 		a.PlanPending != b.PlanPending ||
 		a.PlanApproved != b.PlanApproved ||
 		a.AgentSessionID != b.AgentSessionID ||

@@ -160,6 +160,11 @@ type Mission struct {
 	AgentState AgentState `json:"agentState" q:"run"`
 	// WaitingFor describes what the agent is blocked on, e.g. "Bash(rm -rf …)".
 	WaitingFor string `json:"waitingFor,omitempty" q:"run"`
+	// WaitingAgent is the subagent whose request the agent is blocked on, or
+	// empty for the main session. Background subagents keep working behind the
+	// main session's prompts, so only the blocked agent's own completed tool call
+	// proves its prompt was answered.
+	WaitingAgent string `json:"waitingAgent,omitempty" q:"run"`
 	// PlanPending is true between an ExitPlanMode request and its resolution.
 	// While set, no Stop event may move the card out of debrief, so a plan
 	// awaiting approval cannot be silently downgraded to "finished".
