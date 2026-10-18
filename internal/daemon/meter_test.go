@@ -323,3 +323,35 @@ func stateWrittenAt(t *testing.T, svc *Service) time.Time {
 
 	return info.ModTime()
 }
+
+// Missing path-bearing hooks must not leave costs blank when runtime status works.
+func TestCodexMeterRecoversFromMissingTranscriptHook(t *testing.T) {
+	svc := newTestService(t)
+	ms := seedCodexMission(t, svc, mission.StatusActive, "")
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	records := `{"type":"turn_context","payload":{"model":"gpt-6-astra"}}` + "\n" +
+		`{"type":"token_usage_record","payload":{"thread_id":"thr-1","response_id":"plan","usage":{"input_tokens":1000000,"cached_input_tokens":500000,"output_tokens":100000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(records), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc.apply(WithMeter(usage.NewCodex(usage.DefaultPricing())))
+	// Start with an otherwise identical runtime reading: a path alone is a change.
+	reading := waitingReading(mission.ActivityBusy)
+	svc.applyRuntimeReading(ms.ID, reading)
+	reading.TranscriptPath = path
+	for range 2 {
+		svc.applyRuntimeReading(ms.ID, reading)
+		svc.meterMission(ms.ID)
+		got, _ := svc.Snapshot().Mission(ms.ID)
+		if got.TranscriptPath != path || math.Abs(got.Usage.USD-10.5) > 1e-9 {
+			t.Fatalf("path=%q usage=%+v, want recovered path and $10.50", got.TranscriptPath, got.Usage)
+		}
+	}
+	// Missing optional metadata on subsequent readings must retain the path.
+	reading.TranscriptPath = ""
+	svc.applyRuntimeReading(ms.ID, reading)
+	got, _ := svc.Snapshot().Mission(ms.ID)
+	if got.TranscriptPath != path {
+		t.Fatalf("path lost: %q", got.TranscriptPath)
+	}
+}

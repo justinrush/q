@@ -410,8 +410,16 @@ func TestRuntimePlanAndSessionGuards(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			tc.reading.TranscriptPath = "/recovered.jsonl"
 			svc.applyRuntimeReading(ms.ID, tc.reading)
 			got, _ := svc.Snapshot().Mission(ms.ID)
+			wantPath := "/recovered.jsonl"
+			if name == "unverified replacement" || name == "old launch" {
+				wantPath = ""
+			}
+			if got.TranscriptPath != wantPath {
+				t.Fatalf("path=%q want=%q", got.TranscriptPath, wantPath)
+			}
 			if got.AgentSessionID != tc.wantID || got.PlanPending != tc.wantPending || got.PlanApproved != tc.wantApproved || got.Status != tc.wantStatus {
 				t.Fatalf("state: %+v", got)
 			}

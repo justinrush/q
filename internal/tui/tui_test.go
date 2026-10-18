@@ -2562,9 +2562,9 @@ func TestBoardClickCardShiftsFocus(t *testing.T) {
 		t.Fatalf("initial lane = %d, want 0", board.lane)
 	}
 
-	// Click on active lane (lane 1), second card (y=7)
+	// Click on active lane (lane 1), second card
 	// Active lane spans [47, 93) at width 200
-	board.HandleMouse(mouseClickMsg(60, 7), 60, 7)
+	board.HandleMouse(mouseClickMsg(60, 1+cardHeight()), 60, 1+cardHeight())
 	if board.lane != 1 {
 		t.Errorf("lane = %d, want 1", board.lane)
 	}
@@ -2660,8 +2660,8 @@ func TestBoardClickScrolledLaneCalculatesIndex(t *testing.T) {
 		t.Errorf("cursor[0] = %d, want 2", board.cursor[0])
 	}
 
-	// Click on card 1 of visible area (y=7)
-	board.HandleMouse(mouseClickMsg(10, 7), 10, 7)
+	// Click on card 1 of visible area
+	board.HandleMouse(mouseClickMsg(10, 1+cardHeight()), 10, 1+cardHeight())
 	if board.cursor[0] != 3 {
 		t.Errorf("cursor[0] = %d, want 3", board.cursor[0])
 	}
@@ -2742,8 +2742,8 @@ func TestBoardFocusModeMouse(t *testing.T) {
 		t.Errorf("after clicking prev lane arrow, lane = %d, want 0", board.lane)
 	}
 
-	// Click second card in focus mode (y=7)
-	board.HandleMouse(mouseClickMsg(20, 7), 20, 7)
+	// Click second card in focus mode
+	board.HandleMouse(mouseClickMsg(20, 1+cardHeight()), 20, 1+cardHeight())
 	if board.cursor[0] != 1 {
 		t.Errorf("cursor[0] = %d, want 1", board.cursor[0])
 	}
@@ -2885,37 +2885,35 @@ func TestHeaderShowsWhetherThePairingIsUp(t *testing.T) {
 	}
 }
 
-// A card says what a mission plans on only when that differs from what it
-// implements on, since a card is narrow and the common case needs no more than
-// the word.
-func TestPlanPart(t *testing.T) {
+// Planning shows its effective model, including when implementation shares it.
+func TestPlanModelLine(t *testing.T) {
 	cases := []struct {
 		name string
 		ms   mission.Mission
 		want string
 	}{
-		{name: "no planning model", ms: mission.Mission{PlanMode: true, Model: "opus"}, want: "plan"},
+		{name: "no planning model", ms: mission.Mission{PlanMode: true, Model: "opus"}, want: "plan: opus"},
 		{
 			name: "the same pair",
 			ms:   mission.Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "opus", PlanEffort: "low"},
-			want: "plan",
+			want: "plan: opus/low",
 		},
 		{
 			name: "another model",
 			ms:   mission.Mission{PlanMode: true, Model: "opus", PlanModel: "fable"},
-			want: "plan fable",
+			want: "plan: fable",
 		},
 		{
 			name: "another model and effort",
 			ms:   mission.Mission{PlanMode: true, Model: "opus", Effort: "low", PlanModel: "fable", PlanEffort: "high"},
-			want: "plan fable/high",
+			want: "plan: fable/high",
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := planPart(tc.ms); got != tc.want {
-				t.Errorf("planPart() = %q, want %q", got, tc.want)
+			if got := modelLine(tc.ms, true, 80); got != tc.want {
+				t.Errorf("modelLine() = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -2979,5 +2977,22 @@ func TestPlanKeyOnALaunchedMission(t *testing.T) {
 				t.Errorf("body = %q, want it to contain %q", confirm.body, tc.wantInBody)
 			}
 		})
+	}
+}
+
+func TestCardSeparatesPhaseModelsFromCost(t *testing.T) {
+	ms := testMission("ms_1", "courier troubleshoot", "op_1", mission.StatusActive)
+	ms.Tool, ms.PlanMode = mission.ToolCodex, true
+	ms.Model, ms.Effort = "gpt-6.1-sol", "low"
+	ms.PlanModel, ms.PlanEffort = "gpt-6-astra", "medium"
+	ms.Usage = mission.Usage{USD: 1.25, PerModel: map[string]mission.ModelTokens{"gpt-6-astra": {Output: 10}}}
+	out := renderCard(ms, testOperation("op_1", "T", 0), "mini", 40, false)
+	for _, want := range []string{"$1.25", "@mini", "plan: gpt-6-astra/medium", "implement: gpt-6.1-sol/low"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+	if got := lipgloss.Height(out); got != cardHeight() {
+		t.Errorf("height=%d layout=%d", got, cardHeight())
 	}
 }

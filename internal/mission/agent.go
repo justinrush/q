@@ -134,7 +134,9 @@ type Reading struct {
 	// PreviousSessionID permits replacement only after that recorded thread
 	// was observed unloaded and a live root thread was found in the mission cwd.
 	PreviousSessionID string
-	HookEpoch         int
+	// TranscriptPath is the local rollout path reported by the runtime.
+	TranscriptPath string
+	HookEpoch      int
 	// PlanKnown distinguishes a structured observation from an unavailable
 	// plan-history endpoint. Busy status alone cannot dismiss a plan dialog.
 	PlanKnown    bool

@@ -117,9 +117,9 @@ func shareWidth(width int, doneExpanded bool) []int {
 	return widths
 }
 
-// cardHeight is the total rendered height of a card: three body lines, two border
+// cardHeight is the total rendered height of a card: five body lines, two border
 // lines, and the operation stripe.
-func cardHeight() int { return 3 + 2 + 1 }
+func cardHeight() int { return 5 + 2 + 1 }
 
 // clamp bounds v to the inclusive range [0, hi].
 //

@@ -9,7 +9,7 @@ import (
 // threadReader is the part of the app-server client [Runtime] needs. It is
 // declared here so a test can supply readings without a live codex process.
 type threadReader interface {
-	ReadThread(ctx context.Context, threadID string) (ThreadStatus, error)
+	ReadThread(ctx context.Context, threadID string) (ThreadSnapshot, error)
 	FindThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error)
 	Close() error
 }
@@ -37,13 +37,13 @@ func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading
 	}
 
 	if ms.AgentSessionID != "" {
-		status, err := r.threads.ReadThread(ctx, ms.AgentSessionID)
+		thread, err := r.threads.ReadThread(ctx, ms.AgentSessionID)
 		if err != nil {
 			return mission.Reading{}, false, err
 		}
 
-		if status.Type != statusNotLoaded {
-			return r.reading(ctx, ms, ms.AgentSessionID, status), true, nil
+		if thread.Status.Type != statusNotLoaded {
+			return r.reading(ctx, ms, thread), true, nil
 		}
 	}
 
@@ -52,18 +52,19 @@ func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading
 		return mission.Reading{}, false, err
 	}
 
-	out := r.reading(ctx, ms, thread.ID, thread.Status)
+	out := r.reading(ctx, ms, thread)
 	out.PreviousSessionID = ms.AgentSessionID
 	return out, true, nil
 }
 
-func (r *Runtime) reading(ctx context.Context, ms mission.Mission, id string, status ThreadStatus) mission.Reading {
-	out := reading(id, status)
+func (r *Runtime) reading(ctx context.Context, ms mission.Mission, thread ThreadSnapshot) mission.Reading {
+	out := reading(thread.ID, thread.Status)
+	out.TranscriptPath = thread.Path
 	out.HookEpoch = ms.HookEpoch
 	if ms.Planning() {
 		plans, ok := r.threads.(planReader)
 		if ok {
-			plan, err := plans.ReadPlan(ctx, id)
+			plan, err := plans.ReadPlan(ctx, thread.ID)
 			if err == nil {
 				out.PlanKnown, out.PlanPending, out.PlanApproved = plan.Known, plan.Pending, plan.Approved
 			}

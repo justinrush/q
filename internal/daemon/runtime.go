@@ -111,6 +111,9 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		before := ms
 		now := s.now()
 		ms.AgentSessionID = reading.SessionID
+		if reading.TranscriptPath != "" {
+			ms.TranscriptPath = reading.TranscriptPath
+		}
 		applyActivity(&ms, reading, now)
 		switchModel = !before.PlanApproved && ms.PlanApproved && ms.SplitsPlan() && !ms.Tool.PlanSwitchesItself()
 
@@ -266,6 +269,7 @@ func sameRuntimeState(a, b mission.Mission) bool {
 	if a.Status != b.Status || a.AgentState != b.AgentState ||
 		a.PlanPending != b.PlanPending || a.PlanApproved != b.PlanApproved || a.TurnEnded != b.TurnEnded ||
 		a.WaitingFor != b.WaitingFor || a.AgentSessionID != b.AgentSessionID ||
+		a.TranscriptPath != b.TranscriptPath ||
 		len(a.Badges) != len(b.Badges) {
 		return false
 	}

@@ -105,7 +105,7 @@ func TestManagerPausesAfterConnectionFailure(t *testing.T) {
 }
 
 func TestProxyReadThread(t *testing.T) {
-	stream := newScriptedStream("{\"id\":1,\"result\":{\"thread\":{\"id\":\"thr-1\",\"status\":{\"type\":\"active\",\"activeFlags\":[\"waitingOnApproval\"]}}}}\n")
+	stream := newScriptedStream("{\"id\":1,\"result\":{\"thread\":{\"id\":\"thr-1\",\"path\":\"/rollout.jsonl\",\"status\":{\"type\":\"active\",\"activeFlags\":[\"waitingOnApproval\"]}}}}\n")
 	proxy := &Proxy{client: NewClient(stream, stream)}
 	notifications := make(chan Notification)
 
@@ -118,7 +118,10 @@ func TestProxyReadThread(t *testing.T) {
 		t.Fatalf("ReadThread() error = %v", err)
 	}
 
-	if got := status.Classify(); got != mission.ActivityWaitingApproval {
+	if status.Path != "/rollout.jsonl" {
+		t.Fatalf("rollout path = %q", status.Path)
+	}
+	if got := status.Status.Classify(); got != mission.ActivityWaitingApproval {
 		t.Errorf("Classify() = %q", got)
 	}
 }

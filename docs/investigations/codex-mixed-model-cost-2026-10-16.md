@@ -1,7 +1,7 @@
 # Codex mixed-model card costs
 
-Investigated at q 328367c. The reported blank card has not yet been identified;
-the evidence below does not establish the cause of that particular incident.
+Initially investigated at q 328367c without an affected card. The October 18
+follow-up below identifies the missing measurement on a specific mission.
 
 ## Verified behavior
 
@@ -64,3 +64,56 @@ binary, or daemon configuration was changed during this investigation.
 
 All passed. The protocol tests required local test sockets outside the sandbox;
 the Go build cache was placed in a temporary directory.
+
+## October 18 follow-up: courier troubleshoot
+
+The user identified the active `courier troubleshoot` card, mission
+`ms_3bf886dfca0b`, on Justins-MacBook-Air. Read-only inspection found:
+
+- Stored session ID `01a14fb0-bf3f-73d0-b2a3-836934e1b100`, hook epoch 2,
+  and no transcript path or usage. The card also carried `hooks-silent`.
+- Its local Codex rollout exists and contains 12 `token_usage_record` entries,
+  one `turn_context` naming `gpt-6-astra`, and no oversized lines. No
+  conversation text was needed for this inspection.
+- The mission has not yet approved its plan. It is configured to implement on
+  `gpt-6.1-sol/low` after planning on `gpt-6-astra/medium`.
+
+This confirms the missing-path failure described above. It happens before
+implementation starts; the model switch itself is not needed to trigger it.
+The evidence does not explain why the path-bearing hooks were missed.
+
+The runtime already recovers session IDs through `thread/read` or `thread/list`,
+but discarded the thread's `path`. Both now carry that metadata through the
+runtime reading into the saved mission, behind the existing session and launch
+epoch guards. The installed Codex JSON schema confirms `Thread.path` is a
+nullable string. Missing optional paths preserve an already known path.
+The regular reconciler can then meter the rollout without another hook.
+No session-directory guessing or live-state repair is needed.
+
+Cards also grow from six to eight terminal rows, giving planning and
+implementation models (including effort) separate labeled lines. Tool, host,
+and cost remain ahead of other run metadata. Layout and scrolling use the new
+height.
+
+Regression coverage exercises protocol path decoding, runtime discovery and
+known-session recovery, stale-session/epoch guards, recovered-path metering,
+repeated measurements, and card cost/model visibility and height. The earlier
+mixed-model relaunch regression remains in place.
+
+The live daemon, installed binary, and mission state were not changed. Installing
+the updated q and restarting its daemon is needed for runtime recovery to run.
+
+Follow-up validation:
+
+- `go test ./internal/codex ./internal/daemon ./internal/tui ./internal/usage ./internal/mission`
+- `go test -race ./internal/codex ./internal/daemon ./internal/tui ./internal/usage ./internal/mission`
+- `go vet ./...`
+- `golangci-lint run --new-from-rev=328367c ./...` (no new issues)
+- `gofmt -l .` and `git diff --check`
+
+Go and lint caches were placed in temporary directories. Protocol, daemon, and
+TUI tests used local sockets outside the sandbox.
+
+Full `golangci-lint run ./...` reports 16 existing issues on unchanged code
+(including function length/complexity, unchecked Close, and existing constants).
+The check against the mission base reports zero new issues.

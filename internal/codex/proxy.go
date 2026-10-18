@@ -30,6 +30,7 @@ type Proxy struct {
 // ThreadSnapshot identifies one thread and its current runtime status.
 type ThreadSnapshot struct {
 	ID             string       `json:"id"`
+	Path           string       `json:"path"`
 	Status         ThreadStatus `json:"status"`
 	CWD            string       `json:"cwd"`
 	ParentThreadID string       `json:"parentThreadId"`
@@ -123,9 +124,9 @@ func startAppServer(
 	return &Proxy{client: client, process: process}, nil
 }
 
-// ReadThread returns the current runtime status without subscribing this
+// ReadThread returns thread metadata and status without subscribing this
 // connection to the thread's interactive event stream.
-func (p *Proxy) ReadThread(ctx context.Context, threadID string) (ThreadStatus, error) {
+func (p *Proxy) ReadThread(ctx context.Context, threadID string) (ThreadSnapshot, error) {
 	params := struct {
 		ThreadID     string `json:"threadId"`
 		IncludeTurns bool   `json:"includeTurns"`
@@ -134,22 +135,19 @@ func (p *Proxy) ReadThread(ctx context.Context, threadID string) (ThreadStatus, 
 	}
 
 	var result struct {
-		Thread struct {
-			ID     string       `json:"id"`
-			Status ThreadStatus `json:"status"`
-		} `json:"thread"`
+		Thread ThreadSnapshot `json:"thread"`
 	}
 
 	err := p.client.Request(ctx, "thread/read", params, &result)
 	if err != nil {
-		return ThreadStatus{}, err
+		return ThreadSnapshot{}, err
 	}
 
 	if result.Thread.ID == "" || result.Thread.Status.Type == "" {
-		return ThreadStatus{}, fmt.Errorf("thread/read returned no thread status")
+		return ThreadSnapshot{}, fmt.Errorf("thread/read returned no thread status")
 	}
 
-	return result.Thread.Status, nil
+	return result.Thread, nil
 }
 
 // FindThread locates the loaded thread for an exact working directory. Task
@@ -295,19 +293,19 @@ func NewManager(ctx context.Context, codexBin, version string, run runner.OS) *M
 }
 
 // ReadThread ensures the managed server is running, then reads one thread.
-func (m *Manager) ReadThread(ctx context.Context, threadID string) (ThreadStatus, error) {
-	var status ThreadStatus
+func (m *Manager) ReadThread(ctx context.Context, threadID string) (ThreadSnapshot, error) {
+	var thread ThreadSnapshot
 	err := m.withProxy(func(proxy *Proxy) error {
 		var readErr error
-		status, readErr = proxy.ReadThread(ctx, threadID)
+		thread, readErr = proxy.ReadThread(ctx, threadID)
 
 		return readErr
 	})
 	if err != nil {
-		return ThreadStatus{}, err
+		return ThreadSnapshot{}, err
 	}
 
-	return status, nil
+	return thread, nil
 }
 
 // FindThread locates a loaded thread by its exact working directory.

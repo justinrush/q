@@ -98,10 +98,8 @@ func (c *Codex) Tool() mission.Tool { return mission.ToolCodex }
 
 // Meter implements [mission.Meter].
 //
-// codex reports a rollout path on its hooks only sometimes — it runs ephemeral
-// sessions that keep none — and q deliberately does not go looking for one by
-// guessing at the layout of codex's session directory. A mission q was never
-// told the path for simply carries no cost.
+// The rollout path comes from hooks or runtime thread metadata. Ephemeral
+// sessions may keep none; a mission without a reported path carries no cost.
 func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 	if ms.TranscriptPath == "" {
 		return mission.Metering{}, false, nil

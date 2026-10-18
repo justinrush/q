@@ -35,13 +35,14 @@ func TestReadPlan(t *testing.T) {
 
 type recoveryThreads struct {
 	status ThreadStatus
+	path   string
 	thread ThreadSnapshot
 	found  bool
 	plan   planState
 }
 
-func (f recoveryThreads) ReadThread(_ context.Context, _ string) (ThreadStatus, error) {
-	return f.status, nil
+func (f recoveryThreads) ReadThread(_ context.Context, _ string) (ThreadSnapshot, error) {
+	return ThreadSnapshot{ID: "old", Status: f.status, Path: f.path}, nil
 }
 func (f recoveryThreads) FindThread(_ context.Context, _ string) (ThreadSnapshot, bool, error) {
 	return f.thread, f.found, nil
@@ -50,12 +51,20 @@ func (f recoveryThreads) ReadPlan(_ context.Context, _ string) (planState, error
 func (f recoveryThreads) Close() error                                            { return nil }
 
 func TestRuntimeRecoversUnloadedSession(t *testing.T) {
-	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusNotLoaded}, thread: ThreadSnapshot{ID: "new", Status: ThreadStatus{Type: statusIdle}}, found: true, plan: planState{Known: true, Pending: true}})
+	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusNotLoaded}, thread: ThreadSnapshot{ID: "new", Path: "/new.jsonl", Status: ThreadStatus{Type: statusIdle}}, found: true, plan: planState{Known: true, Pending: true}})
 	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, AgentSessionID: "old", MissionDir: "/mission", HookEpoch: 2, PlanMode: true})
 	if err != nil || !found {
 		t.Fatalf("found=%v err=%v", found, err)
 	}
-	if got.SessionID != "new" || got.PreviousSessionID != "old" || got.HookEpoch != 2 || !got.PlanPending {
+	if got.TranscriptPath != "/new.jsonl" || got.SessionID != "new" || got.PreviousSessionID != "old" || got.HookEpoch != 2 || !got.PlanPending {
 		t.Fatalf("reading: %+v", got)
+	}
+}
+
+func TestRuntimeRecoversTranscriptForKnownSession(t *testing.T) {
+	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusActive}, path: "/rollout.jsonl"})
+	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, AgentSessionID: "old", HookEpoch: 2})
+	if err != nil || !found || got.TranscriptPath != "/rollout.jsonl" || got.SessionID != "old" || got.HookEpoch != 2 {
+		t.Fatalf("reading=%+v found=%v err=%v", got, found, err)
 	}
 }
