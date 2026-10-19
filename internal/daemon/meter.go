@@ -55,7 +55,7 @@ func (s *Service) meterMission(id mission.MissionID) {
 		return
 	}
 
-	s.storeMetering(ms.ID, metering)
+	s.storeMetering(ms, metering)
 }
 
 // storeMetering persists a measurement, writing nothing when it says the same
@@ -65,7 +65,11 @@ func (s *Service) meterMission(id mission.MissionID) {
 // fifteen seconds. Without it, a board left open overnight would rewrite the
 // state file and append an event a few thousand times to record that nothing
 // happened.
-func (s *Service) storeMetering(id mission.MissionID, metering mission.Metering) {
+//
+// A reading is discarded if its session or checkpoint changed during the scan;
+// the next reconciler tick will measure the new snapshot instead.
+func (s *Service) storeMetering(expected mission.Mission, metering mission.Metering) {
+	id := expected.ID
 	now := s.now()
 
 	snap := s.store.Snapshot()
@@ -76,13 +80,25 @@ func (s *Service) storeMetering(id mission.MissionID, metering mission.Metering)
 	var (
 		updated      mission.Mission
 		missionMoved bool
+		applied      bool
 		limits       []mission.Limit
 	)
 
 	err := s.store.Mutate("mission.usage", func(snap *mission.Snapshot) error {
 		ms, ok := snap.Mission(id)
 		if !ok {
-			return nil
+			return mission.ErrUnchanged
+		}
+		if !s.holds(ms) || ms.HookEpoch != expected.HookEpoch ||
+			ms.AgentSessionID != expected.AgentSessionID || ms.TranscriptPath != expected.TranscriptPath ||
+			!ms.CodexUsage.Equal(expected.CodexUsage) || !ms.Usage.Equal(expected.Usage) {
+			return mission.ErrUnchanged
+		}
+		applied = true
+
+		if metering.CodexUsage != nil && !ms.CodexUsage.Equal(metering.CodexUsage) {
+			ms.CodexUsage = metering.CodexUsage.Clone()
+			snap.PutMission(ms)
 		}
 
 		if !metering.Usage.Empty() && !ms.UsageByHost[s.self].Equal(metering.Usage) {
@@ -116,6 +132,9 @@ func (s *Service) storeMetering(id mission.MissionID, metering mission.Metering)
 		return
 	}
 
+	if !applied {
+		return
+	}
 	if missionMoved {
 		s.publishMission(updated)
 	}
@@ -134,6 +153,10 @@ func (s *Service) meteringChanges(
 	ms, ok := snap.Mission(id)
 	if !ok {
 		return false
+	}
+
+	if metering.CodexUsage != nil && !ms.CodexUsage.Equal(metering.CodexUsage) {
+		return true
 	}
 
 	if !metering.Usage.Empty() && !ms.UsageByHost[s.self].Equal(metering.Usage) {

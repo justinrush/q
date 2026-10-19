@@ -190,6 +190,9 @@ type Mission struct {
 	// growing total, and the reconciler has no hook payload to read the path out
 	// of. Empty for an agent that keeps no transcript.
 	TranscriptPath string `json:"transcriptPath,omitempty" q:"local"`
+	// CodexUsage retains each local rollout's responses across thread replacement.
+	// Paths and response IDs never travel to a peer; only UsageByHost does.
+	CodexUsage CodexUsage `json:"codexUsage,omitempty" q:"local"`
 	// Usage is what the session has consumed, as last measured by a [Meter].
 	Usage Usage `json:"usage,omitzero" q:"run"`
 

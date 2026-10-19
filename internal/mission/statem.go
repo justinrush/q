@@ -93,7 +93,7 @@ func Reduce(ms Mission, ev HookEvent, now time.Time) Reduction {
 	// Recorded rather than used and discarded: metering also runs on a timer,
 	// and the reconciler has no hook payload to read the path out of.
 	if ev.TranscriptPath != "" {
-		ms.TranscriptPath = ev.TranscriptPath
+		ms.SetTranscriptPath(ev.TranscriptPath)
 	}
 
 	proposed := apply(&ms, ev, now)

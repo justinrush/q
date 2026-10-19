@@ -75,6 +75,7 @@ func cloneMission(t Mission) Mission {
 	t.LocalBadges = slices.Clone(t.LocalBadges)
 	t.BaseBranches = maps.Clone(t.BaseBranches)
 	t.Usage = t.Usage.Clone()
+	t.CodexUsage = t.CodexUsage.Clone()
 
 	if t.UsageByHost != nil {
 		byHost := make(map[HostID]Usage, len(t.UsageByHost))

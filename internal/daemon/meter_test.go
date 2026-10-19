@@ -355,3 +355,70 @@ func TestCodexMeterRecoversFromMissingTranscriptHook(t *testing.T) {
 		t.Fatalf("path lost: %q", got.TranscriptPath)
 	}
 }
+
+func TestCodexReplacementCheckpointSurvivesStoreRestart(t *testing.T) {
+	svc := newTestService(t)
+	ms := launchedServiceMission(t, svc)
+	ms.Tool, ms.Model, ms.PlanModel = mission.ToolCodex, "gpt-6.1-sol", "gpt-6-astra"
+	ms.PlanMode, ms.HookEpoch = true, 1
+	if err := svc.store.Mutate("test.codex", func(snap *mission.Snapshot) error { snap.PutMission(ms); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	svc.apply(WithMeter(usage.NewCodex(usage.DefaultPricing())))
+	write := func(name, model string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), name+".jsonl")
+		data := `{"type":"session_meta","payload":{"id":"` + name + `"}}` + "\n" +
+			`{"type":"turn_context","payload":{"model":"` + model + `"}}` + "\n" +
+			`{"type":"token_usage_record","payload":{"thread_id":"` + name + `","response_id":"` + name + `","usage":{"input_tokens":1000000,"cached_input_tokens":500000,"output_tokens":100000}}}` + "\n"
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	plan := write("plan", ms.PlanModel)
+	build := write("build", ms.Model)
+	// A hook supplies the initial path; runtime discovery supplies replacement.
+	svc.ApplyHook(api.HookRequest{Tool: mission.ToolCodex, MissionID: ms.ID, Event: mission.EventSessionStart,
+		HookEpoch: 1, Payload: hookPayload(t, "plan", plan)})
+	svc.meterMission(ms.ID)
+	before, _ := svc.Snapshot().Mission(ms.ID)
+	if math.Abs(before.Usage.USD-10.5) > 1e-9 {
+		t.Fatalf("planning: %+v", before.Usage)
+	}
+	svc.applyRuntimeReadingNow(ms.ID, mission.Reading{SessionID: "build", PreviousSessionID: "plan", HookEpoch: 1,
+		TranscriptPath: build, Activity: mission.ActivityBusy})
+	stored, _ := svc.Snapshot().Mission(ms.ID)
+	if len(stored.CodexUsage) != 2 || stored.TranscriptPath != build {
+		t.Fatalf("lost paths: %+v", stored.CodexUsage)
+	}
+	if err := os.Remove(plan); err != nil {
+		t.Fatal(err)
+	}
+	// Reload the real state file and discard the meter's process-local cache.
+	reopened, err := mission.Open(svc.dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.store = reopened
+	svc.apply(WithMeter(usage.NewCodex(usage.DefaultPricing())))
+	svc.meterMission(ms.ID)
+	stored, _ = svc.Snapshot().Mission(ms.ID)
+	if math.Abs(stored.Usage.USD-12.55) > 1e-9 || len(stored.Usage.PerModel) != 2 {
+		t.Fatalf("after restart: %+v", stored.Usage)
+	}
+	written := stateWrittenAt(t, svc)
+	svc.meterMission(ms.ID)
+	if !stateWrittenAt(t, svc).Equal(written) {
+		t.Fatal("identical checkpoint rewrote state")
+	}
+	// A scan that began before replacement must not overwrite the new total.
+	svc.storeMetering(before, mission.Metering{Usage: before.Usage, CodexUsage: before.CodexUsage})
+	if !stateWrittenAt(t, svc).Equal(written) {
+		t.Fatal("stale scan rewrote state")
+	}
+	stored, _ = svc.Snapshot().Mission(ms.ID)
+	if math.Abs(stored.Usage.USD-12.55) > 1e-9 {
+		t.Fatalf("stale scan erased usage: %+v", stored.Usage)
+	}
+}

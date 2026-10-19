@@ -17,10 +17,9 @@
 // Deduplicating by `response_id` defeats the first and keeping only records
 // whose `thread_id` is the rollout's own defeats the second.
 //
-// Unlike the claude reader, this one has been written against codex's protocol
-// definitions rather than against an observed file: the schema below is taken
-// from RolloutItemWire, TokenUsageRecord, TokenUsage and RateLimitSnapshot in
-// openai/codex. It has not been run against a rollout codex actually wrote.
+// The schema has also been checked against local Codex 0.163.0 rollouts.
+// Completed response measurements are persisted so thread replacement and
+// removal of an older rollout do not erase the planning phase's cost.
 
 package usage
 
@@ -29,7 +28,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -98,38 +99,86 @@ func (c *Codex) Tool() mission.Tool { return mission.ToolCodex }
 
 // Meter implements [mission.Meter].
 //
-// The rollout path comes from hooks or runtime thread metadata. Ephemeral
-// sessions may keep none; a mission without a reported path carries no cost.
+// Rollout paths come from hooks or runtime thread metadata. Checkpoints keep
+// completed responses even after an older file is removed.
 func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
-	if ms.TranscriptPath == "" {
+	checkpoint := ms.CodexUsage.Clone()
+	if ms.TranscriptPath != "" {
+		if checkpoint == nil {
+			checkpoint = mission.CodexUsage{}
+		}
+		if _, ok := checkpoint[ms.TranscriptPath]; !ok {
+			checkpoint[ms.TranscriptPath] = nil
+		}
+	}
+	if len(checkpoint) == 0 {
 		return mission.Metering{}, false, nil
 	}
-
-	counts, err := c.scan(ms.TranscriptPath)
-	if err != nil {
-		return mission.Metering{}, false, err
+	var limit mission.Limit
+	for _, path := range slices.Sorted(maps.Keys(checkpoint)) {
+		counts, err := c.scan(path)
+		if err != nil {
+			// A saved contribution remains valid when an old rollout is unreadable.
+			if len(checkpoint[path]) != 0 && path != ms.TranscriptPath {
+				continue
+			}
+			return mission.Metering{}, false, err
+		}
+		if path == ms.TranscriptPath {
+			limit = counts.limit
+		}
+		fallback := ""
+		if !ms.SplitsPlan() && len(checkpoint) == 1 {
+			fallback = ms.Model
+		}
+		checkpoint[path] = checkpointResponses(checkpoint[path], counts, fallback)
 	}
+	perModel := codexModels(checkpoint)
+	return mission.Metering{
+		Usage: c.pricing.Value(perModel), Limit: limit, CodexUsage: checkpoint,
+	}, len(perModel) != 0, nil
+}
 
+// checkpointResponses merges completed measurements without erasing responses
+// after a partial read, and freezes fallback attribution when first measured.
+func checkpointResponses(saved map[string]mission.CodexResponse, counts codexCounts, fallback string) map[string]mission.CodexResponse {
 	if len(counts.byResponse) == 0 {
-		return mission.Metering{Limit: counts.limit}, false, nil
+		return saved
 	}
-
-	perModel := map[string]mission.ModelTokens{}
-	for _, response := range counts.byResponse {
+	if saved == nil {
+		saved = map[string]mission.CodexResponse{}
+	}
+	for id, response := range counts.byResponse {
 		model := response.model
 		if model == "" {
-			model = ms.Model
+			model = saved[id].Model
+		}
+		if model == "" {
+			model = fallback
 		}
 		if model == "" {
 			model = unknownCodexModel
 		}
-		perModel[model] = perModel[model].Add(response.tokens)
+		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens}
 	}
+	return saved
+}
 
-	return mission.Metering{
-		Usage: c.pricing.Value(perModel),
-		Limit: counts.limit,
-	}, true, nil
+// codexModels deduplicates responses across paths (including renamed rollouts).
+// Stable path order also keeps ambiguous duplicate attribution deterministic.
+func codexModels(checkpoint mission.CodexUsage) map[string]mission.ModelTokens {
+	perModel := map[string]mission.ModelTokens{}
+	seen := map[string]bool{}
+	for _, path := range slices.Sorted(maps.Keys(checkpoint)) {
+		for id, response := range checkpoint[path] {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			perModel[response.Model] = perModel[response.Model].Add(response.Tokens)
+		}
+	}
+	return perModel
 }
 
 // scan reads a rollout, reusing the previous result when it has not changed.
@@ -179,8 +228,8 @@ func parseRollout(path string) (codexCounts, error) {
 
 	// A subagent rollout replays its parent's records before recording any of
 	// its own, and the replay is indistinguishable from real work except by the
-	// thread it names. The first thread this file records for itself is the one
-	// it belongs to; anything attributed elsewhere is somebody else's history.
+	// thread it names. Session metadata identifies the owner; legacy files without
+	// metadata fall back to the first usage record's thread.
 	var thread string
 
 	scanner := bufio.NewScanner(f)
@@ -193,6 +242,12 @@ func parseRollout(path string) (codexCounts, error) {
 		}
 
 		switch line.Type {
+		case "session_meta":
+			// Forked files may begin with their parent's usage. The file's own
+			// session metadata, not the first usage record, identifies its owner.
+			if line.Payload.ID != "" {
+				thread = line.Payload.ID
+			}
 		case rolloutTurnContext:
 			if model := line.Payload.model(); model != "" {
 				counts.model = model
@@ -204,7 +259,7 @@ func parseRollout(path string) (codexCounts, error) {
 		case rolloutTokenUsage:
 			record := line.Payload
 
-			if record.ResponseID == "" {
+			if record.ResponseID == "" || record.ThreadID == "" {
 				continue
 			}
 
@@ -216,13 +271,7 @@ func parseRollout(path string) (codexCounts, error) {
 				continue
 			}
 
-			if tokens := record.Usage.tokens(); !tokens.Zero() {
-				model := counts.model
-				if previous, ok := counts.byResponse[record.ResponseID]; ok {
-					model = previous.model
-				}
-				counts.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens}
-			}
+			counts.recordResponse(record)
 		}
 	}
 
@@ -231,6 +280,20 @@ func parseRollout(path string) (codexCounts, error) {
 	_ = scanner.Err()
 
 	return counts, nil
+}
+
+// recordResponse keeps the original model when a response is replayed after a
+// model switch, while accepting the response's latest reported token counts.
+func (c *codexCounts) recordResponse(record rolloutPayload) {
+	tokens := record.Usage.tokens()
+	if tokens.Zero() {
+		return
+	}
+	model := c.model
+	if previous, ok := c.byResponse[record.ResponseID]; ok {
+		model = previous.model
+	}
+	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens}
 }
 
 // rolloutLine is one record of a rollout file. Every record is a timestamp, a
@@ -260,6 +323,8 @@ func (l rolloutLine) observedAt() time.Time {
 // records are disjoint by tag, so one struct serves them all rather than
 // decoding each line twice to find out which shape it is.
 type rolloutPayload struct {
+	// session_meta.
+	ID string `json:"id"`
 	// token_usage_record.
 	ThreadID   string          `json:"thread_id"`
 	ResponseID string          `json:"response_id"`
