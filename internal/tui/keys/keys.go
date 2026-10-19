@@ -72,6 +72,8 @@ type Board struct {
 	Status     key.Binding
 	Filter     key.Binding
 	Clear      key.Binding
+	// Orientation flips the lanes between columns and rows.
+	Orientation key.Binding
 }
 
 // NewBoard returns the board bindings.
@@ -102,7 +104,27 @@ func NewBoard() Board {
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "move to lane…")),
 		Filter:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter by operation")),
 		Clear:      key.NewBinding(key.WithKeys("esc")),
+		Orientation: key.NewBinding(
+			key.WithKeys("v"), key.WithHelp("v", "lanes as rows/columns")),
 	}
+}
+
+// NewBoardHorizontal returns the board bindings for when lanes are drawn as rows.
+//
+// The keys are the same; what they do follows the screen. Up and down cross
+// between lanes, left and right move along one, and the shifted letters swap to
+// match: K/J carry a card to the lane above or below, H/L reorder it in place.
+func NewBoardHorizontal() Board {
+	b := NewBoard()
+
+	b.Left.SetHelp("←/h", "card")
+	b.Right.SetHelp("→", "card")
+	b.Up.SetHelp("↑/k", "lane")
+	b.Down.SetHelp("↓/j", "lane")
+	b.MoveLeft.SetHelp("H/L", "reorder")
+	b.ReorderUp.SetHelp("K/J", "move card")
+
+	return b
 }
 
 // ShortHelp implements help.KeyMap.
@@ -117,6 +139,7 @@ func (b Board) FullHelp() [][]key.Binding {
 		{b.MoveLeft, b.ReorderUp, b.Open, b.Log, b.Message},
 		{b.New, b.Edit, b.Delete, b.TogglePlan, b.Queue},
 		{b.Status, b.ToggleDone, b.Filter, b.Take, b.Review},
+		{b.Orientation},
 	}
 }
 

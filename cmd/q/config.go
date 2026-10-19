@@ -48,6 +48,7 @@ const (
 	EnvOpencodeModel = "Q_OPENCODE_MODEL"
 	EnvLogLevel      = "Q_LOG_LEVEL"
 	EnvMouse         = "Q_MOUSE"
+	EnvLanes         = "Q_LANES"
 	EnvMaxConcurrent = "Q_MAX_CONCURRENT"
 	EnvRemoteSSH     = "Q_REMOTE_SSH"
 	EnvHostName      = "Q_HOST_NAME"
@@ -131,7 +132,8 @@ type azureWitnessConfig struct {
 }
 
 type tuiConfig struct {
-	Mouse *bool `json:"mouse,omitempty"`
+	Mouse *bool   `json:"mouse,omitempty"`
+	Lanes *string `json:"lanes,omitempty"`
 }
 
 type reposConfig struct {
@@ -349,6 +351,10 @@ func applyFile(out *settings, file fileConfig) {
 		out.TUI.Mouse = *t.Mouse
 	}
 
+	if t := file.TUI; t != nil && t.Lanes != nil {
+		out.TUI.Lanes = strings.TrimSpace(*t.Lanes)
+	}
+
 	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
 	}
@@ -538,6 +544,10 @@ func applyEnv(out *settings) {
 		}
 	}
 
+	if v := strings.TrimSpace(os.Getenv(EnvLanes)); v != "" {
+		out.TUI.Lanes = v
+	}
+
 	if v := strings.TrimSpace(os.Getenv(EnvRemoteSSH)); v != "" {
 		out.Remote.SSH = strings.Fields(v)
 	}
@@ -661,7 +671,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Editor:   &editorConfig{Command: s.Editor.Command},
 		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
-		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse},
+		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
 		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
 		Review:   &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
