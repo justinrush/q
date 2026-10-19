@@ -57,6 +57,8 @@ func renderCard(ms mission.Mission, operation mission.Operation, host string, wi
 		styles.CardTitle.Render(styles.Truncate(agentGlyph(ms)+" "+ms.Name, content)),
 		detailLine(ms, content),
 		metaLine(ms, host, content),
+		modelLine(ms, true, content),
+		modelLine(ms, false, content),
 	}, "\n")
 
 	style := styles.Card
@@ -108,14 +110,8 @@ func detailLine(ms mission.Mission, width int) string {
 	return styles.CardDetail.Render(styles.Truncate(firstLine(ms.Prompt), width))
 }
 
-// metaLine is the card's third line: tool, cost, model, mode, repo count, age,
-// and badges.
-//
-// Cost sits second, ahead of the model that explains it, because the line is
-// truncated to the card's width and a lane can be narrow enough that only one
-// of them survives. Everything after it — the model, the repo count, the age,
-// the badges — is a property you chose or can recover by opening the mission. A
-// running total is the one thing on this line that exists only here.
+// metaLine shows the tool, host, cost and run metadata. Models have their own lines
+// so long model names cannot crowd the cost or one another off the card.
 func metaLine(ms mission.Mission, host string, width int) string {
 	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
 
@@ -127,21 +123,6 @@ func metaLine(ms mission.Mission, host string, width int) string {
 
 	if cost := missionCost(ms); cost != "" {
 		parts = append(parts, cost)
-	}
-
-	// The effort rides on the model rather than taking a slot of its own, because
-	// a card is narrow and the two only ever mean anything together.
-	if ms.Model != "" {
-		model := ms.Model
-		if ms.Effort != "" {
-			model += "/" + ms.Effort
-		}
-
-		parts = append(parts, model)
-	}
-
-	if ms.PlanMode {
-		parts = append(parts, planPart(ms))
 	}
 
 	// A review can be renamed, so the name alone cannot be relied on to say
@@ -289,16 +270,23 @@ func firstLine(s string) string {
 	return s
 }
 
-// planPart marks a plan-mode card, naming what it plans on when that is not
-// what it implements on.
-func planPart(ms mission.Mission) string {
-	if !ms.SplitsPlan() {
-		return "plan"
+// modelLine gives each phase its own line, including when it shares a model.
+func modelLine(ms mission.Mission, plan bool, width int) string {
+	label, model, effort := "implement", ms.Model, ms.Effort
+	if plan {
+		label = "plan"
+		if !ms.PlanMode {
+			return styles.CardDetail.Render(styles.Truncate("plan: off", width))
+		}
+		if ms.PlanModel != "" {
+			model, effort = ms.PlanModel, ms.PlanEffort
+		}
 	}
-
-	if ms.PlanEffort == "" {
-		return "plan " + ms.PlanModel
+	if model == "" {
+		model = "default"
 	}
-
-	return "plan " + ms.PlanModel + "/" + ms.PlanEffort
+	if effort != "" {
+		model += "/" + effort
+	}
+	return styles.CardDetail.Render(styles.Truncate(label+": "+model, width))
 }

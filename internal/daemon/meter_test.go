@@ -3,12 +3,15 @@ package daemon
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/usage"
 )
 
 // fakeMeter records what it was asked and answers with a fixed reading.
@@ -152,6 +155,69 @@ func TestMeterMissionStoresAndPublishes(t *testing.T) {
 	}
 }
 
+// Exercise the actual Codex meter across the daemon's relaunch boundary. A
+// planning/implementation model split must preserve both the transcript path
+// and the planning cost, then re-read the appended implementation responses.
+func TestCodexMeterAcrossPlanModelRelaunch(t *testing.T) {
+	svc := newTestService(t)
+	ms := launchedServiceMission(t, svc)
+	ms.Tool = mission.ToolCodex
+	ms.Model, ms.PlanModel = "gpt-6.1-sol", "gpt-6-astra"
+	ms.PlanMode = true
+	ms.HookEpoch = 1
+	if err := svcStore(svc).Mutate("test.codex", func(snap *mission.Snapshot) error {
+		snap.PutMission(ms)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	svc.apply(WithMeter(usage.NewCodex(usage.DefaultPricing())))
+
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	plan := `{"type":"turn_context","payload":{"model":"gpt-6-astra"}}` + "\n" +
+		`{"type":"token_usage_record","payload":{"thread_id":"thread","response_id":"plan","usage":{"input_tokens":1000000,"cached_input_tokens":500000,"output_tokens":100000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(plan), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hook := func(event string, epoch int, transcript string) {
+		t.Helper()
+		svc.ApplyHook(api.HookRequest{
+			Tool: mission.ToolCodex, MissionID: ms.ID, Event: event,
+			HookEpoch: epoch, Payload: hookPayload(t, "thread", transcript),
+		})
+	}
+	hook(mission.EventSessionStart, 1, path)
+	hook(mission.EventStop, 1, path)
+	stored, _ := svc.Snapshot().Mission(ms.ID)
+	if math.Abs(stored.Usage.USD-10.5) > 1e-9 {
+		t.Fatalf("planning usage = %+v, want $10.50", stored.Usage)
+	}
+
+	if err := svc.setPlanApproved(ms.ID, true, false); err != nil {
+		t.Fatal(err)
+	}
+	stored, _ = svc.Snapshot().Mission(ms.ID)
+	stored.HookEpoch++
+	if _, err := svc.commitRelaunch(stored); err != nil {
+		t.Fatal(err)
+	}
+	// A resumed hook need not repeat the path: the existing one must survive.
+	hook(mission.EventSessionStart, 2, "")
+	build := `{"type":"turn_context","payload":{"model":"gpt-6.1-sol"}}` + "\n" +
+		`{"type":"token_usage_record","payload":{"thread_id":"thread","response_id":"build","usage":{"input_tokens":1000000,"cached_input_tokens":500000,"output_tokens":100000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(plan+build), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 { // Repeated reads must not add the planning cost again.
+		svc.meterMission(ms.ID)
+		stored, _ = svc.Snapshot().Mission(ms.ID)
+		if stored.TranscriptPath != path || len(stored.Usage.PerModel) != 2 ||
+			stored.Usage.Unpriced || math.Abs(stored.Usage.USD-12.55) > 1e-9 {
+			t.Fatalf("after relaunch: path=%q usage=%+v, want both models and $12.55", stored.TranscriptPath, stored.Usage)
+		}
+	}
+}
+
 // The reconciler meters every running mission every fifteen seconds. A reading
 // that says what the last one said must not rewrite the state file, or a board
 // left open overnight records thousands of non-events.
@@ -256,4 +322,36 @@ func stateWrittenAt(t *testing.T, svc *Service) time.Time {
 	}
 
 	return info.ModTime()
+}
+
+// Missing path-bearing hooks must not leave costs blank when runtime status works.
+func TestCodexMeterRecoversFromMissingTranscriptHook(t *testing.T) {
+	svc := newTestService(t)
+	ms := seedCodexMission(t, svc, mission.StatusActive, "")
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	records := `{"type":"turn_context","payload":{"model":"gpt-6-astra"}}` + "\n" +
+		`{"type":"token_usage_record","payload":{"thread_id":"thr-1","response_id":"plan","usage":{"input_tokens":1000000,"cached_input_tokens":500000,"output_tokens":100000}}}` + "\n"
+	if err := os.WriteFile(path, []byte(records), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	svc.apply(WithMeter(usage.NewCodex(usage.DefaultPricing())))
+	// Start with an otherwise identical runtime reading: a path alone is a change.
+	reading := waitingReading(mission.ActivityBusy)
+	svc.applyRuntimeReading(ms.ID, reading)
+	reading.TranscriptPath = path
+	for range 2 {
+		svc.applyRuntimeReading(ms.ID, reading)
+		svc.meterMission(ms.ID)
+		got, _ := svc.Snapshot().Mission(ms.ID)
+		if got.TranscriptPath != path || math.Abs(got.Usage.USD-10.5) > 1e-9 {
+			t.Fatalf("path=%q usage=%+v, want recovered path and $10.50", got.TranscriptPath, got.Usage)
+		}
+	}
+	// Missing optional metadata on subsequent readings must retain the path.
+	reading.TranscriptPath = ""
+	svc.applyRuntimeReading(ms.ID, reading)
+	got, _ := svc.Snapshot().Mission(ms.ID)
+	if got.TranscriptPath != path {
+		t.Fatalf("path lost: %q", got.TranscriptPath)
+	}
 }

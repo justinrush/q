@@ -183,7 +183,7 @@ type Mission struct {
 	// LaunchError records why the last launch attempt failed.
 	LaunchError string `json:"launchError,omitempty" q:"run"`
 	// TranscriptPath is the agent's own conversation log, learned from any hook
-	// event that carries one.
+	// event that carries one or recovered from runtime thread metadata.
 	//
 	// It is stored rather than used and discarded because metering runs on a
 	// timer as well as on a hook: a turn that takes ten minutes should show a

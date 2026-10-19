@@ -63,7 +63,7 @@ func TestProxyWebSocketProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Type != "active" || len(status.ActiveFlags) != 1 || status.ActiveFlags[0] != flagWaitingInput {
+	if status.Status.Type != "active" || len(status.Status.ActiveFlags) != 1 || status.Status.ActiveFlags[0] != flagWaitingInput {
 		t.Fatalf("unexpected status: %+v", status)
 	}
 }
