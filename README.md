@@ -758,9 +758,15 @@ q ships Claude rates (including Opus/Sonnet 5.5 and Fable/Mythos 5.1) and OpenAI
 for GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4,
 and GPT-5/5.1/5.3 Codex.
 Codex usage is priced per response using the recorded turn model, including discounted
-cached input. Rates use [standard short-context API pricing](https://developers.openai.com/api/docs/pricing)
+cached input. Local response checkpoints retain planning spend when Codex replaces a
+thread, including after a daemon restart or removal of an already measured rollout.
+Repeated responses and inherited parent history are not charged again. When a split-model
+response has no recorded model, its tokens remain unpriced instead of using the
+implementation model's rate. Runtime metadata can recover paths when hooks omit them.
+Checkpoints contain response IDs and token counts, not conversation text; they stay on
+the local host, while aggregate usage continues to sync to peers. Rates use [standard short-context API pricing](https://developers.openai.com/api/docs/pricing)
 and [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing),
-verified October 5, 2026; they exclude service-tier, long-context, regional, and tool
+verified October 5, 2026 (Astra and GPT-6.1 Sol rechecked October 19); they exclude service-tier, long-context, regional, and tool
 surcharges. This is a comparison estimate, not a subscription charge. Override rates
 with `cost.models` as needed; metering does not fetch prices at runtime.
 Catalog availability does not imply a published price: `gpt-reserve` and

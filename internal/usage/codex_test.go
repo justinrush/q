@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -361,6 +362,76 @@ func TestCodexPricesGPT61Sol(t *testing.T) {
 		// Fresh input $1, cache read $0.05, cache write $0.25, output $1.
 		if err != nil || !measured || got.Usage.Unpriced || math.Abs(got.Usage.USD-2.3) > 1e-9 {
 			t.Fatalf("Meter() = %+v, %v, %v; want $2.30 priced", got, measured, err)
+		}
+	}
+}
+
+func TestCodexRetainsReplacedRollouts(t *testing.T) {
+	plan := writeRollout(t, `{"type":"session_meta","payload":{"id":"planner"}}`,
+		turnContext("gpt-6-astra"), tokenRecord("planner", "plan", 1_000_000, 500_000, 0, 100_000))
+	build := writeRollout(t, `{"type":"session_meta","payload":{"id":"builder"}}`,
+		// A fork replays parent usage before its own model context.
+		turnContext("gpt-6-astra"), tokenRecord("planner", "plan", 1_000_000, 500_000, 0, 100_000),
+		turnContext("gpt-6.1-sol"), tokenRecord("builder", "build", 1_000_000, 500_000, 0, 100_000))
+	ms := mission.Mission{Tool: mission.ToolCodex, Model: "gpt-6.1-sol", PlanModel: "gpt-6-astra", PlanMode: true}
+	ms.SetTranscriptPath(plan)
+	first, measured, err := NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil || !measured || math.Abs(first.Usage.USD-10.5) > 1e-9 {
+		t.Fatalf("planning: %+v, %v", first, err)
+	}
+	ms.CodexUsage = first.CodexUsage
+	ms.SetTranscriptPath(build)
+	ms.PlanApproved = true
+	// Round-trip the persisted checkpoint, then remove the old rollout and
+	// create a new meter: neither the file nor the in-memory cache can help.
+	data, err := json.Marshal(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &ms); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(plan); err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		got, measured, err := NewCodex(DefaultPricing()).Meter(ms)
+		if err != nil || !measured || got.Usage.Unpriced || math.Abs(got.Usage.USD-12.55) > 1e-9 || len(got.Usage.PerModel) != 2 {
+			t.Fatalf("replaced thread: %+v, %v", got, err)
+		}
+		if len(got.CodexUsage[build]) != 1 {
+			t.Fatal("inherited parent records were checkpointed")
+		}
+		ms.CodexUsage = got.CodexUsage
+	}
+	// Losing even the active transcript must retain all completed responses.
+	if err := os.Remove(build); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil || math.Abs(got.Usage.USD-12.55) > 1e-9 {
+		t.Fatalf("removed active rollout: %+v, %v", got, err)
+	}
+}
+
+func TestCodexFindsUnmeasuredPreviousRolloutAndDeduplicatesCopies(t *testing.T) {
+	path := writeRollout(t, turnContext("gpt-6-astra"), tokenRecord("t", "r", 100, 0, 0, 10))
+	copyPath := writeRollout(t, turnContext("gpt-6-astra"), tokenRecord("t", "r", 100, 0, 0, 10))
+	ms := mission.Mission{Tool: mission.ToolCodex, TranscriptPath: path}
+	ms.SetTranscriptPath(copyPath) // Replacement before the first metering tick.
+	got, measured, err := NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil || !measured || got.Usage.Tokens() != 110 || len(got.CodexUsage) != 2 {
+		t.Fatalf("duplicate rollout: %+v, %v", got, err)
+	}
+}
+
+func TestCodexMissingModelDoesNotChargeImplementationRate(t *testing.T) {
+	path := writeRollout(t, tokenRecord("t", "r", 1000, 0, 0, 100))
+	for _, approved := range []bool{false, true} {
+		ms := mission.Mission{TranscriptPath: path, Model: "gpt-6.1-sol", PlanModel: "gpt-6-astra", PlanMode: true, PlanApproved: approved}
+		got, measured, err := NewCodex(DefaultPricing()).Meter(ms)
+		if err != nil || !measured || !got.Usage.Unpriced || got.Usage.USD != 0 || got.Usage.PerModel[unknownCodexModel].Total() != 1100 {
+			t.Fatalf("ambiguous model: %+v, %v", got, err)
 		}
 	}
 }

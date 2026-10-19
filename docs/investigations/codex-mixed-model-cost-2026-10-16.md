@@ -117,3 +117,58 @@ TUI tests used local sockets outside the sandbox.
 Full `golangci-lint run ./...` reports 16 existing issues on unchanged code
 (including function length/complexity, unchecked Close, and existing constants).
 The check against the mission base reports zero new issues.
+
+## October 19 follow-up: q multi line model
+
+Rebased this mission onto main at `e87b49a`, which includes the earlier runtime
+path recovery and eight-row card changes. Installed q was still v0.3.12 at
+`0f95d09`, explaining why those changes were absent locally.
+
+Read-only inspection of mission `ms_2afd9566ac47` found no saved transcript path
+or usage, despite a local Codex rollout containing completed response records.
+Both configured phases use `gpt-6-astra/low`, so this mission cannot itself prove
+a mixed-model transition. An isolated snapshot of its rollout contained 35
+responses: 2,199,635 input tokens, including 2,065,408 cached input tokens, and
+13,790 output tokens. Independent arithmetic and the actual meter both returned
+$4.097178. An isolated render showed `$4.10` plus separate `plan:` and
+`implement:` rows. The temporary test and copied conversation are not committed.
+The installed binary, live daemon, and live mission state were not modified.
+
+The remaining thread-replacement gap is addressed with local checkpoints keyed
+by rollout path and response ID. Accepted hooks/runtime readings retain both old
+and new paths. Measured response counts survive state reloads and missing older
+files; totals deduplicate response IDs across paths. Rollout session metadata
+identifies the owning thread, excluding parent records replayed before a fork's
+own usage. Legacy files without session metadata retain the first-thread fallback.
+Checkpoint data never syncs to peers; aggregate usage still does.
+
+Missing model context in a split-model rollout remains unpriced rather than
+being charged at the implementation model's rate. For legacy single-model
+rollouts, the existing configured-model fallback is retained and checkpointed.
+Pricing sums models in a stable order to avoid floating-point changes triggering
+repeated state writes. In-flight scans cannot overwrite a replacement session's
+checkpoint or a newer measurement.
+
+Astra and GPT-6.1 Sol standard short-context rates were rechecked against
+https://developers.openai.com/api/docs/pricing on October 19: input/cached-input/
+output remain $10/$1/$50 and $2/$0.10/$10 per million respectively. Existing
+service-tier, long-context, regional, and tool-surcharge exclusions still apply.
+
+Regression cases cover same-thread switches, fresh-thread approval, inherited
+parent history, copied rollouts, replacement before the first metering tick,
+missing measured rollouts, JSON/store reloads with a new meter, ambiguous model
+attribution, local-only checkpoint cloning, unchanged-state polling, and stale
+scan rejection. Data already lost before q discovered or measured a rollout
+cannot be reconstructed by a checkpoint.
+
+Validation for this follow-up:
+
+- `go test -race ./...`
+- `go vet ./...`
+- `go build -o /tmp/q-multi-line-model-check ./cmd/q`
+- `golangci-lint run --new-from-rev=origin/main ./...` (zero issues)
+- `gofmt -l .` and `git diff --check`
+
+Full lint reports 15 pre-existing findings. The touched rollout parser's
+complexity warning was removed by extracting response recording. Socket-based
+tests ran outside the filesystem sandbox; Go/lint caches used temporary paths.

@@ -17,6 +17,7 @@
 package usage
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -65,6 +66,7 @@ type Pricing struct {
 func DefaultPricing() Pricing {
 	return Pricing{Models: map[string]ModelPrice{
 		// OpenAI standard, short-context API rates, verified 2026-10-05.
+		// Astra and GPT-6.1 Sol rechecked 2026-10-19; rates unchanged.
 		// https://developers.openai.com/api/docs/pricing
 		"gpt-5-codex":   {Input: 1.25, Output: 10, CacheRead: 0.125},
 		"gpt-5.1-codex": {Input: 1.25, Output: 10, CacheRead: 0.125},
@@ -165,7 +167,8 @@ func (p Pricing) Cost(model string, tokens mission.ModelTokens) (float64, bool) 
 func (p Pricing) Value(perModel map[string]mission.ModelTokens) mission.Usage {
 	out := mission.Usage{PerModel: perModel}
 
-	for model, tokens := range perModel {
+	for _, model := range slices.Sorted(maps.Keys(perModel)) {
+		tokens := perModel[model]
 		dollars, ok := p.Cost(model, tokens)
 		if !ok {
 			out.Unpriced = true

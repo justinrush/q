@@ -175,6 +175,8 @@ type Healer interface {
 
 // Metering is one measurement of what a mission's agent session has consumed.
 type Metering struct {
+	// CodexUsage is the host-local checkpoint underlying Usage.
+	CodexUsage CodexUsage
 	// Usage is the running total for the session.
 	Usage Usage
 	// Limit is the most recent refusal the session recorded, zero when the agent

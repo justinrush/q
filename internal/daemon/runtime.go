@@ -112,7 +112,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		now := s.now()
 		ms.AgentSessionID = reading.SessionID
 		if reading.TranscriptPath != "" {
-			ms.TranscriptPath = reading.TranscriptPath
+			ms.SetTranscriptPath(reading.TranscriptPath)
 		}
 		applyActivity(&ms, reading, now)
 		switchModel = !before.PlanApproved && ms.PlanApproved && ms.SplitsPlan() && !ms.Tool.PlanSwitchesItself()
