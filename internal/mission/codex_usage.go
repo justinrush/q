@@ -7,6 +7,9 @@ import "maps"
 type CodexResponse struct {
 	Model  string      `json:"model"`
 	Tokens ModelTokens `json:"tokens"`
+	// Phase is empty for a response measured before q recorded phases, or
+	// whose turn did not say which collaboration mode it ran in.
+	Phase Phase `json:"phase,omitempty"`
 }
 
 // CodexUsage maps local rollout paths to their measured responses. A nil entry

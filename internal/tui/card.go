@@ -163,21 +163,36 @@ func metaLine(ms mission.Mission, host string, width int) string {
 // prices for — the count itself is shown instead. "$0.00+" would be true and
 // useless; the token count is the honest thing left to say, and adding the
 // rates under "cost" in the config turns it back into money.
-func missionCost(ms mission.Mission) string {
-	if ms.Usage.Empty() {
+func missionCost(ms mission.Mission) string { return usageCost(ms.Usage) }
+
+// usageCost renders one measurement the way [missionCost] describes.
+func usageCost(usage mission.Usage) string {
+	if usage.Empty() {
 		return ""
 	}
 
-	if ms.Usage.Unpriced && ms.Usage.USD == 0 {
-		return formatTokens(ms.Usage.Tokens())
+	if usage.Unpriced && usage.USD == 0 {
+		return formatTokens(usage.Tokens())
 	}
 
-	out := formatUSD(ms.Usage.USD)
-	if ms.Usage.Unpriced {
+	out := formatUSD(usage.USD)
+	if usage.Unpriced {
 		out += "+"
 	}
 
 	return out
+}
+
+// phaseCost renders what a plan-mode mission spent in one phase, or "" when the
+// meter could not place every request in a phase or the phase has cost nothing
+// yet. A mission that never plans spends everything implementing, which the
+// total already says.
+func phaseCost(ms mission.Mission, phase mission.Phase) string {
+	if !ms.PlanMode {
+		return ""
+	}
+
+	return usageCost(ms.Usage.Phases[phase])
 }
 
 // formatTokens renders a token count in at most five columns.
@@ -271,10 +286,13 @@ func firstLine(s string) string {
 }
 
 // modelLine gives each phase its own line, including when it shares a model.
+//
+// The phase's cost ends the line and is kept when the model name is truncated,
+// because it is the one thing on the line that is not also in the brief.
 func modelLine(ms mission.Mission, plan bool, width int) string {
-	label, model, effort := "implement", ms.Model, ms.Effort
+	label, model, effort, phase := "implement", ms.Model, ms.Effort, mission.PhaseImplement
 	if plan {
-		label = "plan"
+		label, phase = "plan", mission.PhasePlan
 		if !ms.PlanMode {
 			return styles.CardDetail.Render(styles.Truncate("plan: off", width))
 		}
@@ -288,5 +306,10 @@ func modelLine(ms mission.Mission, plan bool, width int) string {
 	if effort != "" {
 		model += "/" + effort
 	}
-	return styles.CardDetail.Render(styles.Truncate(label+": "+model, width))
+	line := label + ": " + model
+	if cost := phaseCost(ms, phase); cost != "" {
+		suffix := " · " + cost
+		line = styles.Truncate(line, width-lipgloss.Width(suffix)) + suffix
+	}
+	return styles.CardDetail.Render(styles.Truncate(line, width))
 }

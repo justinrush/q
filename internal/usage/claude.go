@@ -35,6 +35,9 @@ type Claude struct {
 
 	mu     sync.Mutex
 	cached map[string]cacheEntry
+	// spawns remembers which tool call started each subagent, which never
+	// changes once claude has written it down.
+	spawns map[string]string
 }
 
 // cacheEntry remembers a file's last scan, so an unchanged transcript costs a
@@ -56,13 +59,18 @@ type fileCounts struct {
 	// for that request. Summing the records rather than the requests inflates
 	// every total by however many updates each response happened to take.
 	byRequest map[string]requestUsage
-	quota     mission.Limit
+	// toolPhases records the phase of every tool call the file's agent made, so
+	// a subagent can be placed in the phase of the call that started it.
+	toolPhases map[string]mission.Phase
+	quota      mission.Limit
 }
 
-// requestUsage is one API request's usage, and which model served it.
+// requestUsage is one API request's usage, which model served it, and the
+// phase it was made in, empty when the agent recorded no mode for it.
 type requestUsage struct {
 	model  string
 	tokens mission.ModelTokens
+	phase  mission.Phase
 }
 
 // NewClaude returns a meter that prices with the given table.
@@ -71,7 +79,7 @@ func NewClaude(pricing Pricing) *Claude {
 		pricing = DefaultPricing()
 	}
 
-	return &Claude{pricing: pricing, cached: map[string]cacheEntry{}}
+	return &Claude{pricing: pricing, cached: map[string]cacheEntry{}, spawns: map[string]string{}}
 }
 
 // Tool implements [mission.Meter].
@@ -96,7 +104,7 @@ func (c *Claude) read(transcript string) (mission.Metering, bool, error) {
 		return mission.Metering{}, false, err
 	}
 
-	byRequest := map[string]requestUsage{}
+	files := make(map[string]fileCounts, len(paths))
 
 	var quota mission.Limit
 
@@ -106,12 +114,25 @@ func (c *Claude) read(transcript string) (mission.Metering, bool, error) {
 			return mission.Metering{}, false, err
 		}
 
-		for id, usage := range counts.byRequest {
-			byRequest[id] = usage
-		}
+		files[path] = counts
 
 		if counts.quota.ObservedAt.After(quota.ObservedAt) {
 			quota = counts.quota
+		}
+	}
+
+	subagentPhase := c.subagentPhases(transcript, paths[1:], files)
+	byRequest := map[string]requestUsage{}
+
+	for _, path := range paths {
+		for id, usage := range files[path].byRequest {
+			// A subagent cannot leave plan mode, and records no mode of its
+			// own, so its work belongs to the phase that started it.
+			if path != transcript {
+				usage.phase = subagentPhase[path]
+			}
+
+			byRequest[id] = usage
 		}
 	}
 
@@ -120,11 +141,111 @@ func (c *Claude) read(transcript string) (mission.Metering, bool, error) {
 	}
 
 	perModel := map[string]mission.ModelTokens{}
+	perPhase := map[mission.Phase]map[string]mission.ModelTokens{}
+
 	for _, usage := range byRequest {
 		perModel[usage.model] = perModel[usage.model].Add(usage.tokens)
+
+		if perPhase == nil {
+			continue
+		}
+
+		if usage.phase == "" {
+			perPhase = nil
+
+			continue
+		}
+
+		if perPhase[usage.phase] == nil {
+			perPhase[usage.phase] = map[string]mission.ModelTokens{}
+		}
+
+		perPhase[usage.phase][usage.model] = perPhase[usage.phase][usage.model].Add(usage.tokens)
 	}
 
-	return mission.Metering{Usage: c.pricing.Value(perModel), Limit: quota}, true, nil
+	return mission.Metering{Usage: c.pricing.ValuePhases(perModel, perPhase), Limit: quota}, true, nil
+}
+
+// subagentPhases places each subagent in the phase of the tool call that
+// started it, following nested subagents back to the session.
+//
+// A subagent whose starting call cannot be found is left without a phase, which
+// withholds the whole split rather than guessing at its share.
+func (c *Claude) subagentPhases(transcript string, subagents []string, files map[string]fileCounts) map[string]mission.Phase {
+	caller := map[string]string{}
+	for path, counts := range files {
+		for id := range counts.toolPhases {
+			caller[id] = path
+		}
+	}
+
+	out := make(map[string]mission.Phase, len(subagents))
+
+	var resolve func(path string) mission.Phase
+
+	resolve = func(path string) mission.Phase {
+		if phase, ok := out[path]; ok {
+			return phase
+		}
+
+		// Recorded before recursing, so a cycle in malformed metadata ends
+		// unplaced rather than looping.
+		out[path] = ""
+
+		call := c.spawnedBy(path)
+		parent, ok := caller[call]
+
+		var phase mission.Phase
+
+		switch {
+		case !ok:
+		case parent == transcript:
+			phase = files[transcript].toolPhases[call]
+		default:
+			phase = resolve(parent)
+		}
+
+		out[path] = phase
+
+		return phase
+	}
+
+	for _, path := range subagents {
+		resolve(path)
+	}
+
+	return out
+}
+
+// spawnedBy returns the tool call that started a subagent, read from the
+// metadata claude writes beside its transcript, or "" when there is none.
+func (c *Claude) spawnedBy(subagent string) string {
+	c.mu.Lock()
+	call, ok := c.spawns[subagent]
+	c.mu.Unlock()
+
+	if ok {
+		return call
+	}
+
+	data, err := os.ReadFile(strings.TrimSuffix(subagent, filepath.Ext(subagent)) + ".meta.json")
+	if err != nil {
+		return ""
+	}
+
+	var meta struct {
+		ToolUseID string `json:"toolUseId"`
+	}
+
+	if json.Unmarshal(data, &meta) != nil || meta.ToolUseID == "" {
+		return ""
+	}
+
+	c.mu.Lock()
+	c.spawns[subagent] = meta.ToolUseID
+	c.mu.Unlock()
+
+	return meta.ToolUseID
 }
 
 // transcriptSet returns the session transcript plus each of its subagents'.
@@ -191,7 +312,12 @@ func parseTranscript(path string) (fileCounts, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	counts := fileCounts{byRequest: map[string]requestUsage{}}
+	counts := fileCounts{byRequest: map[string]requestUsage{}, toolPhases: map[string]mission.Phase{}}
+
+	// mode is the permission mode claude last recorded. It writes one down
+	// whenever a session starts or the mode changes, and stamps it on each
+	// prompt, so every request that follows was made in it.
+	var mode string
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
@@ -205,8 +331,17 @@ func parseTranscript(path string) (fileCounts, error) {
 			continue
 		}
 
+		if rec.PermissionMode != "" && (rec.Type == "permission-mode" || rec.Type == "user") {
+			mode = rec.PermissionMode
+		}
+
 		if rec.Type != "assistant" || rec.RequestID == "" {
 			continue
+		}
+
+		phase := modePhase(mode)
+		for _, id := range rec.toolUseIDs() {
+			counts.toolPhases[id] = phase
 		}
 
 		if quota, ok := rec.limit(); ok && quota.ObservedAt.After(counts.quota.ObservedAt) {
@@ -222,7 +357,13 @@ func parseTranscript(path string) (fileCounts, error) {
 			continue
 		}
 
-		counts.byRequest[rec.RequestID] = requestUsage{model: rec.Message.Model, tokens: tokens}
+		// Every streaming record repeats the request's usage, and the first
+		// one is the record made under the mode the request was sent in.
+		if previous, ok := counts.byRequest[rec.RequestID]; ok {
+			phase = previous.phase
+		}
+
+		counts.byRequest[rec.RequestID] = requestUsage{model: rec.Message.Model, tokens: tokens, phase: phase}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -234,14 +375,32 @@ func parseTranscript(path string) (fileCounts, error) {
 	return counts, nil
 }
 
+// modePhase places a permission mode in a phase, or "" for a request made
+// before claude recorded any mode.
+func modePhase(mode string) mission.Phase {
+	switch mode {
+	case "":
+		return ""
+	case "plan":
+		return mission.PhasePlan
+	default:
+		return mission.PhaseImplement
+	}
+}
+
 // assistantRecord is the part of a transcript record this package reads.
 type assistantRecord struct {
 	Type      string    `json:"type"`
 	RequestID string    `json:"requestId"`
 	Timestamp time.Time `json:"timestamp"`
-	Message   struct {
+	// PermissionMode is on a permission-mode record and on each prompt.
+	PermissionMode string `json:"permissionMode"`
+	Message        struct {
 		Model string   `json:"model"`
 		Usage rawUsage `json:"usage"`
+		// Content is left raw because a prompt's is a plain string, and only
+		// an assistant record's tool calls are read from it.
+		Content json.RawMessage `json:"content"`
 	} `json:"message"`
 	// QuotaLimits is present only on a record whose request was refused, which
 	// is the only moment claude writes down anything about a usage window.
@@ -250,6 +409,28 @@ type assistantRecord struct {
 		RateLimitType string `json:"rateLimitType"`
 		ResetsAt      int64  `json:"resetsAt"`
 	} `json:"quotaLimits"`
+}
+
+// toolUseIDs lists the tool calls an assistant record makes.
+func (r assistantRecord) toolUseIDs() []string {
+	var blocks []struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+
+	if json.Unmarshal(r.Message.Content, &blocks) != nil {
+		return nil
+	}
+
+	var out []string
+
+	for _, block := range blocks {
+		if block.Type == "tool_use" && block.ID != "" {
+			out = append(out, block.ID)
+		}
+	}
+
+	return out
 }
 
 // limit converts a refusal record into a limit, reporting false for a record

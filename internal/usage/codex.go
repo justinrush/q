@@ -82,6 +82,7 @@ type codexCounts struct {
 	// rollout or repeated by a rate-limit refresh is counted once.
 	byResponse map[string]requestUsage
 	model      string
+	phase      mission.Phase
 	limit      mission.Limit
 }
 
@@ -133,9 +134,9 @@ func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 		}
 		checkpoint[path] = checkpointResponses(checkpoint[path], counts, fallback)
 	}
-	perModel := codexModels(checkpoint)
+	perModel, perPhase := codexModels(checkpoint)
 	return mission.Metering{
-		Usage: c.pricing.Value(perModel), Limit: limit, CodexUsage: checkpoint,
+		Usage: c.pricing.ValuePhases(perModel, perPhase), Limit: limit, CodexUsage: checkpoint,
 	}, len(perModel) != 0, nil
 }
 
@@ -159,15 +160,21 @@ func checkpointResponses(saved map[string]mission.CodexResponse, counts codexCou
 		if model == "" {
 			model = unknownCodexModel
 		}
-		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens}
+		phase := response.phase
+		if phase == "" {
+			phase = saved[id].Phase
+		}
+		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens, Phase: phase}
 	}
 	return saved
 }
 
 // codexModels deduplicates responses across paths (including renamed rollouts).
 // Stable path order also keeps ambiguous duplicate attribution deterministic.
-func codexModels(checkpoint mission.CodexUsage) map[string]mission.ModelTokens {
+// The phase split is nil when any response has no recorded phase.
+func codexModels(checkpoint mission.CodexUsage) (map[string]mission.ModelTokens, map[mission.Phase]map[string]mission.ModelTokens) {
 	perModel := map[string]mission.ModelTokens{}
+	perPhase := map[mission.Phase]map[string]mission.ModelTokens{}
 	seen := map[string]bool{}
 	for _, path := range slices.Sorted(maps.Keys(checkpoint)) {
 		for id, response := range checkpoint[path] {
@@ -176,9 +183,20 @@ func codexModels(checkpoint mission.CodexUsage) map[string]mission.ModelTokens {
 			}
 			seen[id] = true
 			perModel[response.Model] = perModel[response.Model].Add(response.Tokens)
+			if perPhase == nil {
+				continue
+			}
+			if response.Phase == "" {
+				perPhase = nil
+				continue
+			}
+			if perPhase[response.Phase] == nil {
+				perPhase[response.Phase] = map[string]mission.ModelTokens{}
+			}
+			perPhase[response.Phase][response.Model] = perPhase[response.Phase][response.Model].Add(response.Tokens)
 		}
 	}
-	return perModel
+	return perModel, perPhase
 }
 
 // scan reads a rollout, reusing the previous result when it has not changed.
@@ -252,6 +270,7 @@ func parseRollout(path string) (codexCounts, error) {
 			if model := line.Payload.model(); model != "" {
 				counts.model = model
 			}
+			counts.phase = line.Payload.phase()
 		case rolloutEventMsg:
 			if limit, ok := line.Payload.limit(line.observedAt()); ok {
 				counts.limit = limit
@@ -289,11 +308,11 @@ func (c *codexCounts) recordResponse(record rolloutPayload) {
 	if tokens.Zero() {
 		return
 	}
-	model := c.model
+	model, phase := c.model, c.phase
 	if previous, ok := c.byResponse[record.ResponseID]; ok {
-		model = previous.model
+		model, phase = previous.model, previous.phase
 	}
-	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens}
+	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens, phase: phase}
 }
 
 // rolloutLine is one record of a rollout file. Every record is a timestamp, a
@@ -337,6 +356,7 @@ type rolloutPayload struct {
 	// turn_context.
 	Model             string `json:"model"`
 	CollaborationMode *struct {
+		Mode     string `json:"mode"`
 		Model    string `json:"model"`
 		Settings *struct {
 			Model string `json:"model"`
@@ -359,6 +379,24 @@ func (p rolloutPayload) model() string {
 	}
 
 	return p.CollaborationMode.Model
+}
+
+// phase places a turn in a phase from its collaboration mode, or "" for a turn
+// that does not record one. Unlike the model, a missing mode is not carried
+// over from the previous turn, because a mode change is what it would hide.
+func (p rolloutPayload) phase() mission.Phase {
+	if p.CollaborationMode == nil {
+		return ""
+	}
+
+	switch p.CollaborationMode.Mode {
+	case "":
+		return ""
+	case "plan":
+		return mission.PhasePlan
+	default:
+		return mission.PhaseImplement
+	}
 }
 
 // limit converts a token_count event's rate-limit windows into a limit,

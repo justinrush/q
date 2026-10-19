@@ -53,7 +53,21 @@ type Usage struct {
 	Unpriced bool `json:"unpriced,omitempty"`
 	// At is when the measurement was taken.
 	At time.Time `json:"at,omitzero"`
+	// Phases splits the same consumption by the phase each request was made in.
+	// It is nil unless every request could be placed from the agent's own record
+	// of its mode, so a split that is shown is never an apportioned guess.
+	Phases map[Phase]Usage `json:"phases,omitempty"`
 }
+
+// Phase is the part of a mission a request was made in.
+type Phase string
+
+// The phases a request can be attributed to. Implementing is everything made
+// outside plan mode, which is all of a mission that never plans.
+const (
+	PhasePlan      Phase = "plan"
+	PhaseImplement Phase = "implement"
+)
 
 // Tokens is every token the mission consumed, across all models.
 func (u Usage) Tokens() int64 {
@@ -80,6 +94,15 @@ func (u Usage) Empty() bool {
 // Clone returns a deep copy, so a mission handed outside the store cannot be
 // mutated through its usage map.
 func (u Usage) Clone() Usage {
+	if u.Phases != nil {
+		phases := make(map[Phase]Usage, len(u.Phases))
+		for phase, usage := range u.Phases {
+			phases[phase] = usage.Clone()
+		}
+
+		u.Phases = phases
+	}
+
 	if u.PerModel == nil {
 		return u
 	}
@@ -102,6 +125,8 @@ func (u Usage) Plus(o Usage) Usage {
 		out.At = o.At
 	}
 
+	out.Phases = plusPhases(u, o)
+
 	if len(u.PerModel)+len(o.PerModel) == 0 {
 		return out
 	}
@@ -114,6 +139,31 @@ func (u Usage) Plus(o Usage) Usage {
 
 	for model, tokens := range o.PerModel {
 		out.PerModel[model] = out.PerModel[model].Add(tokens)
+	}
+
+	return out
+}
+
+// plusPhases combines two splits. A reading with no split makes the combined
+// one unknowable, unless that reading measured nothing.
+func plusPhases(u, o Usage) map[Phase]Usage {
+	switch {
+	case u.Empty():
+		return o.Clone().Phases
+	case o.Empty():
+		return u.Clone().Phases
+	case u.Phases == nil || o.Phases == nil:
+		return nil
+	}
+
+	out := make(map[Phase]Usage, len(u.Phases)+len(o.Phases))
+	for _, phase := range []Phase{PhasePlan, PhaseImplement} {
+		a, inA := u.Phases[phase]
+		b, inB := o.Phases[phase]
+
+		if inA || inB {
+			out[phase] = a.Plus(b)
+		}
 	}
 
 	return out
@@ -144,8 +194,15 @@ func TotalUsage(byHost map[HostID]Usage) Usage {
 // was taken. The daemon re-meters on a timer, so comparing At would publish a
 // mission update on every tick of an idle session.
 func (u Usage) Equal(o Usage) bool {
-	if u.USD != o.USD || u.Unpriced != o.Unpriced || len(u.PerModel) != len(o.PerModel) {
+	if u.USD != o.USD || u.Unpriced != o.Unpriced || len(u.PerModel) != len(o.PerModel) ||
+		(u.Phases == nil) != (o.Phases == nil) || len(u.Phases) != len(o.Phases) {
 		return false
+	}
+
+	for phase, usage := range u.Phases {
+		if other, ok := o.Phases[phase]; !ok || !usage.Equal(other) {
+			return false
+		}
 	}
 
 	for model, tokens := range u.PerModel {

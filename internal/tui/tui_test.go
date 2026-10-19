@@ -2996,3 +2996,85 @@ func TestCardSeparatesPhaseModelsFromCost(t *testing.T) {
 		t.Errorf("height=%d layout=%d", got, cardHeight())
 	}
 }
+
+func TestCardShowsEachPhaseCost(t *testing.T) {
+	models := map[string]mission.ModelTokens{"claude-opus-5": {Output: 1000}}
+	split := mission.Usage{
+		PerModel: models, USD: 4.1,
+		Phases: map[mission.Phase]mission.Usage{
+			mission.PhasePlan:      {PerModel: models, USD: 1.05},
+			mission.PhaseImplement: {PerModel: models, USD: 3.05, Unpriced: true},
+		},
+	}
+	unsplit := split
+	unsplit.Phases = nil
+
+	cases := []struct {
+		name      string
+		planMode  bool
+		usage     mission.Usage
+		wantLines []string
+		absent    []string
+	}{
+		{
+			name:      "a split is shown on each phase's line",
+			planMode:  true,
+			usage:     split,
+			wantLines: []string{"plan: opus/high · $1.05", "implement: sonnet · $3.05+"},
+		},
+		{
+			name:     "no split leaves only the total",
+			planMode: true,
+			usage:    unsplit,
+			absent:   []string{"$1.05", "$3.05", "high · ", "sonnet · "},
+		},
+		{
+			name:   "a mission that never plans does not repeat its total",
+			usage:  split,
+			absent: []string{"sonnet · "},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+			ms.PlanMode = tc.planMode
+			ms.PlanModel, ms.PlanEffort, ms.Model = "opus", "high", "sonnet"
+			ms.Usage = tc.usage
+
+			out := renderCard(ms, testOperation("op_1", "T", 0), "", 50, false)
+			if !strings.Contains(out, "$4.10") {
+				t.Errorf("card lost its total:\n%s", out)
+			}
+
+			for _, want := range tc.wantLines {
+				if !strings.Contains(out, want) {
+					t.Errorf("card should show %q:\n%s", want, out)
+				}
+			}
+
+			for _, absent := range tc.absent {
+				if strings.Contains(out, absent) {
+					t.Errorf("card should not contain %q:\n%s", absent, out)
+				}
+			}
+		})
+	}
+}
+
+func TestPhaseCostSurvivesALongModel(t *testing.T) {
+	ms := testMission("ms_1", "mission", "op_1", mission.StatusActive)
+	ms.PlanMode = true
+	ms.PlanModel, ms.PlanEffort = "a-very-long-planning-model-name", "xhigh"
+	ms.Usage = mission.Usage{
+		PerModel: map[string]mission.ModelTokens{"m": {Output: 1}}, USD: 12.5,
+		Phases: map[mission.Phase]mission.Usage{
+			mission.PhasePlan: {PerModel: map[string]mission.ModelTokens{"m": {Output: 1}}, USD: 12.5},
+		},
+	}
+
+	line := modelLine(ms, true, 24)
+	if !strings.HasSuffix(line, " · $12.5") || lipgloss.Width(line) > 24 || !strings.Contains(line, "…") {
+		t.Errorf("modelLine = %q", line)
+	}
+}
