@@ -1155,9 +1155,10 @@ The dashboard compares observed planning → implementation model/effort pairs,
 with mission counts, mean/median whole-mission costs, and planning shares. Spend
 breakdowns can group by model, effort, phase, or their combinations. Expand a
 mission to inspect configured versus observed settings and individual token
-categories. Filters select completed (closed) missions started in the last 30
-local calendar days by default; ongoing missions and undated records are explicit
-options. Dates refer to mission starts, **not the dates tokens were used**.
+categories. The initial view includes all dated missions, including those in
+debrief, and all recorded start dates. Use the status and date filters to narrow
+the comparison; undated records require the explicit checkbox. Dates refer to
+mission starts, **not the dates tokens were used**.
 
 Model, effort, and phase filters select qualifying whole missions in workflow
 comparisons. In spend breakdowns they select only matching contributions. Thus a
@@ -1185,6 +1186,12 @@ History syncs between upgraded paired hosts, including deletions made while a
 peer was offline. Upgrade both hosts for complete history; older peers cannot
 supply attribution or history they never recorded. Retention has no automatic
 expiry; snapshot size and sync payload size grow with history.
+
+If the dashboard is empty after an upgrade, restart the daemon so the new code
+can seed analytics from missions still in q's state. Check the date and status
+filters, and allow paired hosts to sync. Existing missions with no stored usage
+will appear in Mission details without a cost. Missions deleted before the
+upgrade cannot be recovered from the state snapshot.
 
 The browser polls every 15 seconds while visible and shows the last successful
 result if the daemon is unavailable. The companion reconnects after daemon
