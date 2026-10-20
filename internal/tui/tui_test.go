@@ -149,7 +149,7 @@ func TestRenderCardHonoursMinimumWidth(t *testing.T) {
 // Below the threshold, five columns would each be an unreadable sliver, so the board
 // shows one lane properly instead.
 func TestLayoutSwitchesToFocusModeWhenNarrow(t *testing.T) {
-	narrow := computeLayout(focusModeBelow-1, 40, false, 2)
+	narrow := computeLayout(focusModeBelow-1, 40, false, 2, false)
 	if !narrow.Focus {
 		t.Error("a narrow terminal should use focus mode")
 	}
@@ -158,7 +158,7 @@ func TestLayoutSwitchesToFocusModeWhenNarrow(t *testing.T) {
 		t.Error("the focused lane should get the width")
 	}
 
-	wide := computeLayout(200, 40, false, 0)
+	wide := computeLayout(200, 40, false, 0, false)
 	if wide.Focus {
 		t.Error("a wide terminal should show all lanes")
 	}
@@ -166,14 +166,14 @@ func TestLayoutSwitchesToFocusModeWhenNarrow(t *testing.T) {
 
 // Collapsing done frees its share for the lanes describing work still in flight.
 func TestLayoutCollapsesDoneByDefault(t *testing.T) {
-	collapsed := computeLayout(200, 40, false, 0)
+	collapsed := computeLayout(200, 40, false, 0, false)
 
 	doneIdx := len(mission.Lanes) - 1
 	if collapsed.Widths[doneIdx] != collapsedDoneWidth {
 		t.Errorf("done width = %d, want %d", collapsed.Widths[doneIdx], collapsedDoneWidth)
 	}
 
-	expanded := computeLayout(200, 40, true, 0)
+	expanded := computeLayout(200, 40, true, 0, false)
 	if expanded.Widths[doneIdx] <= collapsedDoneWidth {
 		t.Errorf("expanded done width = %d, want more than %d",
 			expanded.Widths[doneIdx], collapsedDoneWidth)
@@ -191,7 +191,7 @@ func TestLayoutCollapsesDoneByDefault(t *testing.T) {
 func TestLayoutFitsTheTerminal(t *testing.T) {
 	for _, width := range []int{110, 137, 160, 200, 240} {
 		for _, expanded := range []bool{false, true} {
-			layout := computeLayout(width, 40, expanded, 0)
+			layout := computeLayout(width, 40, expanded, 0, false)
 
 			total := (len(mission.Lanes) - 1) * laneGap
 			for _, w := range layout.Widths {
@@ -207,7 +207,7 @@ func TestLayoutFitsTheTerminal(t *testing.T) {
 
 func TestLayoutAlwaysShowsAtLeastOneCard(t *testing.T) {
 	for _, height := range []int{1, 4, 6, 10, 40} {
-		if got := computeLayout(200, height, false, 0).VisibleCards; got < 1 {
+		if got := computeLayout(200, height, false, 0, false).VisibleCards; got < 1 {
 			t.Errorf("height %d: VisibleCards = %d, want at least 1", height, got)
 		}
 	}
@@ -431,6 +431,7 @@ func TestEveryBoardBindingHasAHandler(t *testing.T) {
 		{"Status", board.Status},
 		{"Filter", board.Filter},
 		{"Clear", board.Clear},
+		{"Orientation", board.Orientation},
 	}
 
 	for _, item := range declared {
@@ -2111,7 +2112,7 @@ func TestRenderCardKeepsCostOnANarrowCard(t *testing.T) {
 
 	var narrowest int
 
-	for _, w := range computeLayout(focusModeBelow, 40, true, 0).Widths {
+	for _, w := range computeLayout(focusModeBelow, 40, true, 0, false).Widths {
 		if w > 0 && (narrowest == 0 || w < narrowest) {
 			narrowest = w
 		}

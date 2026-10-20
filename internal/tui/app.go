@@ -63,6 +63,8 @@ type Options struct {
 	// which the form renders as "the agent's own default" rather than as an
 	// agent that offers nothing.
 	Models map[mission.Tool]mission.ModelSet
+	// Horizontal starts the board with lanes drawn as rows rather than columns.
+	Horizontal bool
 }
 
 // ReviewDefaults name the agent a review is offered with. Every field is
@@ -133,11 +135,14 @@ type toast struct {
 
 // New returns the root model.
 func New(c *api.Client, opts Options) *App {
+	board := NewBoard()
+	board.SetHorizontal(opts.Horizontal)
+
 	return &App{
 		client:      c,
 		keys:        keys.NewGlobal(),
 		opts:        opts.withDefaults(),
-		board:       NewBoard(),
+		board:       board,
 		operations:  NewOperations(),
 		events:      make(chan tea.Msg, 64),
 		lastEvent:   time.Now(),
@@ -669,7 +674,7 @@ func (a *App) helpBody() string {
 		groups [][]key.Binding
 	}{
 		{"global", keys.NewGlobal().FullHelp()},
-		{"board", keys.NewBoard().FullHelp()},
+		{"board", a.board.FullHelp()},
 		{"operations", keys.NewOperations().FullHelp()},
 		{"forms", keys.NewForm().FullHelp()},
 	}

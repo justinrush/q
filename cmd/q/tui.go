@@ -23,6 +23,11 @@ func buildTUISubcommand() *cobra.Command {
 
 // runTUI starts the board.
 func runTUI(cmd *cobra.Command, _ []string) error {
+	opts, err := tuiOptions()
+	if err != nil {
+		return err
+	}
+
 	dirs, err := paths.Resolve(pathOverrides())
 	if err != nil {
 		return err
@@ -51,7 +56,7 @@ func runTUI(cmd *cobra.Command, _ []string) error {
 	}
 
 	program := tea.NewProgram(
-		tui.New(c, tuiOptions()),
+		tui.New(c, opts),
 		programOpts...,
 	)
 
@@ -82,8 +87,14 @@ func redirectLogging(cmd *cobra.Command, dirs paths.Dirs) (func(), error) {
 
 // tuiOptions hands the board the parts of the configuration it needs. The board
 // talks to the daemon for everything else.
-func tuiOptions() tui.Options {
+func tuiOptions() (tui.Options, error) {
+	horizontal, err := horizontalLanes(cfg.TUI.Lanes)
+	if err != nil {
+		return tui.Options{}, err
+	}
+
 	return tui.Options{
+		Horizontal: horizontal,
 		Repos: git.ScanOptions{
 			Roots:    cfg.Repos.Roots,
 			MaxDepth: cfg.Repos.MaxDepth,
@@ -96,5 +107,17 @@ func tuiOptions() tui.Options {
 			Effort: cfg.Review.Effort,
 		},
 		AttachBin: currentTerminalBin(cfg),
+	}, nil
+}
+
+// horizontalLanes reports whether tui.lanes asks for rows rather than columns.
+func horizontalLanes(lanes string) (bool, error) {
+	switch lanes {
+	case "", lanesVertical:
+		return false, nil
+	case lanesHorizontal:
+		return true, nil
+	default:
+		return false, fmt.Errorf("unknown tui.lanes %q: want %q or %q", lanes, lanesVertical, lanesHorizontal)
 	}
 }

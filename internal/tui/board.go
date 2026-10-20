@@ -30,6 +30,12 @@ type Board struct {
 	scroll []int
 	// doneExpanded shows the done column at full width.
 	doneExpanded bool
+	// horizontal draws lanes as rows with cards running across them, which fits a
+	// narrow window better than five columns do.
+	horizontal bool
+	// laneScroll is the first lane row drawn when the rows are taller than the
+	// screen. Only horizontal mode scrolls lanes.
+	laneScroll int
 	// filter limits the board to one operation, empty for all.
 	filter mission.OperationID
 	// follow is a mission the selection should jump to once the next snapshot arrives.
@@ -95,6 +101,57 @@ var boardActions = map[string]boardAction{
 	"r":      (*Board).reviewMission,
 	"/":      (*Board).filterByOperation,
 	"s":      (*Board).statusMenu,
+	"v":      (*Board).toggleOrientation,
+}
+
+// horizontalActions override boardActions while lanes are rows, so the keys
+// follow the screen: up and down cross lanes, left and right move along one.
+var horizontalActions = map[string]boardAction{
+	"left":  (*Board).selectPrev,
+	"h":     (*Board).selectPrev,
+	"right": (*Board).selectNext,
+	"up":    (*Board).focusPrevLane,
+	"k":     (*Board).focusPrevLane,
+	"down":  (*Board).focusNextLane,
+	"j":     (*Board).focusNextLane,
+	"H":     (*Board).reorderUp,
+	"L":     (*Board).reorderDown,
+	"K":     (*Board).moveCardLeft,
+	"J":     (*Board).moveCardRight,
+}
+
+// SetHorizontal chooses whether lanes are drawn as rows or columns.
+func (b *Board) SetHorizontal(horizontal bool) {
+	b.horizontal = horizontal
+	b.keys = keys.NewBoard()
+
+	if horizontal {
+		b.keys = keys.NewBoardHorizontal()
+	}
+
+	// A scroll position from the other orientation counts different things, so
+	// start fresh and bring the selection back into view.
+	for i := range b.scroll {
+		b.scroll[i] = 0
+	}
+
+	b.laneScroll = 0
+	b.clampSelection()
+	b.ensureVisible()
+}
+
+// Horizontal reports whether lanes are drawn as rows.
+func (b *Board) Horizontal() bool { return b.horizontal }
+
+func (b *Board) toggleOrientation() tea.Cmd {
+	b.SetHorizontal(!b.horizontal)
+
+	return nil
+}
+
+// layout computes the board's geometry for its current size and state.
+func (b *Board) layout() Layout {
+	return computeLayout(b.width, b.height, b.doneExpanded, b.lane, b.horizontal)
 }
 
 // SetSnapshot replaces the board's data and re-bounds the selection.
@@ -142,6 +199,12 @@ func (b *Board) SetSize(width, height int) {
 
 // Update handles a keypress.
 func (b *Board) Update(msg tea.KeyMsg) tea.Cmd {
+	if b.horizontal {
+		if handler, ok := horizontalActions[msg.String()]; ok {
+			return handler(b)
+		}
+	}
+
 	if handler, ok := boardActions[msg.String()]; ok {
 		return handler(b)
 	}
@@ -187,7 +250,11 @@ func (b *Board) HandleMouse(msg tea.MouseMsg, x, y int) tea.Cmd {
 		return nil
 	}
 
-	layout := computeLayout(b.width, b.height, b.doneExpanded, b.lane)
+	layout := b.layout()
+
+	if layout.Horizontal {
+		return b.handleMouseRows(msg, layout, x, y)
+	}
 
 	if msg.Button == tea.MouseButtonWheelUp {
 		lane := b.laneAt(layout, x)
@@ -398,6 +465,10 @@ func (b *Board) clampSelection() {
 		b.cursor[lane] = clamp(b.cursor[lane], count-1)
 		b.scroll[lane] = clamp(b.scroll[lane], max(0, count-1))
 	}
+
+	if b.horizontal {
+		b.laneScroll = b.firstRow()
+	}
 }
 
 func (b *Board) focusPrevLane() tea.Cmd {
@@ -446,8 +517,13 @@ func (b *Board) selectLast() tea.Cmd {
 
 // ensureVisible scrolls the focused lane so the cursor stays on screen.
 func (b *Board) ensureVisible() {
-	layout := computeLayout(b.width, b.height, b.doneExpanded, b.lane)
+	layout := b.layout()
+
 	visible := layout.VisibleCards
+	if layout.Horizontal {
+		visible = layout.CardsPerRow
+	}
+
 	cursor := b.cursor[b.lane]
 
 	if cursor < b.scroll[b.lane] {
@@ -478,7 +554,11 @@ func (b *Board) clearFilter() tea.Cmd {
 
 // View renders the board.
 func (b *Board) View() string {
-	layout := computeLayout(b.width, b.height, b.doneExpanded, b.lane)
+	layout := b.layout()
+
+	if layout.Horizontal {
+		return b.renderRows(layout)
+	}
 
 	if layout.Focus {
 		return b.renderFocusMode(layout)

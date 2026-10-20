@@ -62,3 +62,44 @@ func TestWriteSampleConfigIncludesTUI(t *testing.T) {
 		t.Errorf("sample config missing tui.mouse:\n%s", out)
 	}
 }
+
+func TestLanesComeFromFileThenEnv(t *testing.T) {
+	s := defaultSettings()
+	if s.TUI.Lanes != lanesVertical {
+		t.Fatalf("default tui.lanes = %q, want %q", s.TUI.Lanes, lanesVertical)
+	}
+
+	horizontal := lanesHorizontal
+	applyFile(&s, fileConfig{TUI: &tuiConfig{Lanes: &horizontal}})
+	if s.TUI.Lanes != lanesHorizontal {
+		t.Errorf("file: tui.lanes = %q, want %q", s.TUI.Lanes, lanesHorizontal)
+	}
+
+	t.Setenv(EnvLanes, lanesVertical)
+	applyEnv(&s)
+	if s.TUI.Lanes != lanesVertical {
+		t.Errorf("Q_LANES: tui.lanes = %q, want %q", s.TUI.Lanes, lanesVertical)
+	}
+
+	var buf bytes.Buffer
+	if err := writeSampleConfig(&buf, s); err != nil {
+		t.Fatalf("writeSampleConfig: %v", err)
+	}
+
+	if !strings.Contains(buf.String(), `"lanes": "vertical"`) {
+		t.Errorf("sample config missing tui.lanes:\n%s", buf.String())
+	}
+}
+
+func TestHorizontalLanesRejectsUnknownValues(t *testing.T) {
+	for value, want := range map[string]bool{"": false, lanesVertical: false, lanesHorizontal: true} {
+		got, err := horizontalLanes(value)
+		if err != nil || got != want {
+			t.Errorf("horizontalLanes(%q) = %v, %v; want %v", value, got, err, want)
+		}
+	}
+
+	if _, err := horizontalLanes("diagonal"); err == nil {
+		t.Errorf("horizontalLanes accepted an unknown value")
+	}
+}

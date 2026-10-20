@@ -14,8 +14,12 @@ const (
 	// them all in produces five unreadable slivers, so showing one lane properly is
 	// the better trade.
 	focusModeBelow = 110
-	// laneGap is the space between columns.
+	// laneGap is the space between columns, and between cards in a row.
 	laneGap = 1
+	// rowCardWidth is the width a card aims for when lanes run horizontally. Cards
+	// are shared out at roughly this width, so a narrow window gets one or two
+	// readable cards per row rather than many slivers.
+	rowCardWidth = 28
 )
 
 // Layout is the computed geometry of one board render.
@@ -31,16 +35,36 @@ type Layout struct {
 	CardHeight int
 	// VisibleCards is how many cards fit in a column.
 	VisibleCards int
+	// Horizontal reports that lanes are drawn as rows, cards running across them.
+	Horizontal bool
+	// CardWidth is the width of each card in a row, set only when Horizontal.
+	CardWidth int
+	// CardsPerRow is how many cards fit across a row, set only when Horizontal.
+	CardsPerRow int
 }
 
 // computeLayout decides the board's geometry for a given terminal size.
 //
 // doneExpanded and focusedLane matter because the two ways of buying space are
 // collapsing the done column and, when that is not enough, showing a single lane.
-func computeLayout(width, height int, doneExpanded bool, focusedLane int) Layout {
+// horizontal lays lanes out as rows instead, which needs neither.
+func computeLayout(width, height int, doneExpanded bool, focusedLane int, horizontal bool) Layout {
 	layout := Layout{
 		Widths:     make([]int, len(mission.Lanes)),
 		CardHeight: cardHeight(),
+	}
+
+	if horizontal {
+		layout.Horizontal = true
+		layout.VisibleCards = 1
+		layout.CardsPerRow = max(1, (width+laneGap)/(rowCardWidth+laneGap))
+		layout.CardWidth = max(MinCardWidth, (width-(layout.CardsPerRow-1)*laneGap)/layout.CardsPerRow)
+
+		for i := range layout.Widths {
+			layout.Widths[i] = max(width, MinCardWidth)
+		}
+
+		return layout
 	}
 
 	// Two header rows, a footer, and a little breathing room.

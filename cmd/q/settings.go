@@ -86,6 +86,10 @@ type witnessSettings struct {
 type tuiSettings struct {
 	// Mouse enables mouse reporting in the TUI (clicking cards, tabs, and scrolling).
 	Mouse bool
+	// Lanes is the board's starting orientation: "vertical" draws each lane as a
+	// column, "horizontal" as a row, which suits a narrow window. The v key
+	// flips it for the session.
+	Lanes string
 }
 
 // reposSettings configures where q looks for the git checkouts an operation can span.
@@ -177,6 +181,14 @@ type editorSettings struct {
 	Command []string
 }
 
+// Board orientations, the values of tui.lanes.
+const (
+	// lanesVertical draws each lane as a column with its cards stacked down it.
+	lanesVertical = "vertical"
+	// lanesHorizontal draws each lane as a row with its cards running across it.
+	lanesHorizontal = "horizontal"
+)
+
 // Terminal modes.
 const (
 	// terminalGhostty drives Ghostty 1.3+ through its macOS AppleScript
@@ -227,7 +239,7 @@ func defaultSettings() settings {
 		},
 		Editor:   editorSettings{Command: defaultEditorCommand()},
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
-		TUI:      tuiSettings{Mouse: true},
+		TUI:      tuiSettings{Mouse: true, Lanes: lanesVertical},
 		Queue:    queueSettings{MaxConcurrent: daemon.DefaultMaxConcurrent},
 		Remote: remoteSettings{
 			Bin:           remote.DefaultBin,

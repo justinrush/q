@@ -114,6 +114,7 @@ Press `?` for the full keymap. The essentials:
 | `t` | take a mission from the paired host and run its agent here |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
+| `v` | draw lanes as rows instead of columns, for a narrow window. In rows, `↑`/`↓` (`k`/`j`) change lane, `←`/`→` (`h`) change card, `K`/`J` move a card between lanes, and `H`/`L` reorder it. Set the starting layout with `tui.lanes` |
 
 Log copying uses the native clipboard on a local Mac and tmux’s `load-buffer -w` over SSH inside tmux. Elsewhere it sends OSC 52 to the viewing terminal. Remote copying requires terminal clipboard support; tmux supports `set-clipboard external` or `on`. Troubleshooting missions inherit the source operation, agent, model, effort, extra repos, and base branches.
 
@@ -472,7 +473,7 @@ settings without writing anything.
   "terminal": { "mode": "ghostty", "command": [] },
   "paths": { "dataDir": "", "stateDir": "" },
   "cost": { "disabled": false, "models": { "gpt-5.6-sol": { "input": 4, "output": 20, "cacheRead": 0.4 } } },
-  "tui": { "mouse": true },
+  "tui": { "mouse": true, "lanes": "vertical" },
   "review": { "tool": "codex", "model": "", "effort": "high" },
   "tools": { "tmux": "/usr/bin/tmux" },
   "logLevel": "info"
@@ -512,6 +513,7 @@ settings without writing anything.
 | `remote.witness.kubernetes` | keep the pair's claim in a Lease: `namespace` and `lease` (the same on both machines), and this machine's `kubeconfig` and `context`. Set with `q remote witness kubernetes` |
 | `remote.witness.azure` | keep it in a blob instead: `account`, `container`, `blob`, and optionally `endpoint`. Set with `q remote witness azure` |
 | `tui.mouse` | enable mouse support in the TUI (clicking cards, tabs, and scrolling). Defaults to `true` |
+| `tui.lanes` | the board's starting layout: `vertical` (lanes are columns) or `horizontal` (lanes are rows with cards side by side, suited to a narrow window). `v` toggles it while q runs. Defaults to `vertical` |
 | `tools` | absolute paths for `git`, `tmux`, `osascript`, … overriding `PATH` |
 | `logLevel` | `debug`, `info`, `warn`, or `error` |
 
@@ -575,6 +577,7 @@ one-off run can point q somewhere else without editing the file:
 | `Q_CLAUDE_MODEL`, `Q_CODEX_MODEL`, `Q_AGY_MODEL` | `agents.<agent>.model` |
 | `Q_LOG_LEVEL` | `logLevel` |
 | `Q_MOUSE` | `tui.mouse` (enable/disable mouse with `true`/`false`) |
+| `Q_LANES` | `tui.lanes` (`vertical` or `horizontal`) |
 | `Q_MAX_CONCURRENT` | `queue.maxConcurrent` |
 | `Q_REMOTE_SSH` | `remote.ssh`, split on spaces |
 | `Q_HOST_NAME` | `remote.name` |
