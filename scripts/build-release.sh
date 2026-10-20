@@ -5,6 +5,8 @@ set -euo pipefail
 version=${1:?usage: build-release.sh VERSION COMMIT OUTPUT_DIR}
 commit=${2:?missing commit}
 output=${3:?missing output directory}
+npm --prefix web/analytics ci
+npm --prefix web/analytics run build
 mkdir -p "$output"
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
@@ -12,7 +14,7 @@ trap 'rm -rf "$staging"' EXIT
 for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
   os=${platform%/*}
   arch=${platform#*/}
-  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build \
+  CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -tags analyticsui \
     -trimpath -ldflags "-s -w -X main.buildVersion=$version -X main.buildCommit=$commit" \
     -o "$staging/q" ./cmd/q
   cp LICENSE README.md "$staging/"

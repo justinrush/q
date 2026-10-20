@@ -1141,3 +1141,71 @@ uses.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Cost analytics
+
+Run `q analytics` to explore recorded mission costs in your browser. The command
+starts a read-only server on an available loopback port, prints its URL, and opens
+it. Stop it with Ctrl-C. Use `q analytics --port 8765 --no-open` for a predictable
+port without opening a browser. For a remote machine, run that command there and
+forward it with `ssh -L 8765:127.0.0.1:8765 your-host`, then visit
+`http://127.0.0.1:8765` locally. There is no LAN listener or public hosting.
+
+The dashboard compares observed planning → implementation model/effort pairs,
+with mission counts, mean/median whole-mission costs, and planning shares. Spend
+breakdowns can group by model, effort, phase, or their combinations. Expand a
+mission to inspect configured versus observed settings and individual token
+categories. Filters select completed (closed) missions started in the last 30
+local calendar days by default; ongoing missions and undated records are explicit
+options. Dates refer to mission starts, **not the dates tokens were used**.
+
+Model, effort, and phase filters select qualifying whole missions in workflow
+comparisons. In spend breakdowns they select only matching contributions. Thus a
+planning filter still includes implementation in a workflow's total. Unmeasured
+missions are counted but excluded from cost averages. Unknown attribution stays
+unknown, mixed settings get a separate workflow group, and unpriced totals are
+floors. Planning shares are withheld when phases or pricing are incomplete.
+Different tasks and small samples prevent these comparisons from establishing
+equal quality or proving savings.
+
+Dollar amounts are the **recorded API-equivalent estimates from the latest
+measurement**, not subscription charges. Dashboard queries do not reprice old
+usage. Re-metering a mission after changing configured prices can change its
+recorded estimate, just as on the board. Codex turn context and Claude assistant
+records supply observed effort; configured mission effort is never substituted.
+Older measurements retain their original dollar total without guessing its
+model/effort distribution. Normal subsequent metering can enrich those records.
+
+Analytics history lives in the daemon-owned state snapshot and its backup. It
+retains names, operation identity, lifecycle dates, configured settings, and
+aggregate usage, **not prompts, messages, paths, or response IDs**. Deleting a
+mission or operation keeps its analytics record indefinitely. Existing missions
+are seeded on upgrade; missions deleted before upgrade cannot be recovered.
+History syncs between upgraded paired hosts, including deletions made while a
+peer was offline. Upgrade both hosts for complete history; older peers cannot
+supply attribution or history they never recorded. Retention has no automatic
+expiry; snapshot size and sync payload size grow with history.
+
+The browser polls every 15 seconds while visible and shows the last successful
+result if the daemon is unavailable. The companion reconnects after daemon
+restarts. It does not expose daemon credentials or mission mutation APIs.
+
+#### Building and developing the dashboard
+
+Release binaries include the UI and need no Node installation at runtime.
+Source installation (`./install.sh`) requires **Node.js 24 or later and npm**,
+installs the locked frontend dependencies, and builds the UI before Go. Plain
+`go build ./cmd/q` remains available for backend development but its analytics
+command explains that UI assets are missing.
+
+```sh
+npm --prefix web/analytics ci
+npm --prefix web/analytics run build
+go build -tags analyticsui -o bin/q ./cmd/q
+bin/q analytics --port 8765 --no-open
+```
+
+In another terminal, `npm --prefix web/analytics run dev` starts Vite with its API
+proxy targeting port 8765. Set `Q_ANALYTICS_URL` to use a different companion URL.
+Frontend source, lockfile, tests, and asset embedding all live in `web/analytics`;
+Go query and browser-server code live in `internal/analytics`.

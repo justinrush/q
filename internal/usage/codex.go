@@ -81,6 +81,7 @@ type codexCounts struct {
 	// byResponse is keyed by response id, so a record replayed into a subagent
 	// rollout or repeated by a rate-limit refresh is counted once.
 	byResponse map[string]requestUsage
+	effort     string
 	model      string
 	phase      mission.Phase
 	limit      mission.Limit
@@ -135,8 +136,18 @@ func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 		checkpoint[path] = checkpointResponses(checkpoint[path], counts, fallback)
 	}
 	perModel, perPhase := codexModels(checkpoint)
+	requests := map[string]requestUsage{}
+	for _, path := range slices.Sorted(maps.Keys(checkpoint)) {
+		for id, r := range checkpoint[path] {
+			if _, ok := requests[id]; !ok {
+				requests[id] = requestUsage{model: r.Model, effort: r.Effort, phase: r.Phase, tokens: r.Tokens}
+			}
+		}
+	}
+	measuredUsage := c.pricing.ValuePhases(perModel, perPhase)
+	measuredUsage.Breakdown = c.pricing.breakdown(requests)
 	return mission.Metering{
-		Usage: c.pricing.ValuePhases(perModel, perPhase), Limit: limit, CodexUsage: checkpoint,
+		Usage: measuredUsage, Limit: limit, CodexUsage: checkpoint,
 	}, len(perModel) != 0, nil
 }
 
@@ -164,7 +175,11 @@ func checkpointResponses(saved map[string]mission.CodexResponse, counts codexCou
 		if phase == "" {
 			phase = saved[id].Phase
 		}
-		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens, Phase: phase}
+		effort := response.effort
+		if effort == "" {
+			effort = saved[id].Effort
+		}
+		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens, Phase: phase, Effort: effort}
 	}
 	return saved
 }
@@ -271,6 +286,7 @@ func parseRollout(path string) (codexCounts, error) {
 				counts.model = model
 			}
 			counts.phase = line.Payload.phase()
+			counts.effort = line.Payload.effort()
 		case rolloutEventMsg:
 			if limit, ok := line.Payload.limit(line.observedAt()); ok {
 				counts.limit = limit
@@ -308,11 +324,11 @@ func (c *codexCounts) recordResponse(record rolloutPayload) {
 	if tokens.Zero() {
 		return
 	}
-	model, phase := c.model, c.phase
+	model, phase, effort := c.model, c.phase, c.effort
 	if previous, ok := c.byResponse[record.ResponseID]; ok {
-		model, phase = previous.model, previous.phase
+		model, phase, effort = previous.model, previous.phase, previous.effort
 	}
-	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens, phase: phase}
+	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens, phase: phase, effort: effort}
 }
 
 // rolloutLine is one record of a rollout file. Every record is a timestamp, a
@@ -354,12 +370,14 @@ type rolloutPayload struct {
 	RateLimits *codexRateLimits `json:"rate_limits"`
 
 	// turn_context.
+	Effort            string `json:"effort"`
 	Model             string `json:"model"`
 	CollaborationMode *struct {
 		Mode     string `json:"mode"`
 		Model    string `json:"model"`
 		Settings *struct {
-			Model string `json:"model"`
+			Model           string `json:"model"`
+			ReasoningEffort string `json:"reasoning_effort"`
 		} `json:"settings"`
 	} `json:"collaboration_mode"`
 }
@@ -489,4 +507,14 @@ func (u codexTokenUsage) tokens() mission.ModelTokens {
 		CacheRead:    u.CachedInputTokens,
 		CacheWrite5m: u.CacheWriteInputTokens,
 	}
+}
+
+func (p rolloutPayload) effort() string {
+	if p.Effort != "" {
+		return p.Effort
+	}
+	if p.CollaborationMode != nil && p.CollaborationMode.Settings != nil {
+		return p.CollaborationMode.Settings.ReasoningEffort
+	}
+	return ""
 }

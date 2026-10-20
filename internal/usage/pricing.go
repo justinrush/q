@@ -214,3 +214,32 @@ func (p Pricing) Unpriced(perModel map[string]mission.ModelTokens) []string {
 
 	return out
 }
+
+// breakdown groups already deduplicated requests before pricing, keeping rounding
+// out of persistence and recording the rates' result at measurement time.
+func (p Pricing) breakdown(requests map[string]requestUsage) []mission.UsageSlice {
+	type key struct {
+		model, effort string
+		phase         mission.Phase
+	}
+	grouped := map[key]mission.ModelTokens{}
+	for _, r := range requests {
+		k := key{r.model, r.effort, r.phase}
+		grouped[k] = grouped[k].Add(r.tokens)
+	}
+	out := make([]mission.UsageSlice, 0, len(grouped))
+	for k, t := range grouped {
+		usd, ok := p.Cost(k.model, t)
+		out = append(out, mission.UsageSlice{Model: k.model, Effort: k.effort, Phase: k.phase, Tokens: t, USD: usd, Unpriced: !ok})
+	}
+	slices.SortFunc(out, func(a, b mission.UsageSlice) int {
+		if n := strings.Compare(a.Model, b.Model); n != 0 {
+			return n
+		}
+		if n := strings.Compare(a.Effort, b.Effort); n != 0 {
+			return n
+		}
+		return strings.Compare(string(a.Phase), string(b.Phase))
+	})
+	return out
+}

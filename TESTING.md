@@ -372,3 +372,29 @@ Repeat with `q open <mission-id>`; `--prepare` should not attach, and
 `--steal` should detach other clients. A missing session should offer relaunch
 in the board without trying to attach. Desktop `ghostty` and manual `none`
 modes should retain their existing behavior.
+
+### Analytics
+
+`internal/usage/analytics_test.go` verifies measured effort, request deduplication,
+recorded cost conservation, and Codex checkpoint attribution after rollout removal.
+`internal/mission/analytics_test.go` covers deletion retention, offline peer
+history, cumulative contribution replacement, clone isolation, legacy costs, and
+conversation-data exclusion. `internal/analytics` tests whole-workflow versus
+contribution filtering, sample statistics, date bounds, coverage, and browser
+HTTP boundaries without launching a daemon.
+
+```sh
+npm --prefix web/analytics ci
+npm --prefix web/analytics test
+npm --prefix web/analytics run build
+go test -tags analyticsui ./web/analytics
+cd web/analytics
+npx playwright install chromium
+npm run test:browser
+```
+
+The Playwright smoke test serves the production build, supplies deterministic API
+fixtures, exercises filtering and connection recovery, and checks a mobile
+viewport. CI runs it on Linux and builds the embedded UI on Linux and macOS.
+The normal `go test -race -count=1 -timeout=5m ./...` suite continues to exercise
+backend behavior independently of Node or built assets.

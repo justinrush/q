@@ -11,16 +11,17 @@ import (
 // is tens of kilobytes, an exchange happens a few times a minute, and a full
 // copy cannot drift the way a missed delta can.
 type Payload struct {
-	From       HostInfo    `json:"from"`
-	Operations []Operation `json:"operations,omitempty"`
-	Missions   []Mission   `json:"missions,omitempty"`
-	Tombstones []Tombstone `json:"tombstones,omitempty"`
+	Analytics  map[MissionID]AnalyticsRecord `json:"analytics,omitempty"`
+	From       HostInfo                      `json:"from"`
+	Operations []Operation                   `json:"operations,omitempty"`
+	Missions   []Mission                     `json:"missions,omitempty"`
+	Tombstones []Tombstone                   `json:"tombstones,omitempty"`
 }
 
 // Payload projects the snapshot for the peer, with everything host-local
 // cleared.
 func (s Snapshot) Payload() Payload {
-	out := Payload{From: s.Self, Tombstones: slices.Clone(s.Tombstones)}
+	out := Payload{Analytics: cloneAnalytics(s.Analytics), From: s.Self, Tombstones: slices.Clone(s.Tombstones)}
 
 	for _, op := range s.Operations {
 		out.Operations = append(out.Operations, op.Shared())
@@ -54,6 +55,7 @@ type Command struct {
 // Merge reports what applying a peer's payload changed, so the daemon can
 // publish it and act on the parts that have consequences outside the store.
 type Merge struct {
+	AnalyticsChanged bool
 	// Operations and Missions are the records that now differ.
 	Operations []OperationID
 	Missions   []MissionID
@@ -70,7 +72,7 @@ type Merge struct {
 
 // Changed reports whether the merge altered anything.
 func (m Merge) Changed() bool {
-	return len(m.Operations)+len(m.Missions)+len(m.RemovedOperations)+len(m.Removed) > 0
+	return m.AnalyticsChanged || len(m.Operations)+len(m.Missions)+len(m.RemovedOperations)+len(m.Removed) > 0
 }
 
 // MergePeer folds the peer's shared state into this snapshot.
@@ -85,6 +87,16 @@ func (m Merge) Changed() bool {
 // primary says whether this host is the one that wins those ties.
 func (s *Snapshot) MergePeer(p Payload, primary bool, now time.Time) Merge {
 	var out Merge
+	out.AnalyticsChanged = s.mergeAnalytics(p.Analytics, primary)
+	// Retained deletion markers outlive the ordinary tombstone window.
+	for id, record := range s.Analytics {
+		if record.Deleted {
+			if ms, ok := s.Mission(id); ok {
+				s.DeleteMission(id)
+				out.Removed = append(out.Removed, ms)
+			}
+		}
+	}
 
 	s.mergeTombstones(p.Tombstones, now, &out)
 
@@ -172,7 +184,7 @@ func incomingWins(localRev, incomingRev int, primary bool) bool {
 func (s *Snapshot) mergeMission(in Mission, primary bool, out *Merge) {
 	local, ok := s.Mission(in.ID)
 	if !ok {
-		if s.Tombstoned(TombstoneMission, string(in.ID)) {
+		if s.Tombstoned(TombstoneMission, string(in.ID)) || s.Analytics[in.ID].Deleted {
 			return
 		}
 
