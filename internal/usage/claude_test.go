@@ -378,3 +378,106 @@ func TestClaudeMeterRereadsAChangedTranscript(t *testing.T) {
 		t.Fatalf("second read input = %d, want 150", got)
 	}
 }
+
+// permissionMode renders the record claude writes when a session starts or
+// its permission mode changes.
+func permissionMode(mode string) string {
+	return fmt.Sprintf(`{"type":"permission-mode","permissionMode":%q}`, mode)
+}
+
+// spawning renders an assistant record that starts a subagent with the given
+// tool call.
+func spawning(requestID, toolUseID string, out int64) string {
+	return fmt.Sprintf(
+		`{"type":"assistant","requestId":%q,"message":{"model":"model-a",`+
+			`"content":[{"type":"tool_use","id":%q,"name":"Agent"}],"usage":{"output_tokens":%d}}}`,
+		requestID, toolUseID, out,
+	)
+}
+
+// writeSubagentMeta records which tool call started a subagent.
+func writeSubagentMeta(t *testing.T, transcript, name, toolUseID string) {
+	t.Helper()
+
+	path := filepath.Join(filepath.Dir(transcript), "session", "subagents", name+".meta.json")
+	if err := os.WriteFile(path, []byte(fmt.Sprintf(`{"agentType":"Explore","toolUseId":%q}`, toolUseID)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaudeMeterSplitsCostByPermissionMode(t *testing.T) {
+	path := writeTranscript(t, t.TempDir(),
+		permissionMode("plan"),
+		`{"type":"user","permissionMode":"plan","message":{"content":"plan the work"}}`,
+		assistant("r1", "model-a", 1000, 0, 0, 0, 0),
+		spawning("r2", "toolu_plan", 1000),
+		permissionMode("default"),
+		// A streaming update to a plan request, written after the mode
+		// changed, is still the plan request.
+		assistant("r1", "model-a", 1000, 0, 0, 0, 0),
+		assistant("r3", "model-a", 0, 10_000, 0, 0, 0),
+		spawning("r4", "toolu_build", 0),
+	)
+	// One subagent started while planning, one while implementing, and one
+	// started by the planning subagent.
+	writeSubagent(t, path, "agent-p.jsonl", spawning("s1", "toolu_nested", 2000))
+	writeSubagentMeta(t, path, "agent-p", "toolu_plan")
+	writeSubagent(t, path, "agent-b.jsonl", assistant("s2", "model-a", 0, 3000, 0, 0, 0))
+	writeSubagentMeta(t, path, "agent-b", "toolu_build")
+	writeSubagent(t, path, "agent-n.jsonl", assistant("s3", "model-a", 0, 4000, 0, 0, 0))
+	writeSubagentMeta(t, path, "agent-n", "toolu_nested")
+
+	meter := NewClaude(testPricing)
+	for range 2 { // Also exercise the cached scan.
+		got, measured, err := meter.Meter(mission.Mission{TranscriptPath: path})
+		if err != nil || !measured {
+			t.Fatalf("Meter: %v, %v", measured, err)
+		}
+
+		plan, build := got.Usage.Phases[mission.PhasePlan], got.Usage.Phases[mission.PhaseImplement]
+		// Plan: $0.01 + $0.10 + $0.20 + $0.40; implement: $1 + $0.30.
+		if math.Abs(plan.USD-0.71) > 1e-9 || math.Abs(build.USD-1.3) > 1e-9 || math.Abs(got.Usage.USD-2.01) > 1e-9 {
+			t.Fatalf("phases = %+v, total %v", got.Usage.Phases, got.Usage.USD)
+		}
+	}
+}
+
+func TestClaudeMeterWithholdsAnUnplacedSplit(t *testing.T) {
+	cases := []struct {
+		name     string
+		lines    []string
+		subagent bool
+	}{
+		{
+			name:  "a transcript that never recorded a mode",
+			lines: []string{assistant("r1", "model-a", 1000, 0, 0, 0, 0)},
+		},
+		{
+			name:  "a request made before the first recorded mode",
+			lines: []string{assistant("r1", "model-a", 1000, 0, 0, 0, 0), permissionMode("plan"), assistant("r2", "model-a", 1000, 0, 0, 0, 0)},
+		},
+		{
+			name:     "a subagent with no record of what started it",
+			lines:    []string{permissionMode("plan"), assistant("r1", "model-a", 1000, 0, 0, 0, 0)},
+			subagent: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTranscript(t, t.TempDir(), tc.lines...)
+			if tc.subagent {
+				writeSubagent(t, path, "agent-x.jsonl", assistant("s1", "model-a", 1000, 0, 0, 0, 0))
+			}
+
+			got, measured, err := NewClaude(testPricing).Meter(mission.Mission{TranscriptPath: path})
+			if err != nil || !measured || got.Usage.USD == 0 {
+				t.Fatalf("Meter: %+v, %v, %v", got.Usage, measured, err)
+			}
+
+			if got.Usage.Phases != nil {
+				t.Errorf("phases = %+v, want none", got.Usage.Phases)
+			}
+		})
+	}
+}

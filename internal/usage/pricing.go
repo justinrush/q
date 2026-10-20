@@ -182,6 +182,22 @@ func (p Pricing) Value(perModel map[string]mission.ModelTokens) mission.Usage {
 	return out
 }
 
+// ValuePhases prices a breakdown along with its split by phase. A nil split,
+// meaning some request could not be placed in a phase, leaves Phases unset.
+func (p Pricing) ValuePhases(perModel map[string]mission.ModelTokens, perPhase map[mission.Phase]map[string]mission.ModelTokens) mission.Usage {
+	out := p.Value(perModel)
+	if perPhase == nil {
+		return out
+	}
+
+	out.Phases = make(map[mission.Phase]mission.Usage, len(perPhase))
+	for phase, models := range perPhase {
+		out.Phases[phase] = p.Value(models)
+	}
+
+	return out
+}
+
 // Unpriced lists the models in a breakdown that the table cannot value, sorted,
 // so q doctor can report a table that has fallen behind rather than letting it
 // silently under-report.

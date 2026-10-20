@@ -229,3 +229,63 @@ func TestSnapshotLimits(t *testing.T) {
 		}
 	})
 }
+
+// phased builds a usage whose only model spent the given output tokens and
+// dollars, split between the phases as given.
+func phased(plan, build float64) Usage {
+	part := func(usd float64) Usage {
+		return Usage{PerModel: map[string]ModelTokens{"m": {Output: int64(usd * 100)}}, USD: usd}
+	}
+
+	out := part(plan).Plus(part(build))
+	out.Phases = map[Phase]Usage{PhasePlan: part(plan), PhaseImplement: part(build)}
+
+	return out
+}
+
+func TestTotalUsageCombinesPhases(t *testing.T) {
+	total := TotalUsage(map[HostID]Usage{"a": phased(1, 2), "b": phased(3, 4), "c": {}})
+	if total.Phases[PhasePlan].USD != 4 || total.Phases[PhaseImplement].USD != 6 || total.USD != 10 {
+		t.Fatalf("total = %+v", total)
+	}
+
+	// One host whose reading has no split leaves the whole mission without
+	// one, rather than attributing that host's cost to neither phase.
+	unsplit := phased(3, 4)
+	unsplit.Phases = nil
+
+	total = TotalUsage(map[HostID]Usage{"a": phased(1, 2), "b": unsplit})
+	if total.Phases != nil || total.USD != 10 {
+		t.Fatalf("total with an unsplit host = %+v", total)
+	}
+}
+
+func TestUsageEqualComparesPhases(t *testing.T) {
+	a, b := phased(1, 2), phased(1, 2)
+	if !a.Equal(b) {
+		t.Fatal("identical splits should be equal")
+	}
+
+	b.Phases = nil
+	if a.Equal(b) || b.Equal(a) {
+		t.Fatal("a split appearing is a change")
+	}
+
+	b = phased(2, 1)
+	b.USD = a.USD
+	b.PerModel = a.PerModel
+	if a.Equal(b) {
+		t.Fatal("a moved split is a change")
+	}
+}
+
+func TestUsageCloneDetachesThePhases(t *testing.T) {
+	original := phased(1, 2)
+	clone := original.Clone()
+	clone.Phases[PhasePlan].PerModel["m"] = ModelTokens{Output: 999}
+	clone.Phases[PhaseImplement] = Usage{}
+
+	if original.Phases[PhasePlan].PerModel["m"].Output != 100 || original.Phases[PhaseImplement].USD != 2 {
+		t.Fatalf("clone shares phases with the original: %+v", original.Phases)
+	}
+}

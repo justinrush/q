@@ -757,6 +757,25 @@ Two things the number tells you about itself:
 - A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
   Unknown models can be priced under `cost.models`.
 
+A plan-mode mission also splits its cost across its `plan:` and `implement:` lines:
+
+```
+plan: opus/high · $1.05
+implement: sonnet · $3.05
+```
+
+The split comes from the mode each agent records alongside every request, not from
+timing or models, so it holds when both phases run on the same model. Claude requests
+take the transcript's current permission mode (`plan` or anything else), and a
+subagent takes the phase of the tool call that started it. Codex responses take their
+turn's collaboration mode. A request made in plan mode counts as planning even after
+approval, for example if you switch back into plan mode yourself. If any request
+cannot be placed — an older transcript with no mode records, a subagent with no record
+of its parent call, a Codex checkpoint from before phases were recorded whose rollout
+is gone, or a host running an older q — neither line shows a cost, and the total on
+the top line stands alone. Each phase is rounded on its own, so the two can differ
+from the total by a cent.
+
 q ships Claude rates (including Opus/Sonnet 5.5 and Fable/Mythos 5.1) and OpenAI rates
 for GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4,
 and GPT-5/5.1/5.3 Codex.

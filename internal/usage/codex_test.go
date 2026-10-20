@@ -435,3 +435,86 @@ func TestCodexMissingModelDoesNotChargeImplementationRate(t *testing.T) {
 		}
 	}
 }
+
+// modeContext renders one turn_context line naming the model and the
+// collaboration mode the turn ran in.
+func modeContext(model, mode string) string {
+	return fmt.Sprintf(
+		`{"timestamp":"2026-09-05T14:00:00Z","type":"turn_context","payload":`+
+			`{"model":%q,"collaboration_mode":{"mode":%q,"settings":{"model":%q}}}}`,
+		model, mode, model,
+	)
+}
+
+// The split follows each turn's collaboration mode rather than its model, so a
+// mission that plans and implements on the same model still gets one.
+func TestCodexSplitsCostByCollaborationMode(t *testing.T) {
+	path := writeRollout(t,
+		modeContext("gpt-6-astra", "plan"),
+		tokenRecord("t", "plan", 1_000_000, 500_000, 0, 100_000),
+		modeContext("gpt-6-astra", "default"),
+		tokenRecord("t", "build", 100_000, 0, 0, 10_000),
+		// A replayed plan response stays in the phase it was first made in.
+		tokenRecord("t", "plan", 1_000_000, 500_000, 0, 100_000),
+	)
+	meter := NewCodex(DefaultPricing())
+	for range 2 { // Also exercise the cached scan.
+		got, measured, err := meter.Meter(mission.Mission{Tool: mission.ToolCodex, TranscriptPath: path})
+		if err != nil || !measured {
+			t.Fatalf("Meter: %v, %v", measured, err)
+		}
+		plan, build := got.Usage.Phases[mission.PhasePlan], got.Usage.Phases[mission.PhaseImplement]
+		// Fresh input $5, cached $0.50, output $5; then $1 and $0.50.
+		if math.Abs(plan.USD-10.5) > 1e-9 || math.Abs(build.USD-1.5) > 1e-9 || math.Abs(got.Usage.USD-12) > 1e-9 {
+			t.Fatalf("phases = %+v", got.Usage.Phases)
+		}
+	}
+}
+
+func TestCodexWithholdsSplitWithoutARecordedMode(t *testing.T) {
+	path := writeRollout(t,
+		modeContext("gpt-6-astra", "plan"),
+		tokenRecord("t", "plan", 1000, 0, 0, 100),
+		// An older turn shape with no collaboration mode at all.
+		`{"type":"turn_context","payload":{"model":"gpt-6-astra"}}`,
+		tokenRecord("t", "unknown", 1000, 0, 0, 100),
+	)
+	got, measured, err := NewCodex(DefaultPricing()).Meter(mission.Mission{Tool: mission.ToolCodex, TranscriptPath: path})
+	if err != nil || !measured || got.Usage.Phases != nil || got.Usage.Tokens() != 2200 {
+		t.Fatalf("unplaced response: %+v, %v", got.Usage, err)
+	}
+}
+
+func TestCodexCheckpointKeepsPhasesAcrossReplacement(t *testing.T) {
+	plan := writeRollout(t, `{"type":"session_meta","payload":{"id":"planner"}}`,
+		modeContext("gpt-6-astra", "plan"), tokenRecord("planner", "plan", 1_000_000, 500_000, 0, 100_000))
+	build := writeRollout(t, `{"type":"session_meta","payload":{"id":"builder"}}`,
+		modeContext("gpt-6.1-sol", "default"), tokenRecord("builder", "build", 1_000_000, 500_000, 0, 100_000))
+	ms := mission.Mission{Tool: mission.ToolCodex, Model: "gpt-6.1-sol", PlanModel: "gpt-6-astra", PlanMode: true}
+	ms.SetTranscriptPath(plan)
+	first, _, err := NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ms.CodexUsage = first.CodexUsage
+	ms.SetTranscriptPath(build)
+	if err := os.Remove(plan); err != nil {
+		t.Fatal(err)
+	}
+	got, _, err := NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan, build := got.Usage.Phases[mission.PhasePlan], got.Usage.Phases[mission.PhaseImplement]; math.Abs(plan.USD-10.5) > 1e-9 || math.Abs(build.USD-2.05) > 1e-9 {
+		t.Fatalf("phases after replacement = %+v", got.Usage.Phases)
+	}
+
+	// A response checkpointed before phases were recorded, whose rollout is
+	// gone, cannot be placed, so no split is offered at all.
+	ms.CodexUsage = got.CodexUsage.Clone()
+	ms.CodexUsage[plan]["plan"] = mission.CodexResponse{Model: "gpt-6-astra", Tokens: ms.CodexUsage[plan]["plan"].Tokens}
+	got, _, err = NewCodex(DefaultPricing()).Meter(ms)
+	if err != nil || got.Usage.Phases != nil || math.Abs(got.Usage.USD-12.55) > 1e-9 {
+		t.Fatalf("legacy checkpoint: %+v, %v", got.Usage, err)
+	}
+}
