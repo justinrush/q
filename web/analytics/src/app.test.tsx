@@ -67,7 +67,17 @@ describe("analytics", () => {
       .mockResolvedValue({ ok: true, json: async () => payload } as Response);
     render(<App />);
     await screen.findByText("astra / high → sol / low");
-    expect(String(fetchMock.mock.calls[0][0])).toContain("status=closed");
+    expect(String(fetchMock.mock.calls[0][0])).not.toMatch(
+      /(?:from|to|status)=/,
+    );
+    fireEvent.change(screen.getByLabelText("Mission status"), {
+      target: { value: "closed" },
+    });
+    await waitFor(() =>
+      expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain(
+        "status=closed",
+      ),
+    );
     fireEvent.change(screen.getByLabelText("Observed model"), {
       target: { value: "astra" },
     });
@@ -81,5 +91,29 @@ describe("analytics", () => {
     fireEvent.click(screen.getByText("Refresh ↻"));
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(screen.getByText("astra / high → sol / low")).toBeTruthy();
+  });
+  it("explains when no records are stored on the host", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        updatedAt: "2026-10-20T12:00:00Z",
+        matched: 0,
+        measured: 0,
+        unknownEffort: 0,
+        unpriced: 0,
+        totalUSD: 0,
+        workflows: [],
+        breakdown: [],
+        missions: [],
+        page: 1,
+        pages: 1,
+        facets: { model: [], effort: [], tool: [] },
+        operations: {},
+      }),
+    } as Response);
+    render(<App />);
+    expect((await screen.findByRole("status")).textContent).toContain(
+      "No mission history is stored on this host",
+    );
   });
 });

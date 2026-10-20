@@ -60,11 +60,6 @@ const dollars = (v = 0) =>
   new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
     v,
   );
-const dateValue = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const today = new Date();
-const start = new Date(today);
-start.setDate(start.getDate() - 29);
 export function dateBoundary(value: string, end = false) {
   const d = new Date(`${value}T00:00:00`);
   if (end) d.setDate(d.getDate() + 1);
@@ -276,9 +271,9 @@ function Mission({ detail }: { detail: Detail }) {
 }
 export function App() {
   const [filters, setFilters] = useState<Record<string, string>>({
-    from: dateValue(start),
-    to: dateValue(today),
-    status: "closed",
+    from: "",
+    to: "",
+    status: "",
     deleted: "",
     operation: "",
     tool: "",
@@ -472,6 +467,19 @@ export function App() {
       )}
       {data ? (
         <>
+          {data.matched === 0 && (
+            <div role="status" className="notice">
+              {data.facets.tool.length === 0
+                ? "No mission history is stored on this host. Existing missions are imported when the updated daemon starts; missions deleted before the upgrade cannot be recovered. If this is a paired host, check that sync has completed."
+                : "No dated missions match these filters. Clear the dates and status, or include undated missions."}
+            </div>
+          )}
+          {data.matched > 0 && data.measured === 0 && (
+            <div role="status" className="notice">
+              Missions are present, but none has measured usage. Only metered
+              agent sessions have a cost estimate.
+            </div>
+          )}
           <section className="metrics">
             <article>
               <span>Whole-mission cost</span>
