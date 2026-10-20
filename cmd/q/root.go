@@ -36,6 +36,7 @@ func BuildRootCommand() *cobra.Command {
 		"enable mouse support in the TUI")
 
 	cmd.AddCommand(
+		buildAnalyticsSubcommand(),
 		buildConfigSubcommand(),
 		buildCodexPrepareSubcommand(),
 		buildDaemonSubcommand(),

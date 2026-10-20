@@ -39,6 +39,17 @@ func (t ModelTokens) Total() int64 {
 // Zero reports whether nothing was consumed.
 func (t ModelTokens) Zero() bool { return t.Total() == 0 }
 
+// UsageSlice retains a measured attribution and its recorded estimate.
+// Empty dimensions mean unknown, never the configured mission defaults.
+type UsageSlice struct {
+	Model    string      `json:"model"`
+	Effort   string      `json:"effort"`
+	Phase    Phase       `json:"phase"`
+	Tokens   ModelTokens `json:"tokens"`
+	USD      float64     `json:"usd"`
+	Unpriced bool        `json:"unpriced"`
+}
+
 // Usage is what a mission has consumed so far.
 //
 // USD is an estimate of the equivalent API spend, derived from the token counts
@@ -46,8 +57,9 @@ func (t ModelTokens) Zero() bool { return t.Total() == 0 }
 // is not charged per token at all, and the table can lag a price change. The
 // number is for comparing missions against each other.
 type Usage struct {
-	PerModel map[string]ModelTokens `json:"perModel,omitempty"`
-	USD      float64                `json:"usd,omitempty"`
+	Breakdown []UsageSlice           `json:"breakdown,omitempty"`
+	PerModel  map[string]ModelTokens `json:"perModel,omitempty"`
+	USD       float64                `json:"usd,omitempty"`
 	// Unpriced reports that some tokens came from a model the pricing table does
 	// not know, so USD is a floor rather than a total.
 	Unpriced bool `json:"unpriced,omitempty"`
@@ -94,6 +106,7 @@ func (u Usage) Empty() bool {
 // Clone returns a deep copy, so a mission handed outside the store cannot be
 // mutated through its usage map.
 func (u Usage) Clone() Usage {
+	u.Breakdown = slices.Clone(u.Breakdown)
 	if u.Phases != nil {
 		phases := make(map[Phase]Usage, len(u.Phases))
 		for phase, usage := range u.Phases {
@@ -126,6 +139,7 @@ func (u Usage) Plus(o Usage) Usage {
 	}
 
 	out.Phases = plusPhases(u, o)
+	out.Breakdown = append(u.Slices(), o.Slices()...)
 
 	if len(u.PerModel)+len(o.PerModel) == 0 {
 		return out
@@ -194,7 +208,7 @@ func TotalUsage(byHost map[HostID]Usage) Usage {
 // was taken. The daemon re-meters on a timer, so comparing At would publish a
 // mission update on every tick of an idle session.
 func (u Usage) Equal(o Usage) bool {
-	if u.USD != o.USD || u.Unpriced != o.Unpriced || len(u.PerModel) != len(o.PerModel) ||
+	if !slices.Equal(u.Breakdown, o.Breakdown) || u.USD != o.USD || u.Unpriced != o.Unpriced || len(u.PerModel) != len(o.PerModel) ||
 		(u.Phases == nil) != (o.Phases == nil) || len(u.Phases) != len(o.Phases) {
 		return false
 	}
@@ -250,4 +264,35 @@ func limitKindLabel(kind string) string {
 	default:
 		return kind + " limit"
 	}
+}
+
+// Slices preserves legacy dollars without inventing their model or effort.
+func (u Usage) Slices() []UsageSlice {
+	if len(u.Breakdown) > 0 {
+		return slices.Clone(u.Breakdown)
+	}
+	if u.Empty() {
+		return nil
+	}
+	if len(u.Phases) > 0 {
+		var out []UsageSlice
+		for _, phase := range []Phase{PhasePlan, PhaseImplement} {
+			for _, row := range u.Phases[phase].Slices() {
+				row.Phase = phase
+				out = append(out, row)
+			}
+		}
+		return out
+	}
+	var tokens ModelTokens
+	for _, t := range u.PerModel {
+		tokens = tokens.Add(t)
+	}
+	model := ""
+	if len(u.PerModel) == 1 {
+		for m := range u.PerModel {
+			model = m
+		}
+	}
+	return []UsageSlice{{Model: model, Tokens: tokens, USD: u.USD, Unpriced: u.Unpriced}}
 }

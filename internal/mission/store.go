@@ -67,7 +67,7 @@ func Open(dirs paths.Dirs, opts ...StoreOption) (*Store, error) {
 // peer believed this host was running.
 func (s *Store) ensureIdentity() error {
 	snap := s.snap.Clone()
-	if !adoptIdentity(&snap) {
+	if !adoptIdentity(&snap) && (snap.Analytics != nil || len(snap.Missions) == 0) {
 		return nil
 	}
 
@@ -82,6 +82,8 @@ func (s *Store) ensureIdentity() error {
 		adoptIdentity(&snap)
 	}
 
+	snap.captureAnalytics(Snapshot{})
+	snap.SchemaVersion = SchemaVersion
 	snap.UpdatedAt = s.now()
 
 	if err := s.persist(snap); err != nil {
@@ -188,6 +190,8 @@ func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) err
 	if stamped {
 		stamp(s.snap, &next, next.UpdatedAt)
 	}
+
+	next.captureAnalytics(s.snap)
 
 	if err := s.persist(next); err != nil {
 		return err
@@ -304,6 +308,9 @@ func migrate(snap Snapshot) Snapshot {
 		snap.SchemaVersion = 3
 	}
 
+	if snap.SchemaVersion < 4 {
+		snap.SchemaVersion = 4
+	}
 	return snap
 }
 

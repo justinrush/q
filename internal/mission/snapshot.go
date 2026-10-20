@@ -9,13 +9,14 @@ import (
 
 // SchemaVersion is the current on-disk format version. Bump it when a change
 // requires migrating existing state, and add a case to migrate.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Snapshot is the complete persisted state of q.
 type Snapshot struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	Operations    []Operation `json:"operations"`
-	Missions      []Mission   `json:"missions"`
+	Analytics     map[MissionID]AnalyticsRecord `json:"analytics,omitempty"`
+	SchemaVersion int                           `json:"schemaVersion"`
+	Operations    []Operation                   `json:"operations"`
+	Missions      []Mission                     `json:"missions"`
 	// Limits are the usage windows each agent has most recently been refused on.
 	//
 	// They belong to the snapshot rather than to a mission because they are a
@@ -46,6 +47,7 @@ type Snapshot struct {
 // be a data race waiting to happen.
 func (s Snapshot) Clone() Snapshot {
 	out := s
+	out.Analytics = cloneAnalytics(s.Analytics)
 	out.Operations = make([]Operation, len(s.Operations))
 	out.Missions = make([]Mission, len(s.Missions))
 	out.Limits = slices.Clone(s.Limits)

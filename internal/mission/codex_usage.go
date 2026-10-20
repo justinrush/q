@@ -5,6 +5,7 @@ import "maps"
 // CodexResponse is a measured response, retained even if its rollout disappears.
 // Response IDs allow replayed records to be counted once across transcripts.
 type CodexResponse struct {
+	Effort string      `json:"effort,omitempty"`
 	Model  string      `json:"model"`
 	Tokens ModelTokens `json:"tokens"`
 	// Phase is empty for a response measured before q recorded phases, or

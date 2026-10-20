@@ -85,10 +85,17 @@ else
 	VERSION=dev
 fi
 
+if ! command -v npm >/dev/null 2>&1; then
+	echo "install.sh: Node.js 24+ and npm are required to build the analytics UI" >&2
+	exit 1
+fi
+npm --prefix web/analytics ci
+npm --prefix web/analytics run build
+
 echo "building $BINARY $VERSION"
 
 mkdir -p bin
-go build \
+go build -tags analyticsui \
 	-trimpath \
 	-ldflags "-s -w -X $VERSION_VAR.buildVersion=$VERSION -X $VERSION_VAR.buildCommit=$COMMIT" \
 	-o "bin/$BINARY" \

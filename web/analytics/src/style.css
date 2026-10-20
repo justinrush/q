@@ -1,0 +1,395 @@
+:root {
+  font-family:
+    Inter,
+    ui-sans-serif,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  color: #222c33;
+  background: #f6f7f9;
+  font-synthesis: none;
+  font-weight: 400;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 1500px;
+  margin: auto;
+  padding: 0 44px;
+}
+header {
+  height: 86px;
+  border-bottom: 1px solid #dde2e6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.brand {
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: -3px;
+  color: #123e44;
+}
+.brand span {
+  font-size: 11px;
+  letter-spacing: 2px;
+  margin-left: 18px;
+  color: #63767b;
+}
+.live {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: #66747a;
+}
+.dot {
+  height: 7px;
+  width: 7px;
+  border-radius: 50%;
+  background: #318776;
+}
+.dot.stale {
+  background: #cf763d;
+}
+button,
+select,
+input {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  background: white;
+  border: 1px solid #d9e0e4;
+  border-radius: 6px;
+  padding: 8px 12px;
+  color: #30434a;
+}
+button:hover {
+  border-color: #318776;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.intro {
+  padding: 36px 0 22px;
+}
+.eyebrow {
+  font-size: 10px !important;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  color: #487a74 !important;
+}
+h1 {
+  font-size: 34px;
+  letter-spacing: -1.2px;
+  margin: 12px 0;
+}
+p {
+  line-height: 1.6;
+}
+.intro > p {
+  font-size: 14px;
+  color: #6b787e;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 15px;
+  background: white;
+  border: 1px solid #dde3e7;
+  border-radius: 10px;
+  padding: 21px;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #5a6970;
+}
+select,
+input[type="date"] {
+  width: 100%;
+  min-width: 0;
+  background: #fbfcfd;
+  border: 1px solid #dbe2e6;
+  border-radius: 5px;
+  padding: 9px;
+  color: #263d46;
+  font-size: 12px;
+}
+label.check {
+  flex-direction: row;
+  align-items: center;
+  padding-top: 18px;
+  gap: 8px;
+}
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin: 25px 0 30px;
+}
+.metrics article {
+  display: flex;
+  flex-direction: column;
+  background: white;
+  border: 1px solid #e0e6e9;
+  border-radius: 9px;
+  padding: 20px;
+  gap: 12px;
+}
+.metrics span {
+  font-size: 12px;
+  color: #65777d;
+}
+.metrics strong {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -1px;
+}
+.metrics small {
+  font-size: 11px;
+  color: #849196;
+}
+nav {
+  display: flex;
+  border-bottom: 1px solid #dce3e7;
+  gap: 22px;
+}
+nav button {
+  border: 0;
+  background: none;
+  border-radius: 0;
+  font-size: 13px;
+  padding: 13px 0;
+  color: #77858b;
+}
+nav button.selected {
+  color: #166b61;
+  border-bottom: 2px solid #166b61;
+  font-weight: 600;
+}
+.panel {
+  background: white;
+  border: 1px solid #dce3e7;
+  border-radius: 9px;
+  margin-top: 20px;
+  padding: 22px;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+}
+.panel-heading p {
+  font-size: 12px;
+  color: #7b888e;
+  margin-bottom: 8px;
+}
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #74848a;
+}
+.legend span {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-left: 8px;
+}
+.plan {
+  background: #30897d;
+}
+.implement {
+  background: #9bc9c2;
+}
+.unknown {
+  background: #d9bd80;
+}
+.table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #74848a;
+  margin: 10px 0;
+}
+.table-tools label {
+  flex-direction: row;
+  align-items: center;
+}
+.table-tools select {
+  width: 125px;
+}
+.scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 12px;
+}
+th {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #8b989d;
+  font-weight: 500;
+  border-bottom: 1px solid #e5e9ec;
+  padding: 13px 8px;
+}
+td {
+  padding: 18px 8px;
+  border-bottom: 1px solid #edf0f2;
+  font-variant-numeric: tabular-nums;
+}
+.group-label {
+  min-width: 280px;
+  max-width: 530px;
+  font-size: 12px;
+}
+.bar-track {
+  width: 100%;
+  max-width: 420px;
+  margin-top: 10px;
+  height: 6px;
+  background: #f3f5f6;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.bar {
+  display: flex;
+  height: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.badge {
+  font-size: 9px;
+  color: #946423;
+  background: #fbf3e3;
+  border-radius: 4px;
+  padding: 3px 5px;
+  margin-left: 6px;
+}
+.empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: #7b888f;
+  font-size: 14px;
+}
+.error {
+  margin-top: 18px;
+  padding: 15px;
+  background: #fff0e6;
+  color: #864b26;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.mission {
+  border-bottom: 1px solid #e3e8ec;
+  padding: 15px 0;
+}
+.mission summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 13px;
+}
+.mission summary small {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  color: #879298;
+}
+.muted {
+  font-size: 12px;
+  color: #72828a;
+}
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+  margin-top: 22px;
+  font-size: 12px;
+}
+footer {
+  padding: 12px 0 30px;
+  color: #8a969b;
+  font-size: 11px;
+  max-width: 1000px;
+}
+footer p {
+  margin: 8px 0;
+}
+@media (max-width: 950px) {
+  main {
+    padding: 0 20px;
+  }
+  .filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .panel-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  h1 {
+    font-size: 28px;
+  }
+}
+@media (max-width: 550px) {
+  main {
+    padding: 0 12px;
+  }
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 14px;
+  }
+  .live {
+    font-size: 10px;
+  }
+  .metrics {
+    gap: 9px;
+  }
+  .metrics article {
+    padding: 14px;
+  }
+  h1 {
+    font-size: 25px;
+  }
+  .panel {
+    padding: 14px;
+  }
+  nav {
+    gap: 16px;
+  }
+  nav button {
+    font-size: 11px;
+  }
+  .brand span {
+    display: none;
+  }
+}

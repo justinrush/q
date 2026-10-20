@@ -8,3 +8,8 @@ __pycache__/
 # Go coverage and test artifacts.
 *.out
 *.test
+
+.cache/
+node_modules/
+web/analytics/test-results/
+web/analytics/playwright-report/

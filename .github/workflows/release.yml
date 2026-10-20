@@ -32,6 +32,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/analytics/package-lock.json
       - name: Select version
         id: version
         run: python3 scripts/release_version.py >> "$GITHUB_OUTPUT"

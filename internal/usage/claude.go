@@ -69,6 +69,7 @@ type fileCounts struct {
 // phase it was made in, empty when the agent recorded no mode for it.
 type requestUsage struct {
 	model  string
+	effort string
 	tokens mission.ModelTokens
 	phase  mission.Phase
 }
@@ -163,7 +164,9 @@ func (c *Claude) read(transcript string) (mission.Metering, bool, error) {
 		perPhase[usage.phase][usage.model] = perPhase[usage.phase][usage.model].Add(usage.tokens)
 	}
 
-	return mission.Metering{Usage: c.pricing.ValuePhases(perModel, perPhase), Limit: quota}, true, nil
+	out := c.pricing.ValuePhases(perModel, perPhase)
+	out.Breakdown = c.pricing.breakdown(byRequest)
+	return mission.Metering{Usage: out, Limit: quota}, true, nil
 }
 
 // subagentPhases places each subagent in the phase of the tool call that
@@ -340,6 +343,10 @@ func parseTranscript(path string) (fileCounts, error) {
 		}
 
 		phase := modePhase(mode)
+		effort := rec.PerTurnEffort
+		if effort == "" {
+			effort = rec.Effort
+		}
 		for _, id := range rec.toolUseIDs() {
 			counts.toolPhases[id] = phase
 		}
@@ -361,9 +368,10 @@ func parseTranscript(path string) (fileCounts, error) {
 		// one is the record made under the mode the request was sent in.
 		if previous, ok := counts.byRequest[rec.RequestID]; ok {
 			phase = previous.phase
+			effort = previous.effort
 		}
 
-		counts.byRequest[rec.RequestID] = requestUsage{model: rec.Message.Model, tokens: tokens, phase: phase}
+		counts.byRequest[rec.RequestID] = requestUsage{model: rec.Message.Model, tokens: tokens, phase: phase, effort: effort}
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -390,9 +398,11 @@ func modePhase(mode string) mission.Phase {
 
 // assistantRecord is the part of a transcript record this package reads.
 type assistantRecord struct {
-	Type      string    `json:"type"`
-	RequestID string    `json:"requestId"`
-	Timestamp time.Time `json:"timestamp"`
+	Effort        string    `json:"effort"`
+	PerTurnEffort string    `json:"perTurnEffort"`
+	Type          string    `json:"type"`
+	RequestID     string    `json:"requestId"`
+	Timestamp     time.Time `json:"timestamp"`
 	// PermissionMode is on a permission-mode record and on each prompt.
 	PermissionMode string `json:"permissionMode"`
 	Message        struct {

@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -165,6 +167,14 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
 	mux.HandleFunc("GET /v1/state", s.handleState)
+	mux.HandleFunc("GET /v1/analytics", func(w http.ResponseWriter, r *http.Request) {
+		snap := s.svc.Snapshot()
+		out := api.AnalyticsSnapshot{UpdatedAt: snap.UpdatedAt, Records: []mission.AnalyticsRecord{}}
+		for _, id := range slices.Sorted(maps.Keys(snap.Analytics)) {
+			out.Records = append(out.Records, snap.Analytics[id])
+		}
+		writeJSON(w, http.StatusOK, out)
+	})
 	mux.HandleFunc("GET /v1/events", s.handleEvents)
 
 	mux.HandleFunc("GET /v1/operations", s.handleListOperations)
