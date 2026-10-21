@@ -48,12 +48,12 @@ func (p *Proxy) ReadPlan(ctx context.Context, id string) (planState, error) {
 	turn := result.Data[0]
 	state := planState{Known: true}
 	for _, item := range turn.Items {
-		if item.Type == "plan" && turn.Status == "completed" {
+		if item.Type == modePlan && turn.Status == "completed" {
 			state.Pending = true
 		}
 		if item.Type == "userMessage" {
 			for _, content := range item.Content {
-				if content.Type == "text" && (mission.HookEvent{Prompt: content.Text}).IsPlanGoAhead() {
+				if content.Type == inputText && (mission.HookEvent{Prompt: content.Text}).IsPlanGoAhead() {
 					state.Approved = true
 				}
 			}

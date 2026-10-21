@@ -293,7 +293,11 @@ func (a *App) confirmDeleteOperation(operation mission.Operation) tea.Cmd {
 // plan: by then the flag is fixed, and what is left to decide about plan mode
 // is when it ends.
 func (a *App) handleTogglePlan(ms mission.Mission) tea.Cmd {
-	if ms.Launched() && ms.Planning() && !ms.Status.Terminal() {
+	if ms.Launched() && (ms.Planning() || ms.PlanFailed()) && !ms.Status.Terminal() {
+		if ms.PlanFailed() {
+			a.modal = newConfirm("Retry Codex", "Retry the interrupted Codex launch or model handoff?", "retry", false, a.setStatus(ms.ID, mission.StatusActive, ""))
+			return nil
+		}
 		if ms.Tool.PlanSwitchesItself() {
 			return emit(toastMsg{
 				text: "approve the plan in " + ms.Tool.String() + " itself: press enter to open it",

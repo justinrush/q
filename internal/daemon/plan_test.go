@@ -282,6 +282,9 @@ func TestApprovePlan(t *testing.T) {
 				t.Fatalf("relaunched = %v, want %v", ok, tc.wantRelaunch)
 			}
 
+			if ok && ms.Tool == mission.ToolCodex {
+				waitVerified(t, svc, ms.ID)
+			}
 			if ok && relaunched.Planning() {
 				t.Error("the session was restarted while the mission still read as planning")
 			}
@@ -373,6 +376,9 @@ func TestPlanApprovedInTheAgentRestartsOnlyASplit(t *testing.T) {
 			svc.apply(WithMessenger(messenger))
 
 			ms := seedPlanning(t, svc, tc.mutate)
+			if ms.Tool == mission.ToolCodex {
+				svc.apply(WithRuntime(mission.ToolCodex, &controlledRuntime{}))
+			}
 
 			tc.hook.MissionID = ms.ID
 			svc.ApplyHook(tc.hook)
@@ -387,6 +393,9 @@ func TestPlanApprovedInTheAgentRestartsOnlyASplit(t *testing.T) {
 				t.Fatalf("relaunched = %v, want %v", ok, tc.wantRelaunch)
 			}
 
+			if ok && ms.Tool == mission.ToolCodex {
+				waitVerified(t, svc, ms.ID)
+			}
 			if ok && relaunched.Planning() {
 				t.Error("the session was restarted while the mission still read as planning")
 			}

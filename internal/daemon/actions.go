@@ -319,6 +319,14 @@ func (s *Service) Resume(ctx context.Context, id mission.MissionID, message stri
 		return mission.Mission{}, err
 	}
 
+	if codexPlan(ms) && ms.PlanFailed() {
+		return s.retryCodexPlan(ctx, ms)
+	}
+	if codexPlan(ms) && ms.PlanTransition.Phase == mission.PhaseImplement &&
+		(ms.PlanTransition.State == mission.PlanTransitionPending || ms.PlanTransition.State == mission.PlanTransitionVerifying) {
+		return mission.Mission{}, fmt.Errorf("%w: Codex handoff is still being verified", ErrConflict)
+	}
+
 	if s.sessionAlive(ctx, ms) {
 		if message != "" {
 			if err := s.messenger.SendMessage(ctx, ms, message); err != nil {
@@ -363,6 +371,10 @@ func (s *Service) ApprovePlan(ctx context.Context, id mission.MissionID) (missio
 	ms, err := s.requireLaunched(id)
 	if err != nil {
 		return mission.Mission{}, err
+	}
+
+	if codexPlan(ms) {
+		return s.approveCodexPlan(ctx, ms)
 	}
 
 	if !ms.Planning() {
@@ -430,6 +442,21 @@ func (s *Service) implementPlan(id mission.MissionID) {
 	ctx, cancel := context.WithTimeout(context.Background(), planSwitchTimeout)
 	defer cancel()
 
+	ms, ok := s.store.Snapshot().Mission(id)
+	if ok && codexPlan(ms) {
+		if !s.planFlights.claim(id) {
+			return
+		}
+		defer s.planFlights.release(id)
+		ms, _ = s.store.Snapshot().Mission(id)
+		if ms.PlanTransition.State != mission.PlanTransitionPending || !s.holds(ms) || ms.Status.Terminal() {
+			return
+		}
+		if _, err := s.runCodexHandoff(ctx, ms); err != nil {
+			s.warn("Codex handoff failed", "mission", id, "error", err)
+		}
+		return
+	}
 	if _, err := s.relaunch(ctx, id, planSwitchedMessage); err != nil {
 		s.warn("restarting a session to implement its plan", "mission", id, "error", err)
 	}
@@ -610,6 +637,7 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		stored.AgentPaneID = relaunched.AgentPaneID
 		stored.AgentSessionID = relaunched.AgentSessionID
 		stored.HookEpoch = relaunched.HookEpoch
+		stored.PlanTransition = relaunched.PlanTransition
 		stored.Badges = relaunched.Badges
 		stored.Badges = stored.WithoutBadge(mission.BadgeHandoff)
 		stored.Badges = stored.WithoutBadge(mission.BadgeLaunching)

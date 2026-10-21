@@ -128,6 +128,9 @@ func (a *Agent) Prologue(inv mission.Invocation) string {
 	}
 
 	b.WriteString("\nfi\n")
+	if inv.PlanMode || inv.ControlledTurn {
+		b.WriteString("echo 'q: Codex planning requires the managed app-server; update Codex and retry.' >&2\nexit 1\n")
+	}
 
 	return b.String()
 }
@@ -184,7 +187,7 @@ func outsideRoots(inv mission.Invocation) []string {
 // /plan command, and a prompt passed here is submitted as written, slash and
 // all, so the brief is delivered by [Agent.Opening] instead.
 func (*Agent) withPrompt(args []string, inv mission.Invocation) []string {
-	if inv.PlanMode {
+	if inv.PlanMode || inv.ControlledTurn {
 		return args
 	}
 
@@ -322,6 +325,9 @@ func (a *Agent) commonArgs(inv mission.Invocation) []string {
 
 	if inv.Effort != "" {
 		args = append(args, "-c", mission.ShellQuote(keyEffort+"="+inv.Effort))
+		if inv.PlanMode {
+			args = append(args, "-c", mission.ShellQuote("plan_mode_reasoning_effort="+inv.Effort))
+		}
 	}
 
 	return append(args, mission.ShellQuoteAll(a.args)...)

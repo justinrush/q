@@ -287,6 +287,10 @@ func (s *Service) checkSession(ctx context.Context, ms *mission.Mission, now tim
 // lives in a badge: q knows the agent is gone but not whether its work was
 // finished, so it asks for a human rather than inventing an answer.
 func (s *Service) markSessionGone(ms *mission.Mission) {
+	if ms.PlanFailed() {
+		keepPlanFailure(ms)
+		return
+	}
 	ms.AgentState = mission.AgentDead
 	ms.Badges = ms.WithBadge(mission.BadgeTmuxGone, "")
 
@@ -302,6 +306,10 @@ func (s *Service) markSessionGone(ms *mission.Mission) {
 // authoritative, so each rule is deliberately conservative about the direction it
 // moves a card.
 func (s *Service) applyReading(ms *mission.Mission, readings map[mission.MissionID]mission.Reading, now time.Time) {
+	if ms.PlanFailed() {
+		keepPlanFailure(ms)
+		return
+	}
 	reading, ok := readings[ms.ID]
 	if !ok {
 		return

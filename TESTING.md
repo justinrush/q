@@ -114,7 +114,8 @@ This is the thing worth checking first, because everything else depends on it.
 Launch a mission with `--plan` on each of claude, codex, and opencode. The card should
 reach **debrief** when the plan is ready, *not* awaiting orders. Press `enter`: you should
 land in the agent's own approval dialog. Approve it there and the card should return to
-**active** with nothing restarted.
+**active**. Codex verifies its mode/model handoff through a terminal restart;
+other agents need no restart when both phases use the same settings.
 
 For codex, watch the pane at launch: it should come up with an empty composer, then
 receive a one-line `/plan` command naming `.q/prompt.md`, and report that it changed to
@@ -136,6 +137,22 @@ On opencode the same mission should show the plan model in the footer while plan
 and after you approve in opencode's own dialog the footer should change to the build
 agent on the implementing model with the pane never restarting. `p` on that card should
 decline and point you at the dialog.
+
+For Codex, inspect the rollout's `turn_context`, not just the launch argv or footer:
+planning must record `plan`, `gpt-6-astra`, and `low`; implementation must record
+`default`, `gpt-6-sol`, and `low`. Submit another prompt in the terminal and verify
+that Sol/low remains selected. Repeat after a daemon restart during the handoff.
+Force a failed restart or unavailable managed server: the card must remain paused,
+retain the approval, show the cause in `l`, and recover with `p` without duplicate
+implementation prompts. A failed initial planning launch must retry in native Plan Mode.
+
+An opt-in protocol smoke test creates and archives its own read-only scratch thread
+on the installed managed server. It uses three short model requests and never touches
+an existing mission:
+
+```sh
+Q_CODEX_PLAN_SMOKE=1 go test ./internal/codex -run '^TestLivePlanHandoff$' -count=1 -v
+```
 
 Repeat, but answer the dialog with a revision instead of approving. The card should return
 to **active** as soon as the agent calls its next tool, and come back to **debrief** when

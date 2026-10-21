@@ -1,0 +1,4 @@
+{"timestamp":"2026-10-20T21:19:17.337Z","type":"session_meta","payload":{"id":"planning-thread"}}
+{"timestamp":"2026-10-20T21:19:17.337Z","type":"turn_context","payload":{"turn_id":"planning-turn","model":"gpt-6-astra","effort":"medium","collaboration_mode":{"mode":"plan","settings":{"model":"gpt-6-astra","reasoning_effort":"medium"}}}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"text":"<proposed_plan>Test plan</proposed_plan>"}]}}
+{"timestamp":"2026-10-21T13:49:39.862Z","type":"turn_context","payload":{"turn_id":"implementation-turn","model":"gpt-6-astra","effort":"low","collaboration_mode":{"mode":"default","settings":{"model":"gpt-6-astra","reasoning_effort":"low"}}}}

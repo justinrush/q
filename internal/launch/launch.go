@@ -157,6 +157,7 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 		return ms, err
 	}
 
+	ms.BeginPlanVerification(l.now())
 	if err := l.startSession(ctx, operation, &ms, false); err != nil {
 		provisioned.Rollback(ctx)
 

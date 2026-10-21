@@ -114,9 +114,13 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 			next.StatusChangedAt = now
 		}
 
+		if codexPlan(next) && !ms.PlanApproved && next.PlanApproved {
+			pendingImplementation(&next, now)
+		}
+		keepPlanFailure(&next)
 		updated = next
 		changed = true
-		switched = !ms.PlanApproved && next.PlanApproved && next.SplitsPlan() &&
+		switched = !ms.PlanApproved && next.PlanApproved && (next.SplitsPlan() || codexPlan(next)) &&
 			!next.Tool.PlanSwitchesItself()
 		snap.PutMission(next)
 

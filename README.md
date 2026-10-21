@@ -866,9 +866,13 @@ How each agent gets there differs, and q hides the difference:
 - **codex** has no flag for plan mode, only its `/plan` command, so q starts it with no
   prompt and types `/plan` once its composer is up. The command names the brief
   (`.q/prompt.md`) rather than containing it, because codex folds a long paste into a
-  placeholder and then no longer reads the line as a command. A codex plan is a turn that
-  ends without a closing message, and approval is the prompt codex submits when you answer
-  *Implement this plan?*
+  placeholder and then no longer reads the line as a command. q verifies the recorded
+  collaboration mode, model, and effort after launch; it also sets Codex's separate
+  `plan_mode_reasoning_effort` override. A completed structured plan goes to debrief.
+  Approval is recognized from Codex's implementation prompt or an observed transition
+  from Plan Mode to default mode after a proposed plan. Clarifications remain planning.
+  Planning requires the managed app-server; q does not silently fall back to an
+  unobservable local session.
 
 The toggle is disabled for agy: its CLI has a plan mode, but q has no verified event for a
 plan being ready or accepted.
@@ -898,6 +902,14 @@ agent allows:
   sees the approval and restarts the session a moment later. Approving from q does not
   wait for q to have noticed the plan: the events that announce one can be missed, and
   you may be looking at a finished plan in the pane before the card moves.
+- **Codex handoffs are verified.** q interrupts server-side generation, reattaches the
+  terminal without submitting a prompt, explicitly sets default mode and implementation
+  settings, then starts the continuation. User approval and successful verification are
+  stored separately. An interrupted daemon resumes pending handoffs; a failed handoff
+  stays paused with its error on the card and in the log (`l`). Press `p` or move the card
+  to active to retry. An already-approved plan does not need approval again. Native
+  in-pane approval can briefly start a turn on the planning model before q observes it;
+  q interrupts that turn instead of letting it finish on the wrong settings.
 - **opencode** changes by itself. Its plan and build agents each take a model of their
   own, so q writes both into the mission's `.opencode/opencode.json` at launch and
   accepting the plan hands the session from one to the other, with nothing restarted. It
