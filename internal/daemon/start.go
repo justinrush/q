@@ -188,6 +188,7 @@ func (s *Service) commitLaunch(launched mission.Mission) (mission.Mission, error
 		stored.AgentPaneID = launched.AgentPaneID
 		stored.AgentSessionID = launched.AgentSessionID
 		stored.HookEpoch = launched.HookEpoch
+		stored.PlanTransition = launched.PlanTransition
 		stored.Work = launched.Work
 		stored.LaunchRepos = slices.Clone(launched.LaunchRepos)
 		stored.LaunchReposFrozen = launched.LaunchReposFrozen

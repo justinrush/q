@@ -172,12 +172,16 @@ func (c *Client) Notify(method string, params any) error {
 // Initialize performs the required app-server connection handshake.
 func (c *Client) Initialize(ctx context.Context, name, title, version string) error {
 	params := struct {
+		Capabilities struct {
+			ExperimentalAPI bool `json:"experimentalApi"`
+		} `json:"capabilities"`
 		ClientInfo struct {
 			Name    string `json:"name"`
 			Title   string `json:"title"`
 			Version string `json:"version"`
 		} `json:"clientInfo"`
 	}{}
+	params.Capabilities.ExperimentalAPI = true
 	params.ClientInfo.Name = name
 	params.ClientInfo.Title = title
 	params.ClientInfo.Version = version

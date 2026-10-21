@@ -57,6 +57,8 @@ type Invocation struct {
 	// PlanMode starts the agent in a plan-then-approve flow, for an agent that
 	// supports one. It is true only while the mission is still planning.
 	PlanMode bool
+	// ControlledTurn leaves the composer empty for a runtime-controlled handoff.
+	ControlledTurn bool
 	// Model names the model to run on, as the agent's own CLI names it. Empty
 	// means emit no model flag, leaving the agent its own default.
 	Model string
@@ -142,6 +144,7 @@ type Reading struct {
 	PlanKnown    bool
 	PlanPending  bool
 	PlanApproved bool
+	Settings     TurnSettings
 	// PaneID is the tmux pane the session occupies, when the agent knows it.
 	// An agent that reports this beats anything q inferred.
 	PaneID string

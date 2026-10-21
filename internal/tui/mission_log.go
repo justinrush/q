@@ -25,6 +25,9 @@ type missionLog struct {
 
 func newMissionLog(ms mission.Mission) *missionLog {
 	body := ms.LaunchError
+	if ms.PlanFailed() {
+		body = ms.PlanTransition.Error + "\n\nRetry with p on the card, or move it to active."
+	}
 	if body == "" {
 		body = "No launch error recorded for this mission."
 	}

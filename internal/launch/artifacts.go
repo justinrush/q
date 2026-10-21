@@ -277,16 +277,17 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 	}
 
 	return mission.Invocation{
-		MissionID:   ms.ID,
-		HookEpoch:   ms.HookEpoch,
-		MissionDir:  ms.MissionDir,
-		MissionDirs: l.liveMissionDirs(ms.MissionDir),
-		DaemonFile:  l.dirs.DaemonFile(),
-		SessionID:   ms.AgentSessionID,
-		Resume:      resume,
-		PlanMode:    ms.Planning(),
-		Model:       model,
-		Effort:      effort,
+		MissionID:      ms.ID,
+		HookEpoch:      ms.HookEpoch,
+		MissionDir:     ms.MissionDir,
+		MissionDirs:    l.liveMissionDirs(ms.MissionDir),
+		DaemonFile:     l.dirs.DaemonFile(),
+		SessionID:      ms.AgentSessionID,
+		Resume:         resume,
+		PlanMode:       ms.Planning(),
+		ControlledTurn: ms.Tool == mission.ToolCodex && ms.PlanTransition.Phase == mission.PhaseImplement && ms.PlanTransition.State != "",
+		Model:          model,
+		Effort:         effort,
 
 		ImplementModel:  implementModel,
 		ImplementEffort: implementEffort,

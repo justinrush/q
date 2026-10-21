@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Relaunch restarts a mission's agent against its existing worktrees, resuming the
@@ -35,7 +36,16 @@ func (l *Launcher) Relaunch(
 		return ms, fmt.Errorf("mission directory %s is gone: %w", ms.MissionDir, err)
 	}
 
+	controlled := ms.PlanTransition.State == mission.PlanTransitionPending
 	ms.HookEpoch++
+	ms.BeginPlanVerification(l.now())
+	if ms.Tool == mission.ToolCodex && ms.PlanApproved && !controlled {
+		ms.PlanTransition.State = mission.PlanTransitionPending
+		ms.PlanTransition.Message = message
+		if ms.PlanTransition.Message == "" {
+			ms.PlanTransition.Message = defaultResumePrompt
+		}
+	}
 
 	// With no session of the agent's own to resume, this is a fresh agent. That
 	// is the ordinary case for a mission that has just arrived from another
@@ -158,7 +168,7 @@ func (l *Launcher) writeRelaunchArtifacts(
 		prompt = defaultResumePrompt
 	}
 
-	if !resume {
+	if !resume || ms.Planning() {
 		brief, err := l.brief(operation, ms)
 		if err != nil {
 			return err
@@ -289,3 +299,22 @@ var shellCommands = map[string]bool{
 // alternative is to declare an agent dead on the strength of not knowing its
 // process name, which files a card for work still in progress.
 func PaneRunsAgent(command string) bool { return !shellCommands[command] }
+
+// ReadyForTurn waits until the terminal subscriber is attached before a runtime
+// starts a controlled turn. Approval requests must have an interactive owner.
+func (l *Launcher) ReadyForTurn(ctx context.Context, ms mission.Mission) error {
+	agent, err := l.agentFor(ms.Tool)
+	if err != nil {
+		return err
+	}
+	opener, ok := agent.(mission.Opener)
+	if !ok {
+		return fmt.Errorf("agent has no readiness probe")
+	}
+	ticker := time.NewTicker(l.openingPoll)
+	defer ticker.Stop()
+	if !l.awaitReady(ctx, ms, opener, ticker) {
+		return fmt.Errorf("codex terminal did not become ready")
+	}
+	return l.verifyAgentPane(ctx, ms)
+}

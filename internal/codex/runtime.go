@@ -21,7 +21,8 @@ type threadReader interface {
 // move a card in either direction. Hooks still supply tool names and
 // closing-message text.
 type Runtime struct {
-	threads threadReader
+	threads  threadReader
+	observer rolloutObserver
 }
 
 // NewRuntime returns a runtime reading through the given app-server client.
@@ -67,6 +68,15 @@ func (r *Runtime) reading(ctx context.Context, ms mission.Mission, thread Thread
 			plan, err := plans.ReadPlan(ctx, thread.ID)
 			if err == nil {
 				out.PlanKnown, out.PlanPending, out.PlanApproved = plan.Known, plan.Pending, plan.Approved
+			}
+		}
+	}
+	if ms.PlanMode && thread.Path != "" {
+		observed, err := r.observer.read(thread.Path, thread.ID)
+		if err == nil && observed.settings.SessionID == thread.ID {
+			out.Settings = observed.settings
+			if observed.approved {
+				out.PlanKnown, out.PlanApproved = true, true
 			}
 		}
 	}

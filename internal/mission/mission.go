@@ -176,6 +176,9 @@ type Mission struct {
 	// and be revived at any point, and one revived after approval must not be
 	// put back into plan mode.
 	PlanApproved bool `json:"planApproved,omitempty" q:"run"`
+	// PlanTransition survives a daemon restart separately from user approval.
+	PlanTransition   PlanTransition `json:"planTransition,omitzero" q:"local"`
+	ObservedSettings TurnSettings   `json:"observedSettings,omitzero" q:"local"`
 	// LastMessage is the agent's closing message from its last completed turn.
 	LastMessage string `json:"lastMessage,omitempty" q:"run"`
 	// Badges carry nuance the five lanes cannot express.

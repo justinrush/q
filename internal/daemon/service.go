@@ -112,9 +112,10 @@ type Service struct {
 	// debriefMu makes arranging a debrief's panes and recording them one step.
 	debriefMu sync.Mutex
 
-	approvalMu sync.Mutex
-	approvals  map[mission.MissionID]approvalCandidate
-	inflight   inflight
+	approvalMu  sync.Mutex
+	approvals   map[mission.MissionID]approvalCandidate
+	inflight    inflight
+	planFlights inflight
 }
 
 // Option configures a Service.
