@@ -1151,20 +1151,36 @@ port without opening a browser. For a remote machine, run that command there and
 forward it with `ssh -L 8765:127.0.0.1:8765 your-host`, then visit
 `http://127.0.0.1:8765` locally. There is no LAN listener or public hosting.
 
-The dashboard compares observed planning → implementation model/effort pairs,
-with mission counts, mean/median whole-mission costs, and planning shares. Spend
-breakdowns can group by model, effort, phase, or their combinations. Expand a
-mission to inspect configured versus observed settings and individual token
-categories. Filters select completed (closed) missions started in the last 30
-local calendar days by default; ongoing missions and undated records are explicit
-options. Dates refer to mission starts, **not the dates tokens were used**.
+The dashboard is a pivot explorer. Choose an **X axis** (mission start by day,
+week, or month, or any other dimension), a **series** to split by, and a
+**measure**: total cost, cost per mission (mean or median), missions, or tokens.
+The dimensions are agent, model, effort, model / effort, plan vs implement,
+"planned with", "implemented with", plan → implement, operation, and status.
+Filter chips narrow any dimension to one or more values. The chart and a pivot
+table show the same cells with totals and the mission count (n) behind each value.
+Click a bar, a column, or a table cell to list its missions. Expand a mission to
+see its configured and observed settings and per-slice token categories. The
+view lives in the URL hash, so you can bookmark or share any pivot, and the back
+button steps through your changes.
 
-Model, effort, and phase filters select qualifying whole missions in workflow
-comparisons. In spend breakdowns they select only matching contributions. Thus a
-planning filter still includes implementation in a workflow's total. Unmeasured
-missions are counted but excluded from cost averages. Unknown attribution stays
-unknown, mixed settings get a separate workflow group, and unpriced totals are
-floors. Planning shares are withheld when phases or pricing are incomplete.
+Presets start from common questions:
+- **Spend by model / agent / phase:** weekly total cost, ongoing missions included.
+- **Workflow cost:** median cost per closed mission for each observed plan → implement pairing.
+- **Planner × implementer:** the same comparison as a grid, so you can see whether a cheaper or stronger planner pays for itself in implementation.
+- **Model × effort:** mean cost per closed mission for each model at each reasoning effort.
+
+Filters apply per usage slice. A slice is one model / effort / phase within a
+mission, and the slice is counted when both its own fields and its mission's
+fields match. Filtering to the plan phase therefore counts only planning spend.
+Per-mission measures first sum each mission's matching slices, then take the mean
+or median across missions. "Planned with" and "Implemented with" name the single
+model / effort a phase observed: `none` if the phase never ran, `mixed` if it
+ran several, and `unknown` if usage could not be attributed to a phase. Series
+beyond the top seven fold into "Other". Unknown attribution is shown in grey and
+never takes a series color. Unpriced values are floors and are marked `+`.
+Missions without measured usage are left out and counted separately. The default
+view covers missions started in the last 30 local calendar days. Undated records
+are opt-in. Dates refer to mission starts, **not the dates tokens were used**.
 Different tasks and small samples prevent these comparisons from establishing
 equal quality or proving savings.
 
@@ -1186,7 +1202,8 @@ peer was offline. Upgrade both hosts for complete history; older peers cannot
 supply attribution or history they never recorded. Retention has no automatic
 expiry; snapshot size and sync payload size grow with history.
 
-The browser polls every 15 seconds while visible and shows the last successful
+The browser fetches all retained facts from `/api/facts` and pivots them
+locally. It polls every 15 seconds while visible and shows the last successful
 result if the daemon is unavailable. The companion reconnects after daemon
 restarts. It does not expose daemon credentials or mission mutation APIs.
 
@@ -1208,4 +1225,5 @@ bin/q analytics --port 8765 --no-open
 In another terminal, `npm --prefix web/analytics run dev` starts Vite with its API
 proxy targeting port 8765. Set `Q_ANALYTICS_URL` to use a different companion URL.
 Frontend source, lockfile, tests, and asset embedding all live in `web/analytics`;
-Go query and browser-server code live in `internal/analytics`.
+Go facts projection and browser-server code live in `internal/analytics`; the
+pivot engine is `web/analytics/src/pivot.ts`.

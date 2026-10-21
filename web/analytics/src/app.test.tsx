@@ -7,79 +7,76 @@ import {
   screen,
   fireEvent,
   waitFor,
+  within,
 } from "@testing-library/react";
-import { App, GroupTable, dateBoundary } from "./main";
+import { facts } from "./fixture";
+
+// Canvas rendering is exercised in the browser test; here the chart only needs
+// to report clicks the way ECharts would.
+vi.mock("./chart", () => ({
+  palette: [],
+  colorOf: () => "#000",
+  Chart: ({ onSelect }: { onSelect: (x: string, s: string) => void }) => (
+    <button onClick={() => onSelect("plan", "opus")}>chart bar</button>
+  ),
+}));
+const { App } = await import("./main");
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  history.replaceState(null, "", "#");
 });
-const group = {
-  label: "astra / high → sol / low",
-  missions: 2,
-  usd: 12,
-  mean: 6,
-  median: 6,
-  planUSD: 3,
-  implementUSD: 9,
-  unknownUSD: 0,
-  planningShare: 0.25,
-  incomplete: 0,
-  tokens: { input: 100 },
-};
+
+const serve = () =>
+  vi
+    .spyOn(globalThis, "fetch")
+    .mockResolvedValue({ ok: true, json: async () => facts } as Response);
+
 describe("analytics", () => {
-  it("renders recorded workflow comparisons and missing planning shares", () => {
-    render(
-      <GroupTable
-        rows={[
-          group,
-          { ...group, label: "unknown", planningShare: null, incomplete: 1 },
-        ]}
-        workflow
-      />,
-    );
-    expect(screen.getByText("25.0%")).toBeTruthy();
-    expect(screen.getByText("—")).toBeTruthy();
-    expect(screen.getByText("incomplete")).toBeTruthy();
-  });
-  it("uses local calendar boundaries with an exclusive end", () => {
-    const d = new Date(dateBoundary("2026-10-20", true));
-    expect(d.getDate()).toBe(21);
-    expect(d.getHours()).toBe(0);
-  });
-  it("filters, refreshes and retains the last result on failure", async () => {
-    const payload = {
-      updatedAt: "2026-10-20T12:00:00Z",
-      matched: 2,
-      measured: 2,
-      unknownEffort: 0,
-      unpriced: 0,
-      totalUSD: 12,
-      workflows: [group],
-      breakdown: [group],
-      missions: [],
-      page: 1,
-      pages: 1,
-      facets: { model: ["astra"], effort: ["high"], tool: ["codex"] },
-      operations: {},
-    };
-    const fetchMock = vi
-      .spyOn(globalThis, "fetch")
-      .mockResolvedValue({ ok: true, json: async () => payload } as Response);
+  it("pivots, applies presets and drills into a cell", async () => {
+    history.replaceState(null, "", "#from=&to=&undated=1");
+    serve();
     render(<App />);
-    await screen.findByText("astra / high → sol / low");
-    expect(String(fetchMock.mock.calls[0][0])).toContain("status=closed");
-    fireEvent.change(screen.getByLabelText("Observed model"), {
-      target: { value: "astra" },
+    await screen.findByText("$25.00+", { selector: "strong" });
+    fireEvent.change(screen.getByLabelText("X axis"), {
+      target: { value: "phase" },
     });
-    await waitFor(() =>
-      expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain("model=astra"),
+    fireEvent.change(screen.getByLabelText("Series"), {
+      target: { value: "model" },
+    });
+    expect(location.hash).toContain("x=phase");
+    const table = screen.getByRole("table", { name: "Pivot table" });
+    const plan = within(table).getByRole("row", { name: /^plan/ });
+    expect(plan.textContent).toContain("$3.00");
+    fireEvent.click(screen.getByText("chart bar"));
+    expect(
+      screen.getByRole("heading", { name: "Missions in plan · opus" }),
+    ).toBeTruthy();
+    expect(screen.getByText("No matching missions.")).toBeTruthy();
+    fireEvent.click(within(plan).getAllByRole("button").at(-1)!);
+    expect(screen.getByText("Mission c")).toBeTruthy();
+    expect(screen.queryByText("Mission b")).toBeNull();
+    fireEvent.click(screen.getByText("Model × effort"));
+    expect((screen.getByLabelText("Measure") as HTMLSelectElement).value).toBe(
+      "mean",
     );
+    expect(location.hash).toContain("f.status=closed");
+  });
+
+  it("retains the last result when the daemon goes away", async () => {
+    history.replaceState(null, "", "#from=&to=&undated=1");
+    const fetchMock = serve();
+    render(<App />);
+    await screen.findByText("$25.00+", { selector: "strong" });
     fetchMock.mockResolvedValue({
       ok: false,
       text: async () => "daemon unavailable",
     } as Response);
     fireEvent.click(screen.getByText("Refresh ↻"));
     expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(screen.getByText("astra / high → sol / low")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByText("$25.00+", { selector: "strong" })).toBeTruthy(),
+    );
   });
 });

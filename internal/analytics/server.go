@@ -18,10 +18,9 @@ type Source interface {
 // Host/origin checks prevent unrelated browser origins accessing local records.
 func Handler(source Source, assets fs.FS, host string) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/query", func(w http.ResponseWriter, r *http.Request) {
-		f, err := ParseFilter(r.URL.Query())
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+	mux.HandleFunc("GET /api/facts", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			http.Error(w, "facts take no parameters", http.StatusBadRequest)
 			return
 		}
 		_, _ = source.Refresh()
@@ -31,7 +30,7 @@ func Handler(source Source, assets fs.FS, host string) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Query(snapshot, f))
+		_ = json.NewEncoder(w).Encode(Project(snapshot))
 	})
 	mux.Handle("GET /", http.FileServerFS(assets))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
