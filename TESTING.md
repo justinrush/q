@@ -379,9 +379,12 @@ modes should retain their existing behavior.
 recorded cost conservation, and Codex checkpoint attribution after rollout removal.
 `internal/mission/analytics_test.go` covers deletion retention, offline peer
 history, cumulative contribution replacement, clone isolation, legacy costs, and
-conversation-data exclusion. `internal/analytics` tests whole-workflow versus
-contribution filtering, sample statistics, date bounds, coverage, and browser
-HTTP boundaries without launching a daemon.
+conversation-data exclusion. `internal/analytics` tests the facts projection (observed
+plan / implement labels including none, mixed, and unknown, and the exclusion of
+unmeasured missions) and the browser HTTP boundaries, without launching a daemon.
+`web/analytics/src/pivot.test.ts` covers the pivot engine: date bucketing,
+filters, per-mission mean and median, Top-N folding into Other, stable series
+colors, CSV export, and URL round-trips.
 
 ```sh
 npm --prefix web/analytics ci
@@ -394,7 +397,8 @@ npm run test:browser
 ```
 
 The Playwright smoke test serves the production build, supplies deterministic API
-fixtures, exercises filtering and connection recovery, and checks a mobile
-viewport. CI runs it on Linux and builds the embedded UI on Linux and macOS.
+fixtures, and renders the ECharts canvas. It exercises presets, clicking a column
+to drill down, and connection recovery. It fails on console errors such as CSP
+violations, and checks a mobile viewport for horizontal overflow. CI runs it on Linux and builds the embedded UI on Linux and macOS.
 The normal `go test -race -count=1 -timeout=5m ./...` suite continues to exercise
 backend behavior independently of Node or built assets.

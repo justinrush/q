@@ -1,303 +1,30 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Chart } from "./chart";
+import { FilterBar, Layout, Presets } from "./controls";
+import { dollars } from "./format";
+import { Missions } from "./missions";
+import {
+  additive,
+  applyFilters,
+  cellRows,
+  colorSlots,
+  dimensions,
+  facets as facetsOf,
+  flatten,
+  measures,
+  pivot as pivotOf,
+  type Facts,
+  type View,
+} from "./pivot";
+import { decode, encode } from "./state";
+import { PivotTable, type Selection } from "./table";
 import "./style.css";
 
-export type Group = {
-  label: string;
-  missions: number;
-  usd: number;
-  mean: number;
-  median: number;
-  planUSD: number;
-  implementUSD: number;
-  unknownUSD: number;
-  planningShare: number | null;
-  incomplete: number;
-  tokens: Record<string, number>;
-};
-type Slice = {
-  model: string;
-  effort: string;
-  phase: string;
-  usd: number;
-  unpriced: boolean;
-  tokens: Record<string, number>;
-};
-type Detail = {
-  record: {
-    id: string;
-    name: string;
-    operationName: string;
-    tool: string;
-    status: string;
-    deleted: boolean;
-    startedAt?: string;
-    model?: string;
-    effort?: string;
-    planModel?: string;
-    planEffort?: string;
-  };
-  usage: { usd?: number; unpriced?: boolean; at?: string };
-  breakdown: Slice[] | null;
-  workflow: string;
-};
-type Result = {
-  updatedAt: string;
-  matched: number;
-  measured: number;
-  unknownEffort: number;
-  unpriced: number;
-  totalUSD: number;
-  workflows: Group[];
-  breakdown: Group[];
-  missions: Detail[];
-  page: number;
-  pages: number;
-  facets: Record<string, string[]>;
-  operations: Record<string, string>;
-};
-const dollars = (v = 0) =>
-  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    v,
-  );
-const dateValue = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-const today = new Date();
-const start = new Date(today);
-start.setDate(start.getDate() - 29);
-export function dateBoundary(value: string, end = false) {
-  const d = new Date(`${value}T00:00:00`);
-  if (end) d.setDate(d.getDate() + 1);
-  return d.toISOString();
-}
-export function Bars({ group, max }: { group: Group; max: number }) {
-  return (
-    <div
-      className="bar-track"
-      aria-label={`Planning ${dollars(group.planUSD)}, implementation ${dollars(group.implementUSD)}, unknown ${dollars(group.unknownUSD)}`}
-    >
-      <div
-        className="bar"
-        style={{ width: `${max ? (group.usd / max) * 100 : 0}%` }}
-      >
-        {[
-          ["plan", group.planUSD],
-          ["implement", group.implementUSD],
-          ["unknown", group.unknownUSD],
-        ].map(([key, value]) => (
-          <span
-            key={key}
-            className={String(key)}
-            style={{
-              width: `${group.usd ? (Number(value) / group.usd) * 100 : 0}%`,
-            }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
-export function GroupTable({
-  rows,
-  workflow,
-  groupBy = "",
-}: {
-  rows: Group[];
-  workflow: boolean;
-  groupBy?: string;
-}) {
-  const [sort, setSort] = useState<"usd" | "missions" | "mean" | "median">(
-    "usd",
-  );
-  const sorted = [...rows].sort(
-    (a, b) => b[sort] - a[sort] || a.label.localeCompare(b.label),
-  );
-  const max = Math.max(0, ...rows.map((r) => r.usd));
-  return (
-    <>
-      <div className="table-tools">
-        <span>{rows.length} groups</span>
-        <label>
-          Sort by{" "}
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as typeof sort)}
-          >
-            <option value="usd">Total cost</option>
-            <option value="missions">Mission count</option>
-            {workflow && (
-              <>
-                <option value="mean">Mean cost</option>
-                <option value="median">Median cost</option>
-              </>
-            )}
-          </select>
-        </label>
-      </div>
-      <div className="scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>
-                {workflow
-                  ? "Observed planning → implementation"
-                  : `Observed ${groupBy ? groupBy.replace("-", " / ") : "model / effort / phase"}`}
-              </th>
-              <th>Missions</th>
-              <th>Recorded cost</th>
-              {workflow ? (
-                <>
-                  <th>Mean</th>
-                  <th>Median</th>
-                  <th>Planning share</th>
-                </>
-              ) : (
-                <th>Tokens</th>
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((g) => (
-              <tr key={g.label}>
-                <td className="group-label">
-                  {g.label}
-                  <Bars group={g} max={max} />
-                </td>
-                <td>{g.missions}</td>
-                <td>
-                  {dollars(g.usd)}
-                  {g.incomplete > 0 && (
-                    <span className="badge">incomplete</span>
-                  )}
-                </td>
-                {workflow ? (
-                  <>
-                    <td>{dollars(g.mean)}</td>
-                    <td>{dollars(g.median)}</td>
-                    <td>
-                      {g.planningShare === null
-                        ? "—"
-                        : `${(g.planningShare * 100).toFixed(1)}%`}
-                    </td>
-                  </>
-                ) : (
-                  <td>
-                    {Object.values(g.tokens)
-                      .reduce((a, b) => a + b, 0)
-                      .toLocaleString()}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rows.length === 0 && (
-        <div className="empty">
-          No measured missions match these filters. Try a wider date range or
-          include ongoing missions.
-        </div>
-      )}
-    </>
-  );
-}
-function Mission({ detail }: { detail: Detail }) {
-  const r = detail.record;
-  return (
-    <details className="mission">
-      <summary>
-        <span>
-          <strong>{r.name}</strong>
-          <small>
-            {r.operationName} · {r.tool} · {r.status}
-            {r.deleted ? " · deleted" : ""}
-          </small>
-        </span>
-        <span>
-          {dollars(detail.usage.usd)}
-          {detail.usage.unpriced ? "+" : ""}
-        </span>
-      </summary>
-      <p className="muted">Observed: {detail.workflow}</p>
-      <p className="muted">
-        Configured plan: {r.planModel || r.model || "agent default"} /{" "}
-        {r.planModel ? r.planEffort || "default" : r.effort || "default"} ·
-        Implement: {r.model || "agent default"} / {r.effort || "default"}
-      </p>
-      <p className="muted">
-        Started{" "}
-        {r.startedAt ? new Date(r.startedAt).toLocaleString() : "unknown"} ·
-        Last measurement{" "}
-        {detail.usage.at
-          ? new Date(detail.usage.at).toLocaleString()
-          : "unknown"}
-      </p>
-      <div className="scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Effort</th>
-              <th>Phase</th>
-              <th>Cost</th>
-              <th>Fresh input</th>
-              <th>Output</th>
-              <th>Cache read</th>
-              <th>Cache write 5m / 1h</th>
-            </tr>
-          </thead>
-          <tbody>
-            {detail.breakdown?.map((b, i) => (
-              <tr key={i}>
-                <td>{b.model || "unknown"}</td>
-                <td>{b.effort || "unknown"}</td>
-                <td>{b.phase || "unknown"}</td>
-                <td>
-                  {dollars(b.usd)}
-                  {b.unpriced ? "+" : ""}
-                </td>
-                <td>{(b.tokens.input || 0).toLocaleString()}</td>
-                <td>{(b.tokens.output || 0).toLocaleString()}</td>
-                <td>{(b.tokens.cacheRead || 0).toLocaleString()}</td>
-                <td>
-                  {(b.tokens.cacheWrite5m || 0).toLocaleString()} /{" "}
-                  {(b.tokens.cacheWrite1h || 0).toLocaleString()}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!detail.breakdown?.length && (
-        <p>No usage measured. This is not a zero-cost measurement.</p>
-      )}
-    </details>
-  );
-}
-export function App() {
-  const [filters, setFilters] = useState<Record<string, string>>({
-    from: dateValue(start),
-    to: dateValue(today),
-    status: "closed",
-    deleted: "",
-    operation: "",
-    tool: "",
-    model: "",
-    effort: "",
-    phase: "",
-    groupBy: "",
-    undated: "false",
-  });
-  const [page, setPage] = useState(1),
-    [tab, setTab] = useState("workflows"),
-    [data, setData] = useState<Result | null>(null),
+function useFacts(refresh: number) {
+  const [data, setData] = useState<Facts | null>(null),
     [error, setError] = useState(""),
-    [refresh, setRefresh] = useState(0),
     [checked, setChecked] = useState("");
-  const update = (key: string, value: string) => {
-    setFilters((f) => ({ ...f, [key]: value }));
-    setPage(1);
-  };
   useEffect(() => {
     const controller = new AbortController();
     let busy = false;
@@ -305,20 +32,7 @@ export function App() {
       if (busy) return;
       busy = true;
       try {
-        const params = new URLSearchParams();
-        for (const [k, v] of Object.entries(filters)) {
-          if (!v) continue;
-          params.set(
-            k,
-            k === "from"
-              ? dateBoundary(v)
-              : k === "to"
-                ? dateBoundary(v, true)
-                : v,
-          );
-        }
-        params.set("page", String(page));
-        const response = await fetch("/api/query?" + params, {
+        const response = await fetch("/api/facts", {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(await response.text());
@@ -348,25 +62,65 @@ export function App() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [filters, page, refresh]);
-  const select = (key: string, title: string, options: [string, string][]) => (
-    <label key={key}>
-      {title}
-      <select
-        value={filters[key]}
-        onChange={(e) => update(key, e.target.value)}
-      >
-        <option value="">
-          {key === "groupBy" ? "Model / effort / phase" : "All"}
-        </option>
-        {options.map(([v, l]) => (
-          <option key={v} value={v}>
-            {l}
-          </option>
-        ))}
-      </select>
-    </label>
+  }, [refresh]);
+  return { data, error, checked };
+}
+
+function useView() {
+  const [view, setView] = useState(() => decode(location.hash));
+  useEffect(() => {
+    const onHash = () => setView(decode(location.hash));
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const update = (next: View) => {
+    if (!additive(next.measure) && next.chart === "stacked")
+      next = { ...next, chart: "grouped" };
+    if (next.series === next.x) next = { ...next, series: "none" };
+    history.pushState(null, "", "#" + encode(next));
+    setView(next);
+  };
+  return [view, update] as const;
+}
+
+const everything: Selection = { x: null, series: null };
+
+export function App() {
+  const [refresh, setRefresh] = useState(0);
+  const { data, error, checked } = useFacts(refresh);
+  const [view, setView] = useView();
+  const [selected, setSelected] = useState<Selection>(everything);
+  const change = (v: View) => {
+    setSelected(everything);
+    setView(v);
+  };
+  const all = useMemo(() => flatten(data?.missions || []), [data]);
+  const facets = useMemo(() => facetsOf(all), [all]);
+  const rows = useMemo(
+    () => applyFilters(all, view.filters),
+    [all, view.filters],
   );
+  const p = useMemo(() => pivotOf(rows, view), [rows, view]);
+  const slots = useMemo(
+    () =>
+      colorSlots(
+        view.series === "none" ? [] : facets[view.series],
+        p.seriesKeys,
+      ),
+    [facets, view.series, p.seriesKeys],
+  );
+  const chosen = useMemo(
+    () => cellRows(rows, view, p, selected.x, selected.series),
+    [rows, view, p, selected],
+  );
+  const missions = new Set(rows.map((r) => r.mission.id));
+  const unpriced = new Set(
+    rows.filter((r) => r.slice.unpriced).map((r) => r.mission.id),
+  );
+  const unknownEffort = new Set(
+    rows.filter((r) => !r.slice.effort).map((r) => r.mission.id),
+  );
+  const perMission = view.measure === "mean" || view.measure === "median";
   return (
     <main>
       <header>
@@ -385,188 +139,115 @@ export function App() {
       </header>
       <section className="intro">
         <p className="eyebrow">UNDERSTAND YOUR AGENT SPEND</p>
-        <h1>What does your workflow cost?</h1>
+        <h1>Where is the money going?</h1>
         <p>
-          Compare planning and implementation across the models and effort
-          levels you actually used.
+          Pivot recorded cost by time, agent, model, effort, and phase. Start
+          from a question or build your own view.
         </p>
       </section>
-      <section className="filters">
-        <label>
-          Started from
-          <input
-            aria-label="Started from"
-            type="date"
-            value={filters.from}
-            onChange={(e) => update("from", e.target.value)}
-          />
-        </label>
-        <label>
-          Through
-          <input
-            aria-label="Through"
-            type="date"
-            value={filters.to}
-            onChange={(e) => update("to", e.target.value)}
-          />
-        </label>
-        {select("status", "Mission status", [
-          ["closed", "Completed (closed)"],
-          ["ongoing", "Ongoing"],
-          ["briefing", "Briefing"],
-          ["active", "Active"],
-          ["awaiting", "Awaiting"],
-          ["debrief", "Debrief"],
-        ])}
-        {select(
-          "operation",
-          "Operation",
-          Object.entries(data?.operations || {}),
-        )}
-        {select(
-          "tool",
-          "Agent",
-          (data?.facets.tool || []).map((v) => [v, v]),
-        )}
-        {select(
-          "model",
-          "Observed model",
-          (data?.facets.model || []).map((v) => [v, v]),
-        )}
-        {select(
-          "effort",
-          "Observed effort",
-          (data?.facets.effort || []).map((v) => [v, v]),
-        )}
-        {select("phase", "Phase", [
-          ["plan", "Plan"],
-          ["implement", "Implement"],
-          ["unknown", "Unknown"],
-        ])}
-        {select("groupBy", "Breakdown grouping", [
-          ["model", "Model"],
-          ["effort", "Effort"],
-          ["phase", "Phase"],
-          ["model-effort", "Model / effort"],
-        ])}
-        {select("deleted", "Retention", [
-          ["false", "Existing missions"],
-          ["true", "Deleted missions"],
-        ])}
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={filters.undated === "true"}
-            onChange={(e) => update("undated", String(e.target.checked))}
-          />
-          Include undated
-        </label>
-      </section>
+      <Presets view={view} onChange={change} />
+      <FilterBar view={view} facets={facets} onChange={change} />
       {error && (
         <div role="alert" className="error">
-          {error}{" "}
-          {data
-            ? "Showing the last successful result; it may reflect earlier filters."
-            : ""}
+          {error} {data ? "Showing the last successful result." : ""}
         </div>
       )}
       {data ? (
         <>
           <section className="metrics">
             <article>
-              <span>Whole-mission cost</span>
+              <span>Recorded cost</span>
               <strong>
-                {dollars(data.totalUSD)}
-                {data.unpriced ? "+" : ""}
+                {dollars(p.total.usd)}
+                {unpriced.size ? "+" : ""}
               </strong>
-              <small>Recorded API-equivalent estimate</small>
+              <small>API-equivalent estimate of matching usage</small>
             </article>
             <article>
-              <span>Matching missions</span>
-              <strong>{data.matched}</strong>
-              <small>{data.measured} with measured usage</small>
+              <span>Missions</span>
+              <strong>{missions.size}</strong>
+              <small>{data.unmeasured} more have no measured usage</small>
             </article>
             <article>
               <span>Unknown effort</span>
-              <strong>{data.unknownEffort}</strong>
+              <strong>{unknownEffort.size}</strong>
               <small>Missions with attribution gaps</small>
             </article>
             <article>
               <span>Unpriced usage</span>
-              <strong>{data.unpriced}</strong>
+              <strong>{unpriced.size}</strong>
               <small>Mission totals shown as a floor</small>
             </article>
           </section>
-          <nav aria-label="Analytics views">
-            {[
-              ["workflows", "Workflow comparison"],
-              ["breakdown", "Spend breakdown"],
-              ["missions", "Mission details"],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                className={tab === id ? "selected" : ""}
-                onClick={() => setTab(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </nav>
           <section className="panel">
             <div className="panel-heading">
               <div>
                 <h2>
-                  {tab === "workflows"
-                    ? "Compare complete workflows"
-                    : tab === "breakdown"
-                      ? "Follow the spend"
-                      : "Inspect individual missions"}
+                  {measures[view.measure]} by {dimensions[view.x].toLowerCase()}
+                  {view.series === "none"
+                    ? ""
+                    : `, split by ${dimensions[view.series].toLowerCase()}`}
                 </h2>
                 <p>
-                  {tab === "breakdown"
-                    ? "Only contributions matching the model, effort, and phase filters are included."
-                    : "Model, effort, and phase filters select missions; costs include each whole mission."}
+                  {perMission
+                    ? "Each mission's matching usage is summed, then compared across missions. Mission sizes differ, so treat small n as anecdotal."
+                    : "Only usage matching the filters is counted. Click a bar to list its missions."}
                 </p>
               </div>
-              <div className="legend">
-                <span className="plan" /> Plan <span className="implement" />{" "}
-                Implement <span className="unknown" /> Unknown
-              </div>
             </div>
-            {tab === "missions" ? (
+            <Layout view={view} onChange={change} />
+            {p.xKeys.length ? (
               <>
-                {data.missions.map((m) => (
-                  <Mission key={m.record.id} detail={m} />
-                ))}
-                {!data.missions.length && (
-                  <div className="empty">No matching missions.</div>
-                )}
-                <div className="pagination">
-                  <button
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                  >
-                    ← Previous
-                  </button>
-                  <span>
-                    Page {page} of {data.pages}
-                  </span>
-                  <button
-                    disabled={page >= data.pages}
-                    onClick={() => setPage((p) => p + 1)}
-                  >
-                    Next →
-                  </button>
-                </div>
+                <Chart
+                  pivot={p}
+                  view={view}
+                  slots={slots}
+                  onSelect={(x, series) =>
+                    setSelected({
+                      x,
+                      series: view.series === "none" ? null : series,
+                    })
+                  }
+                />
+                <PivotTable
+                  pivot={p}
+                  view={view}
+                  slots={slots}
+                  selected={selected}
+                  onSelect={setSelected}
+                />
               </>
             ) : (
-              <GroupTable
-                key={tab}
-                rows={tab === "workflows" ? data.workflows : data.breakdown}
-                workflow={tab === "workflows"}
-                groupBy={filters.groupBy}
-              />
+              <div className="empty">
+                No measured usage matches these filters. Try a wider date range
+                or fewer filters.
+              </div>
             )}
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
+              <div>
+                <h2>
+                  Missions
+                  {selected.x !== null || selected.series !== null
+                    ? ` in ${[selected.x, selected.series].filter((s) => s !== null).join(" · ")}`
+                    : ""}
+                </h2>
+                <p>
+                  Ranked by spend within the selection; expand one for its usage
+                  slices.
+                </p>
+              </div>
+              {(selected.x !== null || selected.series !== null) && (
+                <button onClick={() => setSelected(everything)}>
+                  Show all
+                </button>
+              )}
+            </div>
+            <Missions
+              key={`${selected.x}\u0000${selected.series}`}
+              rows={chosen}
+            />
           </section>
           <footer>
             <p>

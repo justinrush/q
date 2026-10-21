@@ -1,5 +1,7 @@
 import { defineConfig } from "vite";
 export default defineConfig({
+  // ECharts is served from the embedded binary over loopback, not a network.
+  build: { chunkSizeWarningLimit: 900 },
   server: {
     proxy: {
       "/api": {
