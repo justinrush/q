@@ -2913,7 +2913,7 @@ func TestPlanModelLine(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := modelLine(tc.ms, true, 80); got != tc.want {
+			if got := modelLine(tc.ms, mission.PhasePlan, 80); got != tc.want {
 				t.Errorf("modelLine() = %q, want %q", got, tc.want)
 			}
 		})
@@ -3074,8 +3074,65 @@ func TestPhaseCostSurvivesALongModel(t *testing.T) {
 		},
 	}
 
-	line := modelLine(ms, true, 24)
+	line := modelLine(ms, mission.PhasePlan, 24)
 	if !strings.HasSuffix(line, " · $12.5") || lipgloss.Width(line) > 24 || !strings.Contains(line, "…") {
 		t.Errorf("modelLine = %q", line)
+	}
+}
+
+// Iterating names the model that did most of it, since that is where a model
+// gets switched, and gives an unplanned mission a split worth showing.
+func TestIterateModelLine(t *testing.T) {
+	slice := func(model, effort string, phase mission.Phase, usd float64) mission.UsageSlice {
+		return mission.UsageSlice{Model: model, Effort: effort, Phase: phase, Tokens: mission.ModelTokens{Output: 1}, USD: usd}
+	}
+	usage := func(slices ...mission.UsageSlice) mission.Usage {
+		u := mission.Usage{Breakdown: slices, PerModel: map[string]mission.ModelTokens{}, Phases: map[mission.Phase]mission.Usage{}}
+		for _, s := range slices {
+			u.PerModel[s.Model] = u.PerModel[s.Model].Add(s.Tokens)
+			u.USD += s.USD
+			p := u.Phases[s.Phase]
+			p.PerModel = map[string]mission.ModelTokens{s.Model: s.Tokens}
+			p.USD += s.USD
+			u.Phases[s.Phase] = p
+		}
+		return u
+	}
+
+	cases := []struct {
+		name  string
+		ms    mission.Mission
+		phase mission.Phase
+		want  string
+	}{
+		{name: "before any iteration", ms: mission.Mission{PlanMode: true, Usage: usage(slice("opus", "", mission.PhaseImplement, 1))}, phase: mission.PhaseIterate, want: "iterate: —"},
+		{
+			name:  "one model",
+			ms:    mission.Mission{PlanMode: true, Usage: usage(slice("opus", "", mission.PhaseImplement, 1), slice("sonnet", "high", mission.PhaseIterate, 2))},
+			phase: mission.PhaseIterate, want: "iterate: sonnet/high · $2.00",
+		},
+		{
+			name:  "several models",
+			ms:    mission.Mission{PlanMode: true, Usage: usage(slice("opus", "", mission.PhaseIterate, 1), slice("sonnet", "", mission.PhaseIterate, 3))},
+			phase: mission.PhaseIterate, want: "iterate: sonnet +1 · $4.00",
+		},
+		{
+			name:  "an unplanned mission splits once it iterates",
+			ms:    mission.Mission{Model: "opus", Usage: usage(slice("opus", "", mission.PhaseImplement, 1), slice("opus", "", mission.PhaseIterate, 2))},
+			phase: mission.PhaseImplement, want: "implement: opus · $1.00",
+		},
+		{
+			name:  "an unplanned mission that has not iterated",
+			ms:    mission.Mission{Model: "opus", Usage: usage(slice("opus", "", mission.PhaseImplement, 1))},
+			phase: mission.PhaseImplement, want: "implement: opus",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := modelLine(tc.ms, tc.phase, 80); got != tc.want {
+				t.Errorf("modelLine() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

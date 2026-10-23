@@ -481,3 +481,88 @@ func TestClaudeMeterWithholdsAnUnplacedSplit(t *testing.T) {
 		})
 	}
 }
+
+// prompt renders a prompt a human typed in the given mode.
+func prompt(mode, text string) string {
+	return fmt.Sprintf(`{"type":"user","permissionMode":%q,"origin":{"kind":"human"},"message":{"content":%q}}`, mode, text)
+}
+
+func TestClaudeMeterSplitsIterationFromTheInitialImplementation(t *testing.T) {
+	path := writeTranscript(t, t.TempDir(),
+		permissionMode("plan"),
+		prompt("plan", "plan the work"),
+		assistant("r1", "model-a", 1000, 0, 0, 0, 0),
+		// A second prompt while planning is still planning.
+		prompt("plan", "also cover the tests"),
+		assistant("r2", "model-a", 1000, 0, 0, 0, 0),
+		permissionMode("default"),
+		assistant("r3", "model-a", 0, 10_000, 0, 0, 0),
+		// None of these start a turn.
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+		`{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}`,
+		`{"type":"user","isMeta":true,"message":{"content":"<local-command-caveat>"}}`,
+		`{"type":"user","origin":{"kind":"task-notification"},"message":{"content":"<task-notification>"}}`,
+		assistant("r4", "model-a", 0, 1000, 0, 0, 0),
+		prompt("default", "the test fails"),
+		assistant("r5", "model-a", 0, 2000, 0, 0, 0),
+		spawning("r6", "toolu_fix", 0),
+		// Planning again after implementing is still iterating, as is a
+		// switch to another model.
+		permissionMode("plan"),
+		prompt("plan", "plan the fix"),
+		assistant("r7", "model-b", 0, 3000, 0, 0, 0),
+	)
+	writeSubagent(t, path, "agent-f.jsonl", assistant("s1", "model-a", 0, 4000, 0, 0, 0))
+	writeSubagentMeta(t, path, "agent-f", "toolu_fix")
+
+	pricing := Pricing{Models: map[string]ModelPrice{"model-a": {Input: 10, Output: 100}, "model-b": {Input: 1, Output: 10}}}
+	got, measured, err := NewClaude(pricing).Meter(mission.Mission{TranscriptPath: path})
+	if err != nil || !measured {
+		t.Fatalf("Meter: %v, %v", measured, err)
+	}
+
+	phases := got.Usage.Phases
+	// Plan: $0.02; implement: $1 + $0.10; iterate: $0.20 + $0.40 + $0.03.
+	for phase, want := range map[mission.Phase]float64{mission.PhasePlan: 0.02, mission.PhaseImplement: 1.1, mission.PhaseIterate: 0.63} {
+		if math.Abs(phases[phase].USD-want) > 1e-9 {
+			t.Errorf("%s = %v, want %v (phases %+v)", phase, phases[phase].USD, want, phases)
+		}
+	}
+
+	iterate := map[string]float64{}
+	for _, slice := range got.Usage.Breakdown {
+		if slice.Phase == mission.PhaseIterate {
+			iterate[slice.Model] += slice.USD
+		}
+	}
+
+	if math.Abs(iterate["model-a"]-0.6) > 1e-9 || math.Abs(iterate["model-b"]-0.03) > 1e-9 {
+		t.Errorf("iterate by model = %v", iterate)
+	}
+}
+
+func TestClaudeMeterIteratesAfterAnUnplannedBrief(t *testing.T) {
+	path := writeTranscript(t, t.TempDir(),
+		permissionMode("default"),
+		// A transcript written before claude recorded origins.
+		`{"type":"user","permissionMode":"default","message":{"content":"do the work"}}`,
+		assistant("r1", "model-a", 0, 1000, 0, 0, 0),
+		`{"type":"user","message":{"content":"<command-name>/model</command-name>"}}`,
+		assistant("r2", "model-a", 0, 1000, 0, 0, 0),
+		`{"type":"user","permissionMode":"default","message":{"content":[{"type":"text","text":"now fix it"}]}}`,
+		assistant("r3", "model-a", 0, 2000, 0, 0, 0),
+	)
+
+	got, measured, err := NewClaude(testPricing).Meter(mission.Mission{TranscriptPath: path})
+	if err != nil || !measured {
+		t.Fatalf("Meter: %v, %v", measured, err)
+	}
+
+	if _, ok := got.Usage.Phases[mission.PhasePlan]; ok {
+		t.Errorf("phases = %+v, want no plan", got.Usage.Phases)
+	}
+
+	if build, iterate := got.Usage.Phases[mission.PhaseImplement], got.Usage.Phases[mission.PhaseIterate]; math.Abs(build.USD-0.2) > 1e-9 || math.Abs(iterate.USD-0.2) > 1e-9 {
+		t.Errorf("phases = %+v", got.Usage.Phases)
+	}
+}

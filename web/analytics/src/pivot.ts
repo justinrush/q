@@ -34,6 +34,7 @@ export type Mission = {
   };
   plan: string;
   implement: string;
+  iterate: string;
   workflow: string;
   usd: number;
   unpriced: boolean;
@@ -53,10 +54,11 @@ export const dimensions = {
   model: "Model",
   effort: "Effort",
   modelEffort: "Model / effort",
-  phase: "Plan vs implement",
+  phase: "Phase",
   tool: "Agent",
   plan: "Planned with",
   implement: "Implemented with",
+  iterate: "Iterated with",
   workflow: "Plan → implement",
   operation: "Operation",
   status: "Status",
@@ -127,6 +129,8 @@ export function value(row: Row, dim: Dimension, bucket: Bucket = "week") {
       return m.plan;
     case "implement":
       return m.implement;
+    case "iterate":
+      return m.iterate;
     case "workflow":
       return m.workflow;
     case "operation":
@@ -174,7 +178,7 @@ export function facets(rows: Row[]) {
 
 const natural: Partial<Record<Dimension, string[]>> = {
   effort: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-  phase: ["plan", "implement"],
+  phase: ["plan", "implement", "iterate"],
 };
 function order(dim: Dimension, totals: Map<string, number>) {
   const keys = [...totals.keys()];

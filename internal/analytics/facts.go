@@ -19,8 +19,9 @@ type Configured struct {
 	PlanMode   bool   `json:"planMode"`
 }
 
-// Fact is one measured mission with its observed slices. Plan, Implement and
-// Workflow label what each phase actually ran, never the configured defaults.
+// Fact is one measured mission with its observed slices. Plan, Implement,
+// Iterate and Workflow label what each phase actually ran, never the
+// configured defaults.
 type Fact struct {
 	ID            mission.MissionID    `json:"id"`
 	Name          string               `json:"name"`
@@ -34,6 +35,7 @@ type Fact struct {
 	Configured    Configured           `json:"configured"`
 	Plan          string               `json:"plan"`
 	Implement     string               `json:"implement"`
+	Iterate       string               `json:"iterate"`
 	Workflow      string               `json:"workflow"`
 	USD           float64              `json:"usd"`
 	Unpriced      bool                 `json:"unpriced"`
@@ -57,13 +59,13 @@ func dimension(s string) string {
 }
 
 // phases labels each phase by the single model / effort it ran, "mixed" when
-// it ran several, and "none" when it never ran. Unattributed usage makes both
-// labels unknown, since either phase could own it.
-func phases(u mission.Usage) (plan, implement string) {
+// it ran several, and "none" when it never ran. Unattributed usage makes every
+// label unknown, since any phase could own it.
+func phases(u mission.Usage) (plan, implement, iterate string) {
 	seen := map[mission.Phase]map[string]bool{}
 	for _, b := range u.Slices() {
 		if b.Phase == "" {
-			return unknown, unknown
+			return unknown, unknown, unknown
 		}
 		if seen[b.Phase] == nil {
 			seen[b.Phase] = map[string]bool{}
@@ -81,7 +83,7 @@ func phases(u mission.Usage) (plan, implement string) {
 		}
 		return "mixed"
 	}
-	return name(mission.PhasePlan), name(mission.PhaseImplement)
+	return name(mission.PhasePlan), name(mission.PhaseImplement), name(mission.PhaseIterate)
 }
 
 // Project returns every measured mission. Its estimates are recorded dollar
@@ -94,7 +96,7 @@ func Project(snapshot api.AnalyticsSnapshot) Facts {
 			out.Unmeasured++
 			continue
 		}
-		plan, implement := phases(u)
+		plan, implement, iterate := phases(u)
 		slices := u.Slices()
 		if slices == nil {
 			slices = []mission.UsageSlice{}
@@ -103,7 +105,7 @@ func Project(snapshot api.AnalyticsSnapshot) Facts {
 			ID: r.ID, Name: r.Name, OperationID: r.OperationID, OperationName: r.OperationName,
 			Tool: r.Tool, Status: r.Status, Deleted: r.Deleted, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
 			Configured: Configured{Model: r.Model, Effort: r.Effort, PlanModel: r.PlanModel, PlanEffort: r.PlanEffort, PlanMode: r.PlanMode},
-			Plan:       plan, Implement: implement, Workflow: plan + " → " + implement,
+			Plan:       plan, Implement: implement, Iterate: iterate, Workflow: plan + " → " + implement,
 			USD: u.USD, Unpriced: u.Unpriced, Slices: slices,
 		})
 	}

@@ -109,8 +109,8 @@ export const presets: Preset[] = [
     apply: (v) => spend(v, "tool"),
   },
   {
-    label: "Plan vs implement",
-    question: "What is my overall spend by phase?",
+    label: "Spend by phase",
+    question: "How does spend split across plan, implement and iterate?",
     apply: (v) => spend(v, "phase"),
   },
   {
@@ -136,6 +136,20 @@ export const presets: Preset[] = [
       chart: "grouped",
       filters: { ...v.filters, include: closed(v) },
     }),
+  },
+  {
+    label: "Iteration by model",
+    question: "What do follow-up rounds after implementing cost, per model?",
+    apply: (v) => {
+      const out = spend(v, "model");
+      return {
+        ...out,
+        filters: {
+          ...out.filters,
+          include: { ...out.filters.include, phase: ["iterate"] },
+        },
+      };
+    },
   },
   {
     label: "Model × effort",

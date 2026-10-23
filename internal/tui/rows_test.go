@@ -144,20 +144,20 @@ func TestOrientationKeyToggles(t *testing.T) {
 func TestHorizontalClickSelectsTheCardUnderThePointer(t *testing.T) {
 	board := rowsBoard(t)
 
-	// The active row's cards sit on lines 10-17; the second starts at x=30.
-	board.HandleMouse(mouseClickMsg(35, 12), 35, 12)
+	// The active row's cards sit on lines 11-19; the second starts at x=30.
+	board.HandleMouse(mouseClickMsg(35, 13), 35, 13)
 	if board.lane != 1 || board.cursor[1] != 1 {
 		t.Errorf("selected lane %d card %d, want lane 1 card 1", board.lane, board.cursor[1])
 	}
 
 	// The awaiting header.
-	board.HandleMouse(mouseClickMsg(5, 18), 5, 18)
+	board.HandleMouse(mouseClickMsg(5, 20), 5, 20)
 	if board.lane != 2 {
 		t.Errorf("header click: lane = %d, want 2", board.lane)
 	}
 
 	// The collapsed done summary expands.
-	board.HandleMouse(mouseClickMsg(5, 30), 5, 30)
+	board.HandleMouse(mouseClickMsg(5, 33), 5, 33)
 	if board.lane != 4 || !board.doneExpanded {
 		t.Errorf("done click: lane %d expanded %v, want lane 4 expanded", board.lane, board.doneExpanded)
 	}

@@ -518,3 +518,83 @@ func TestCodexCheckpointKeepsPhasesAcrossReplacement(t *testing.T) {
 		t.Fatalf("legacy checkpoint: %+v, %v", got.Usage, err)
 	}
 }
+
+// turnAt renders a turn_context line opening a turn at the given minute.
+func turnAt(turn, model, mode string, minute int) string {
+	return fmt.Sprintf(
+		`{"timestamp":"2026-09-05T14:%02d:00Z","type":"turn_context","payload":`+
+			`{"turn_id":%q,"model":%q,"collaboration_mode":{"mode":%q,"settings":{"model":%q}}}}`,
+		minute, turn, model, mode, model,
+	)
+}
+
+// responseAt renders a token_usage_record line written at the given minute.
+func responseAt(thread, response string, out int64, minute int) string {
+	return fmt.Sprintf(
+		`{"timestamp":"2026-09-05T14:%02d:30Z","type":"token_usage_record","payload":`+
+			`{"thread_id":%q,"response_id":%q,"usage":{"output_tokens":%d,"total_tokens":%d}}}`,
+		minute, thread, response, out, out,
+	)
+}
+
+func TestCodexSplitsIterationFromTheInitialImplementation(t *testing.T) {
+	pricing := Pricing{Models: map[string]ModelPrice{"gpt-a": {Output: 100}, "gpt-b": {Output: 10}}}
+	plan := writeRollout(t, `{"type":"session_meta","payload":{"id":"planner","source":"cli"}}`,
+		turnAt("t1", "gpt-a", "plan", 1), responseAt("planner", "p1", 1000, 1),
+		turnAt("t2", "gpt-a", "plan", 2), responseAt("planner", "p2", 1000, 2))
+	// The handoff moves the implementation to a replacement thread, whose
+	// first turn is still the initial implementation.
+	build := writeRollout(t, `{"type":"session_meta","payload":{"id":"builder","source":"cli"}}`,
+		turnAt("t3", "gpt-a", "default", 3), responseAt("builder", "b1", 10_000, 3),
+		// Codex repeats a turn's context mid-turn.
+		turnAt("t3", "gpt-a", "default", 4), responseAt("builder", "b2", 1000, 4),
+		turnAt("t4", "gpt-b", "default", 6), responseAt("builder", "i1", 10_000, 6),
+		turnAt("t5", "gpt-a", "plan", 7), responseAt("builder", "i2", 1000, 7))
+	// A subagent's own turns are not prompts: its work falls in whichever
+	// phase was under way when it was made.
+	early := writeRollout(t, `{"type":"session_meta","payload":{"id":"helper","source":{"subagent":{"other":"guardian"}}}}`,
+		turnAt("h1", "gpt-a", "default", 5), responseAt("helper", "h1", 2000, 5))
+	late := writeRollout(t, `{"type":"session_meta","payload":{"id":"late","source":{"subagent":{"other":"guardian"}}}}`,
+		turnAt("h2", "gpt-a", "default", 8), responseAt("late", "h2", 3000, 8))
+
+	ms := mission.Mission{Tool: mission.ToolCodex, PlanMode: true}
+	for _, path := range []string{plan, early, late, build} {
+		ms.SetTranscriptPath(path)
+	}
+
+	got, measured, err := NewCodex(pricing).Meter(ms)
+	if err != nil || !measured {
+		t.Fatalf("Meter: %v, %v", measured, err)
+	}
+
+	// Plan $0.20; implement $1 + $0.10 + $0.20; iterate $0.10 + $0.10 + $0.30.
+	for phase, want := range map[mission.Phase]float64{mission.PhasePlan: 0.2, mission.PhaseImplement: 1.3, mission.PhaseIterate: 0.5} {
+		if math.Abs(got.Usage.Phases[phase].USD-want) > 1e-9 {
+			t.Errorf("%s = %v, want %v (phases %+v)", phase, got.Usage.Phases[phase].USD, want, got.Usage.Phases)
+		}
+	}
+
+	iterate := map[string]float64{}
+	for _, slice := range got.Usage.Breakdown {
+		if slice.Phase == mission.PhaseIterate {
+			iterate[slice.Model] += slice.USD
+		}
+	}
+
+	if math.Abs(iterate["gpt-a"]-0.4) > 1e-9 || math.Abs(iterate["gpt-b"]-0.1) > 1e-9 {
+		t.Errorf("iterate by model = %v", iterate)
+	}
+
+	// The checkpoint alone, with every rollout gone, places the same way.
+	ms.CodexUsage = got.CodexUsage
+	for _, path := range []string{plan, early, late, build} {
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	again, _, err := NewCodex(pricing).Meter(ms)
+	if err != nil || !again.Usage.Equal(got.Usage) {
+		t.Fatalf("from checkpoint: %+v, %v", again.Usage.Phases, err)
+	}
+}

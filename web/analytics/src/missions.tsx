@@ -28,7 +28,9 @@ export function Mission({
           </small>
         </span>
       </summary>
-      <p className="muted">Observed: {m.workflow}</p>
+      <p className="muted">
+        Observed: {m.workflow} · iterate: {m.iterate}
+      </p>
       <p className="muted">
         Configured plan: {c.planModel || c.model || "agent default"} /{" "}
         {c.planModel ? c.planEffort || "default" : c.effort || "default"} ·

@@ -30,7 +30,8 @@ export function mission(
     return s.size === 0 ? "none" : s.size > 1 ? "mixed" : [...s][0];
   };
   const plan = label("plan"),
-    implement = label("implement");
+    implement = label("implement"),
+    iterate = label("iterate");
   return {
     id,
     name: `Mission ${id}`,
@@ -49,6 +50,7 @@ export function mission(
     },
     plan,
     implement,
+    iterate,
     workflow: `${plan} → ${implement}`,
     usd: slices.reduce((a, s) => a + s.usd, 0),
     unpriced: slices.some((s) => s.unpriced),

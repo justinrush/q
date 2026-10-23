@@ -1,6 +1,9 @@
 package mission
 
-import "maps"
+import (
+	"maps"
+	"time"
+)
 
 // CodexResponse is a measured response, retained even if its rollout disappears.
 // Response IDs allow replayed records to be counted once across transcripts.
@@ -11,6 +14,13 @@ type CodexResponse struct {
 	// Phase is empty for a response measured before q recorded phases, or
 	// whose turn did not say which collaboration mode it ran in.
 	Phase Phase `json:"phase,omitempty"`
+	// At is when the response was recorded. Turn and TurnAt name the turn of
+	// the session's own thread it answered and when that turn began; a
+	// subagent's response has none. Together they place the response before or
+	// after the initial implementation, which a mode alone cannot.
+	At     time.Time `json:"at,omitzero"`
+	Turn   string    `json:"turn,omitempty"`
+	TurnAt time.Time `json:"turnAt,omitzero"`
 }
 
 // CodexUsage maps local rollout paths to their measured responses. A nil entry

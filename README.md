@@ -757,24 +757,42 @@ Two things the number tells you about itself:
 - A token count instead of a figure (`1.2M`) means *nothing* in the mission had a rate.
   Unknown models can be priced under `cost.models`.
 
-A plan-mode mission also splits its cost across its `plan:` and `implement:` lines:
+A mission splits its cost across its `plan:`, `implement:` and `iterate:` lines:
 
 ```
 plan: opus/high · $1.05
 implement: sonnet · $3.05
+iterate: sonnet/high +1 · $1.40
 ```
 
-The split comes from the mode each agent records alongside every request, not from
-timing or models, so it holds when both phases run on the same model. Claude requests
-take the transcript's current permission mode (`plan` or anything else), and a
-subagent takes the phase of the tool call that started it. Codex responses take their
-turn's collaboration mode. A request made in plan mode counts as planning even after
-approval, for example if you switch back into plan mode yourself. If any request
-cannot be placed — an older transcript with no mode records, a subagent with no record
-of its parent call, a Codex checkpoint from before phases were recorded whose rollout
-is gone, or a host running an older q — neither line shows a cost, and the total on
-the top line stands alone. Each phase is rounded on its own, so the two can differ
-from the total by a cent.
+`implement:` is the initial implementation only: the first turn run outside plan
+mode, including the rest of a turn that approves its plan. For a mission that never
+plans, that is the brief. `iterate:` is everything prompted after it, such as test
+feedback, fixes and follow-up requests, in whatever mode or model. A return to plan
+mode after implementing counts as iterating, so `plan:` stays the cost of the
+up-front plan. The iterate line names the model observed doing most of the
+iterating, with `+N` for any others, and shows `iterate: —` until you send a
+follow-up. A mission that does not plan shows phase costs once it iterates.
+
+A turn starts with a prompt you sent. Claude stamps these with a human origin;
+tool results, interrupts, slash-command echoes and task notifications do not start a
+turn. Codex turns are its `turn_context` ids on the session's own threads, ordered
+across replacement threads, so a model handoff's first turn is still the initial
+implementation. A Codex subagent's work falls in whichever phase was under way when
+it was recorded.
+
+Plan and implement come from the mode each agent records alongside every request,
+not from timing or models, so the split holds when both phases run on the same
+model. Claude requests take the transcript's current permission mode (`plan` or
+anything else), and a subagent takes the phase of the tool call that started it.
+Codex responses take their turn's collaboration mode. If any request cannot be
+placed — an older transcript with no mode records, a subagent with no record of its
+parent call, a Codex checkpoint from before phases were recorded whose rollout is
+gone, or a host running an older q — no line shows a cost, and the total on the top
+line stands alone. Missions measured before iterate existed are reclassified when
+their transcript or rollout is still on disk; otherwise their follow-ups stay in
+implement. Each phase is rounded on its own, so the lines can differ from the total
+by a cent.
 
 q ships Claude rates (including Opus/Sonnet 5.5 and Fable/Mythos 5.1) and OpenAI rates
 for GPT-6.1 Sol, GPT-6 Astra/Sol/Luna, GPT-5.6 Sol/Terra/Luna, GPT-5.5, GPT-5.4,
@@ -1166,8 +1184,9 @@ forward it with `ssh -L 8765:127.0.0.1:8765 your-host`, then visit
 The dashboard is a pivot explorer. Choose an **X axis** (mission start by day,
 week, or month, or any other dimension), a **series** to split by, and a
 **measure**: total cost, cost per mission (mean or median), missions, or tokens.
-The dimensions are agent, model, effort, model / effort, plan vs implement,
-"planned with", "implemented with", plan → implement, operation, and status.
+The dimensions are agent, model, effort, model / effort, phase (plan,
+implement, iterate), "planned with", "implemented with", "iterated with",
+plan → implement, operation, and status.
 Filter chips narrow any dimension to one or more values. The chart and a pivot
 table show the same cells with totals and the mission count (n) behind each value.
 Click a bar, a column, or a table cell to list its missions. Expand a mission to
@@ -1179,13 +1198,14 @@ Presets start from common questions:
 - **Spend by model / agent / phase:** weekly total cost, ongoing missions included.
 - **Workflow cost:** median cost per closed mission for each observed plan → implement pairing.
 - **Planner × implementer:** the same comparison as a grid, so you can see whether a cheaper or stronger planner pays for itself in implementation.
+- **Iteration by model:** weekly cost of the follow-up rounds after the initial implementation, split by the model that ran them.
 - **Model × effort:** mean cost per closed mission for each model at each reasoning effort.
 
 Filters apply per usage slice. A slice is one model / effort / phase within a
 mission, and the slice is counted when both its own fields and its mission's
 fields match. Filtering to the plan phase therefore counts only planning spend.
 Per-mission measures first sum each mission's matching slices, then take the mean
-or median across missions. "Planned with" and "Implemented with" name the single
+or median across missions. "Planned with", "Implemented with" and "Iterated with" name the single
 model / effort a phase observed: `none` if the phase never ran, `mixed` if it
 ran several, and `unknown` if usage could not be attributed to a phase. Series
 beyond the top seven fold into "Other". Unknown attribution is shown in grey and

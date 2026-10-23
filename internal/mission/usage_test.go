@@ -289,3 +289,28 @@ func TestUsageCloneDetachesThePhases(t *testing.T) {
 		t.Fatalf("clone shares phases with the original: %+v", original.Phases)
 	}
 }
+
+func TestTotalUsageCombinesIteration(t *testing.T) {
+	a, b := phased(1, 2), phased(3, 4)
+	b.Phases[PhaseIterate] = Usage{PerModel: map[string]ModelTokens{"n": {Output: 5}}, USD: 5}
+	b.PerModel["n"] = ModelTokens{Output: 5}
+	b.USD += 5
+	// Slices from the split, as a measurement that predates the breakdown.
+	a.Breakdown, b.Breakdown = nil, nil
+
+	total := TotalUsage(map[HostID]Usage{"a": a, "b": b})
+	if total.Phases[PhaseIterate].USD != 5 || total.Phases[PhaseImplement].USD != 6 || total.USD != 15 {
+		t.Fatalf("total = %+v", total)
+	}
+
+	var iterate float64
+	for _, slice := range total.Slices() {
+		if slice.Phase == PhaseIterate {
+			iterate += slice.USD
+		}
+	}
+
+	if iterate != 5 {
+		t.Errorf("iterate slices = %v, want 5", iterate)
+	}
+}

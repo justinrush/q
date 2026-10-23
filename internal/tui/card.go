@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -57,8 +59,9 @@ func renderCard(ms mission.Mission, operation mission.Operation, host string, wi
 		styles.CardTitle.Render(styles.Truncate(agentGlyph(ms)+" "+ms.Name, content)),
 		detailLine(ms, content),
 		metaLine(ms, host, content),
-		modelLine(ms, true, content),
-		modelLine(ms, false, content),
+		modelLine(ms, mission.PhasePlan, content),
+		modelLine(ms, mission.PhaseImplement, content),
+		modelLine(ms, mission.PhaseIterate, content),
 	}, "\n")
 
 	style := styles.Card
@@ -186,16 +189,50 @@ func usageCost(usage mission.Usage) string {
 	return out
 }
 
-// phaseCost renders what a plan-mode mission spent in one phase, or "" when the
-// meter could not place every request in a phase or the phase has cost nothing
-// yet. A mission that never plans spends everything implementing, which the
-// total already says.
+// phaseCost renders what a mission spent in one phase, or "" when the meter
+// could not place every request in a phase or the phase has cost nothing yet.
+// A mission that neither plans nor iterates spends everything implementing,
+// which the total already says.
 func phaseCost(ms mission.Mission, phase mission.Phase) string {
-	if !ms.PlanMode {
+	if !ms.PlanMode && ms.Usage.Phases[mission.PhaseIterate].Empty() {
 		return ""
 	}
 
 	return usageCost(ms.Usage.Phases[phase])
+}
+
+// iterateModel names the model that did most of a mission's iterating, and how
+// many others shared it, or "" before any iteration. It is what was observed
+// rather than configured, because iterating is where a model gets switched.
+func iterateModel(ms mission.Mission) string {
+	spend := map[string]float64{}
+	for _, slice := range ms.Usage.Slices() {
+		if slice.Phase != mission.PhaseIterate {
+			continue
+		}
+		name := slice.Model
+		if name == "" {
+			name = "unknown"
+		}
+		if slice.Effort != "" {
+			name += "/" + slice.Effort
+		}
+		spend[name] += slice.USD
+	}
+	if len(spend) == 0 {
+		return ""
+	}
+	names := slices.Sorted(maps.Keys(spend))
+	top := names[0]
+	for _, name := range names[1:] {
+		if spend[name] > spend[top] {
+			top = name
+		}
+	}
+	if len(names) > 1 {
+		top += fmt.Sprintf(" +%d", len(names)-1)
+	}
+	return top
 }
 
 // formatTokens renders a token count in at most five columns.
@@ -292,15 +329,20 @@ func firstLine(s string) string {
 //
 // The phase's cost ends the line and is kept when the model name is truncated,
 // because it is the one thing on the line that is not also in the brief.
-func modelLine(ms mission.Mission, plan bool, width int) string {
-	label, model, effort, phase := "implement", ms.Model, ms.Effort, mission.PhaseImplement
-	if plan {
-		label, phase = "plan", mission.PhasePlan
+func modelLine(ms mission.Mission, phase mission.Phase, width int) string {
+	model, effort := ms.Model, ms.Effort
+	switch phase {
+	case mission.PhasePlan:
 		if !ms.PlanMode {
 			return styles.CardDetail.Render(styles.Truncate("plan: off", width))
 		}
 		if ms.PlanModel != "" {
 			model, effort = ms.PlanModel, ms.PlanEffort
+		}
+	case mission.PhaseIterate:
+		model, effort = iterateModel(ms), ""
+		if model == "" {
+			return styles.CardDetail.Render(styles.Truncate("iterate: —", width))
 		}
 	}
 	if model == "" {
@@ -309,7 +351,7 @@ func modelLine(ms mission.Mission, plan bool, width int) string {
 	if effort != "" {
 		model += "/" + effort
 	}
-	line := label + ": " + model
+	line := string(phase) + ": " + model
 	if cost := phaseCost(ms, phase); cost != "" {
 		suffix := " · " + cost
 		line = styles.Truncate(line, width-lipgloss.Width(suffix)) + suffix
