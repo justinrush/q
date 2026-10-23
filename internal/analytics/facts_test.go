@@ -28,7 +28,7 @@ func record(id mission.MissionID, slices ...mission.UsageSlice) mission.Analytic
 func fixture() api.AnalyticsSnapshot {
 	return api.AnalyticsSnapshot{Records: []mission.AnalyticsRecord{
 		record("planned", slice("astra", "medium", mission.PhasePlan, 1), slice("astra", "low", mission.PhaseImplement, 3)),
-		record("direct", slice("opus", "high", mission.PhaseImplement, 5)),
+		record("direct", slice("opus", "high", mission.PhaseImplement, 5), slice("sonnet", "high", mission.PhaseIterate, 1), slice("opus", "high", mission.PhaseIterate, 1)),
 		record("mixed", slice("astra", "low", mission.PhasePlan, 1), slice("astra", "high", mission.PhasePlan, 1), slice("opus", "high", mission.PhaseImplement, 2)),
 		record("legacy", slice("", "", "", 4)),
 		{ID: "empty", Status: mission.StatusClosed},
@@ -46,7 +46,11 @@ func TestProjectLabelsObservedPhases(t *testing.T) {
 		"mixed":   "mixed → opus / high",
 		"legacy":  "unknown → unknown",
 	}
+	iterate := map[mission.MissionID]string{"planned": "none", "direct": "mixed", "mixed": "none", "legacy": "unknown"}
 	for _, f := range got.Missions {
+		if f.Iterate != iterate[f.ID] {
+			t.Errorf("%s: iterate %q, want %q", f.ID, f.Iterate, iterate[f.ID])
+		}
 		if f.Workflow != want[f.ID] {
 			t.Errorf("%s: workflow %q, want %q", f.ID, f.Workflow, want[f.ID])
 		}

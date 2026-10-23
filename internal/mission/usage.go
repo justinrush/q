@@ -74,12 +74,18 @@ type Usage struct {
 // Phase is the part of a mission a request was made in.
 type Phase string
 
-// The phases a request can be attributed to. Implementing is everything made
-// outside plan mode, which is all of a mission that never plans.
+// The phases a request can be attributed to. Implementing is the first turn
+// made outside plan mode, which for a mission that never plans is the brief.
+// Iterating is every turn prompted after that, in whatever mode or model, so
+// feedback rounds do not blur what the initial implementation cost.
 const (
 	PhasePlan      Phase = "plan"
 	PhaseImplement Phase = "implement"
+	PhaseIterate   Phase = "iterate"
 )
+
+// Phases lists every phase in mission order.
+var Phases = []Phase{PhasePlan, PhaseImplement, PhaseIterate}
 
 // Tokens is every token the mission consumed, across all models.
 func (u Usage) Tokens() int64 {
@@ -171,7 +177,7 @@ func plusPhases(u, o Usage) map[Phase]Usage {
 	}
 
 	out := make(map[Phase]Usage, len(u.Phases)+len(o.Phases))
-	for _, phase := range []Phase{PhasePlan, PhaseImplement} {
+	for _, phase := range Phases {
 		a, inA := u.Phases[phase]
 		b, inB := o.Phases[phase]
 
@@ -276,7 +282,7 @@ func (u Usage) Slices() []UsageSlice {
 	}
 	if len(u.Phases) > 0 {
 		var out []UsageSlice
-		for _, phase := range []Phase{PhasePlan, PhaseImplement} {
+		for _, phase := range Phases {
 			for _, row := range u.Phases[phase].Slices() {
 				row.Phase = phase
 				out = append(out, row)

@@ -109,6 +109,26 @@ describe("pivot", () => {
     expect(colorSlots(["unknown", "a"], ["unknown", "a"])).toEqual({ a: 0 });
   });
 
+  it("orders phases through iteration and splits it by model", () => {
+    const iterated = flatten([
+      mission("i", "2026-10-07T12:00:00.000Z", [
+        slice("opus", "high", "iterate", 3),
+        slice("opus", "high", "implement", 10),
+        slice("sonnet", "medium", "iterate", 1),
+        slice("fable", "high", "plan", 2),
+      ]),
+    ]);
+    const byPhase = pivot(iterated, view({ x: "phase", series: "none" }));
+    expect(byPhase.xKeys).toEqual(["plan", "implement", "iterate"]);
+    expect(iterated[0].mission.iterate).toBe("mixed");
+
+    const v = presets.find((p) => p.label === "Iteration by model")!;
+    const applied = v.apply(view());
+    const p = pivot(applyFilters(iterated, applied.filters), applied);
+    expect(p.seriesKeys).toEqual(["opus", "sonnet"]);
+    expect(p.total.value).toBe(4);
+  });
+
   it("round-trips views through the URL and tolerates junk", () => {
     const v = presets[4].apply(view());
     expect(decode(encode(v))).toEqual(v);

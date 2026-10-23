@@ -72,6 +72,12 @@ type requestUsage struct {
 	effort string
 	tokens mission.ModelTokens
 	phase  mission.Phase
+	// at, turn and turnAt are codex's: when the response was recorded, and the
+	// session turn it answered, which places it relative to the first
+	// implementation turn across threads.
+	at     time.Time
+	turn   string
+	turnAt time.Time
 }
 
 // NewClaude returns a meter that prices with the given table.
@@ -322,6 +328,11 @@ func parseTranscript(path string) (fileCounts, error) {
 	// prompt, so every request that follows was made in it.
 	var mode string
 
+	// implementing is set by the first request made outside plan mode, and
+	// iterating by the first prompt after it: from then on every request is
+	// follow-up work rather than the initial implementation.
+	var implementing, iterating bool
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxLineBytes)
 
@@ -338,11 +349,21 @@ func parseTranscript(path string) (fileCounts, error) {
 			mode = rec.PermissionMode
 		}
 
+		if implementing && rec.isPrompt() {
+			iterating = true
+		}
+
 		if rec.Type != "assistant" || rec.RequestID == "" {
 			continue
 		}
 
 		phase := modePhase(mode)
+		if phase == mission.PhaseImplement {
+			implementing = true
+		}
+		if iterating {
+			phase = mission.PhaseIterate
+		}
 		effort := rec.PerTurnEffort
 		if effort == "" {
 			effort = rec.Effort
@@ -405,7 +426,13 @@ type assistantRecord struct {
 	Timestamp     time.Time `json:"timestamp"`
 	// PermissionMode is on a permission-mode record and on each prompt.
 	PermissionMode string `json:"permissionMode"`
-	Message        struct {
+	// Origin says who wrote a user record; only a human's starts a new turn.
+	Origin *struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
+	IsMeta           bool `json:"isMeta"`
+	IsCompactSummary bool `json:"isCompactSummary"`
+	Message          struct {
 		Model string   `json:"model"`
 		Usage rawUsage `json:"usage"`
 		// Content is left raw because a prompt's is a plain string, and only
@@ -441,6 +468,49 @@ func (r assistantRecord) toolUseIDs() []string {
 	}
 
 	return out
+}
+
+// isPrompt reports whether a record is a prompt that starts a turn, as opposed
+// to a tool result, an interrupt, a slash command's echo or a notification the
+// agent wakes up to on its own.
+//
+// Claude stamps a human's prompt with its origin. A transcript written before
+// it did is read by shape instead.
+func (r assistantRecord) isPrompt() bool {
+	if r.Type != "user" || r.IsMeta || r.IsCompactSummary {
+		return false
+	}
+
+	if r.Origin != nil {
+		return r.Origin.Kind == "human"
+	}
+
+	var text string
+	if json.Unmarshal(r.Message.Content, &text) != nil {
+		var blocks []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+
+		if json.Unmarshal(r.Message.Content, &blocks) != nil {
+			return false
+		}
+
+		for _, block := range blocks {
+			switch block.Type {
+			case "tool_result":
+				return false
+			case "text":
+				if text == "" {
+					text = block.Text
+				}
+			}
+		}
+	}
+
+	text = strings.TrimSpace(text)
+
+	return text != "" && !strings.HasPrefix(text, "<") && !strings.HasPrefix(text, "[Request interrupted")
 }
 
 // limit converts a refusal record into a limit, reporting false for a record

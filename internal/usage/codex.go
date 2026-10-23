@@ -85,6 +85,11 @@ type codexCounts struct {
 	model      string
 	phase      mission.Phase
 	limit      mission.Limit
+	// turn is the session turn under way and turnAt when it began. Both stay
+	// empty in a subagent's rollout, whose turns are its own and not prompts.
+	turn     string
+	turnAt   time.Time
+	subagent bool
 }
 
 // NewCodex returns a meter that prices with the given table.
@@ -135,12 +140,13 @@ func (c *Codex) Meter(ms mission.Mission) (mission.Metering, bool, error) {
 		}
 		checkpoint[path] = checkpointResponses(checkpoint[path], counts, fallback)
 	}
-	perModel, perPhase := codexModels(checkpoint)
+	iterating := iterationStart(checkpoint)
+	perModel, perPhase := codexModels(checkpoint, iterating)
 	requests := map[string]requestUsage{}
 	for _, path := range slices.Sorted(maps.Keys(checkpoint)) {
 		for id, r := range checkpoint[path] {
 			if _, ok := requests[id]; !ok {
-				requests[id] = requestUsage{model: r.Model, effort: r.Effort, phase: r.Phase, tokens: r.Tokens}
+				requests[id] = requestUsage{model: r.Model, effort: r.Effort, phase: responsePhase(r, iterating), tokens: r.Tokens}
 			}
 		}
 	}
@@ -179,7 +185,11 @@ func checkpointResponses(saved map[string]mission.CodexResponse, counts codexCou
 		if effort == "" {
 			effort = saved[id].Effort
 		}
-		saved[id] = mission.CodexResponse{Model: model, Tokens: response.tokens, Phase: phase, Effort: effort}
+		next := mission.CodexResponse{Model: model, Tokens: response.tokens, Phase: phase, Effort: effort, At: response.at, Turn: response.turn, TurnAt: response.turnAt}
+		if next.At.IsZero() {
+			next.At, next.Turn, next.TurnAt = saved[id].At, saved[id].Turn, saved[id].TurnAt
+		}
+		saved[id] = next
 	}
 	return saved
 }
@@ -187,7 +197,7 @@ func checkpointResponses(saved map[string]mission.CodexResponse, counts codexCou
 // codexModels deduplicates responses across paths (including renamed rollouts).
 // Stable path order also keeps ambiguous duplicate attribution deterministic.
 // The phase split is nil when any response has no recorded phase.
-func codexModels(checkpoint mission.CodexUsage) (map[string]mission.ModelTokens, map[mission.Phase]map[string]mission.ModelTokens) {
+func codexModels(checkpoint mission.CodexUsage, iterating time.Time) (map[string]mission.ModelTokens, map[mission.Phase]map[string]mission.ModelTokens) {
 	perModel := map[string]mission.ModelTokens{}
 	perPhase := map[mission.Phase]map[string]mission.ModelTokens{}
 	seen := map[string]bool{}
@@ -201,17 +211,72 @@ func codexModels(checkpoint mission.CodexUsage) (map[string]mission.ModelTokens,
 			if perPhase == nil {
 				continue
 			}
-			if response.Phase == "" {
+			phase := responsePhase(response, iterating)
+			if phase == "" {
 				perPhase = nil
 				continue
 			}
-			if perPhase[response.Phase] == nil {
-				perPhase[response.Phase] = map[string]mission.ModelTokens{}
+			if perPhase[phase] == nil {
+				perPhase[phase] = map[string]mission.ModelTokens{}
 			}
-			perPhase[response.Phase][response.Model] = perPhase[response.Phase][response.Model].Add(response.Tokens)
+			perPhase[phase][response.Model] = perPhase[phase][response.Model].Add(response.Tokens)
 		}
 	}
 	return perModel, perPhase
+}
+
+// iterationStart is when the first session turn after the initial
+// implementation began, or zero when there has been none yet.
+//
+// Turns are compared across every thread in the checkpoint, so a model handoff
+// that moves the implementation to a replacement thread does not make its
+// first turn look like a follow-up, nor reset the count for later ones.
+func iterationStart(checkpoint mission.CodexUsage) time.Time {
+	type turn struct {
+		at    time.Time
+		phase mission.Phase
+	}
+
+	turns := map[string]turn{}
+	for _, responses := range checkpoint {
+		for _, r := range responses {
+			if r.Turn == "" || r.TurnAt.IsZero() {
+				continue
+			}
+			// A turn that leaves plan mode records its later responses as
+			// implementing, so any one of them makes it the implementation.
+			t, ok := turns[r.Turn]
+			if !ok {
+				t = turn{at: r.TurnAt, phase: r.Phase}
+			} else if r.Phase == mission.PhaseImplement {
+				t.phase = r.Phase
+			}
+			turns[r.Turn] = t
+		}
+	}
+
+	ordered := slices.SortedFunc(maps.Values(turns), func(a, b turn) int { return a.at.Compare(b.at) })
+	for i, t := range ordered {
+		if t.phase != mission.PhaseImplement {
+			continue
+		}
+		if i+1 < len(ordered) {
+			return ordered[i+1].at
+		}
+		break
+	}
+
+	return time.Time{}
+}
+
+// responsePhase places a response, moving anything recorded once iteration
+// began out of the phase its mode alone would give it.
+func responsePhase(r mission.CodexResponse, iterating time.Time) mission.Phase {
+	if !iterating.IsZero() && !r.At.IsZero() && !r.At.Before(iterating) {
+		return mission.PhaseIterate
+	}
+
+	return r.Phase
 }
 
 // scan reads a rollout, reusing the previous result when it has not changed.
@@ -281,12 +346,18 @@ func parseRollout(path string) (codexCounts, error) {
 			if line.Payload.ID != "" {
 				thread = line.Payload.ID
 			}
+			counts.subagent = line.Payload.subagent()
 		case rolloutTurnContext:
 			if model := line.Payload.model(); model != "" {
 				counts.model = model
 			}
 			counts.phase = line.Payload.phase()
 			counts.effort = line.Payload.effort()
+			// Codex repeats a turn's context within it, so only a new id
+			// starts a turn.
+			if id := line.Payload.TurnID; !counts.subagent && id != "" && id != counts.turn {
+				counts.turn, counts.turnAt = id, line.observedAt()
+			}
 		case rolloutEventMsg:
 			if limit, ok := line.Payload.limit(line.observedAt()); ok {
 				counts.limit = limit
@@ -306,7 +377,7 @@ func parseRollout(path string) (codexCounts, error) {
 				continue
 			}
 
-			counts.recordResponse(record)
+			counts.recordResponse(record, line.observedAt())
 		}
 	}
 
@@ -319,16 +390,17 @@ func parseRollout(path string) (codexCounts, error) {
 
 // recordResponse keeps the original model when a response is replayed after a
 // model switch, while accepting the response's latest reported token counts.
-func (c *codexCounts) recordResponse(record rolloutPayload) {
+func (c *codexCounts) recordResponse(record rolloutPayload, at time.Time) {
 	tokens := record.Usage.tokens()
 	if tokens.Zero() {
 		return
 	}
-	model, phase, effort := c.model, c.phase, c.effort
+	current := requestUsage{model: c.model, phase: c.phase, effort: c.effort, at: at, turn: c.turn, turnAt: c.turnAt}
 	if previous, ok := c.byResponse[record.ResponseID]; ok {
-		model, phase, effort = previous.model, previous.phase, previous.effort
+		current = previous
 	}
-	c.byResponse[record.ResponseID] = requestUsage{model: model, tokens: tokens, phase: phase, effort: effort}
+	current.tokens = tokens
+	c.byResponse[record.ResponseID] = current
 }
 
 // rolloutLine is one record of a rollout file. Every record is a timestamp, a
@@ -358,8 +430,10 @@ func (l rolloutLine) observedAt() time.Time {
 // records are disjoint by tag, so one struct serves them all rather than
 // decoding each line twice to find out which shape it is.
 type rolloutPayload struct {
-	// session_meta.
-	ID string `json:"id"`
+	// session_meta. Source is a client name for a session and an object
+	// naming the kind for a subagent.
+	ID     string          `json:"id"`
+	Source json.RawMessage `json:"source"`
 	// token_usage_record.
 	ThreadID   string          `json:"thread_id"`
 	ResponseID string          `json:"response_id"`
@@ -370,6 +444,7 @@ type rolloutPayload struct {
 	RateLimits *codexRateLimits `json:"rate_limits"`
 
 	// turn_context.
+	TurnID            string `json:"turn_id"`
 	Effort            string `json:"effort"`
 	Model             string `json:"model"`
 	CollaborationMode *struct {
@@ -380,6 +455,15 @@ type rolloutPayload struct {
 			ReasoningEffort string `json:"reasoning_effort"`
 		} `json:"settings"`
 	} `json:"collaboration_mode"`
+}
+
+// subagent reports whether a session_meta record is a subagent's.
+func (p rolloutPayload) subagent() bool {
+	var source struct {
+		Subagent json.RawMessage `json:"subagent"`
+	}
+
+	return json.Unmarshal(p.Source, &source) == nil && len(source.Subagent) != 0
 }
 
 // model returns the model a turn ran under, preferring the current nesting over

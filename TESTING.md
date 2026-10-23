@@ -397,11 +397,12 @@ recorded cost conservation, and Codex checkpoint attribution after rollout remov
 `internal/mission/analytics_test.go` covers deletion retention, offline peer
 history, cumulative contribution replacement, clone isolation, legacy costs, and
 conversation-data exclusion. `internal/analytics` tests the facts projection (observed
-plan / implement labels including none, mixed, and unknown, and the exclusion of
+plan / implement / iterate labels including none, mixed, and unknown, and the exclusion of
 unmeasured missions) and the browser HTTP boundaries, without launching a daemon.
 `web/analytics/src/pivot.test.ts` covers the pivot engine: date bucketing,
 filters, per-mission mean and median, Top-N folding into Other, stable series
-colors, CSV export, and URL round-trips.
+colors, CSV export, URL round-trips, and phase ordering through iterate with the
+iteration-by-model preset.
 
 ```sh
 npm --prefix web/analytics ci
