@@ -420,3 +420,28 @@ to drill down, and connection recovery. It fails on console errors such as CSP
 violations, and checks a mobile viewport for horizontal overflow. CI runs it on Linux and builds the embedded UI on Linux and macOS.
 The normal `go test -race -count=1 -timeout=5m ./...` suite continues to exercise
 backend behavior independently of Node or built assets.
+
+## Shared memory and capture before finishing
+
+Memory tests cover atomic persistence and recovery, concurrent writes, input
+bounds, keyword ranking and filters, idempotent capture, paginated pairing, edits,
+and deletion markers. The finish tests use fake agent sessions: no paid agent
+calls or changes to real worktrees are needed.
+
+For a live smoke check after upgrading both paired daemons:
+
+1. Finish a clean Claude mission with Shift+L. Observe the saving indicator, the
+   extra capture turn, and cleanup only after the save succeeds and the agent stops.
+2. Find the summary from another mission using `q memory search --mission ID` and
+   inspect it on the paired host. Repeat with Codex.
+3. Finish a busy mission, a mission still in planning mode, and a mission with a
+   dead pane. Verify waiting/failure leaves worktrees intact and retry/skip/cancel
+   remain available. Check that permissions are never bypassed for capture.
+4. Capture dirty work, then modify it further before confirming cleanup. Verify
+   the earlier `--force` does not authorize automatic cleanup after capture.
+5. Interrupt daemon delivery, restart, and verify uncertain delivery requires a
+   retry. Interrupt after a successful save and verify recovery does not duplicate
+   the records or clean up before a fresh idle observation.
+6. Disconnect the pair, save and edit records independently, and reconnect. Verify
+   revision conflict handling, primary tie-breaking, and permanent deletion. Query
+   enough records to span more than one 128-entry manifest page.

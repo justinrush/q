@@ -54,3 +54,21 @@ func TestComposePromptWithoutRepositories(t *testing.T) {
 		t.Error("prompt missing mission instructions")
 	}
 }
+
+func TestPromptsAdvertiseOptionalSharedMemory(t *testing.T) {
+	prompt, err := ComposePrompt(Operation{Name: "Development"}, Mission{Name: "Fix", Prompt: "Do the work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	review, err := ComposeReviewPrompt(Operation{Name: "Development"}, Mission{Name: "Fix"}, Mission{Name: "Review"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{prompt, review} {
+		for _, want := range []string{"q memory search", "q memory show", "q memory save", "historical context"} {
+			if !strings.Contains(text, want) {
+				t.Fatal("missing capability guidance", want)
+			}
+		}
+	}
+}

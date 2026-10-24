@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/justinrush/q/internal/api"
+	"github.com/justinrush/q/internal/memory"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 )
@@ -32,11 +33,15 @@ var (
 // (a mission starts in briefing, a codex mission cannot use plan mode, an operation with
 // live missions cannot be deleted) are unit-testable without a server or a git tree.
 type Service struct {
-	store  *mission.Store
-	hub    *Hub
-	dirs   paths.Dirs
-	logger *slog.Logger
-	now    func() time.Time
+	memory          *memory.Store
+	captureOnFinish bool
+	finishMu        sync.Mutex
+	memoryLink      memoryLink
+	store           *mission.Store
+	hub             *Hub
+	dirs            paths.Dirs
+	logger          *slog.Logger
+	now             func() time.Time
 
 	// launcher is nil in tests and in any daemon that has no agent tooling
 	// available, in which case launching is refused rather than attempted.

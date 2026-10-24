@@ -86,6 +86,8 @@ func (s *Service) resolveMission(req api.HookRequest, payload mission.HookEvent)
 
 // applyReduction runs the state machine and persists the outcome.
 func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent) {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	var (
 		updated  mission.Mission
 		changed  bool
@@ -117,6 +119,7 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 		if codexPlan(next) && !ms.PlanApproved && next.PlanApproved {
 			pendingImplementation(&next, now)
 		}
+		observeFinishHook(&next, payload, now)
 		keepPlanFailure(&next)
 		updated = next
 		changed = true

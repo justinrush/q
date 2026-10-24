@@ -174,6 +174,9 @@ func handedOff(ms *mission.Mission, from string) {
 // atTurnEnd reports whether a mission's agent is between turns and waiting on
 // a human, which is when it can change hosts without losing work in flight.
 func atTurnEnd(ms mission.Mission) bool {
+	if ms.Finish.Token != "" {
+		return false
+	}
 	if ms.Status != mission.StatusAwaiting && ms.Status != mission.StatusDebrief {
 		return false
 	}
@@ -192,6 +195,13 @@ func atTurnEnd(ms mission.Mission) bool {
 // alive would leave an agent running on a host that no longer speaks for the
 // mission, and whose worktree the other host is about to treat as a mirror.
 func (s *Service) release(ctx context.Context, ms mission.Mission, to mission.HostID, label string) bool {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
+	current, ok := s.store.Snapshot().Mission(ms.ID)
+	if !ok || !s.holds(current) || current.Status.Terminal() {
+		return false
+	}
+	ms = current
 	if to == "" {
 		return false
 	}
@@ -212,6 +222,7 @@ func (s *Service) release(ctx context.Context, ms mission.Mission, to mission.Ho
 			return false
 		}
 
+		stored.Finish = mission.FinishCapture{}
 		stored.Lease = stored.Lease.Take(to)
 
 		// What this host knew about its own session is no longer anyone's concern.
@@ -288,6 +299,8 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 
 // seize takes a lease without the other host's cooperation.
 func (s *Service) seize(id mission.MissionID, from string) (mission.Mission, error) {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	var taken mission.Mission
 
 	err := s.store.Mutate("mission.lease.take", func(snap *mission.Snapshot) error {

@@ -209,6 +209,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /v1/remote/sync", s.handleRemoteSync)
 	mux.HandleFunc("DELETE /v1/remote", s.handleRemoteForget)
 
+	s.memoryRoutes(mux)
 	return s.guard(mux)
 }
 

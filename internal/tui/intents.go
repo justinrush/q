@@ -228,7 +228,7 @@ func (a *App) showDeleteConfirm(msg deletePlanMsg) {
 // uncommitted changes or leaving an unpushed branch behind.
 func (a *App) handleFinishPlan(msg finishPlanMsg) tea.Cmd {
 	if !msg.Plan.NeedsForce && len(msg.Plan.KeptBranches) == 0 {
-		return a.setStatus(msg.Mission.ID, mission.StatusClosed, "")
+		return a.setStatusRequest(msg.Mission.ID, api.SetStatusRequest{To: mission.StatusClosed, SkipMemory: msg.SkipMemory})
 	}
 
 	lines := []string{fmt.Sprintf("Finish %q?", msg.Mission.Name)}
@@ -246,7 +246,7 @@ func (a *App) handleFinishPlan(msg finishPlanMsg) tea.Cmd {
 	}
 
 	a.modal = newConfirm("Finish mission", strings.Join(lines, "\n"), confirm, true,
-		a.setStatusForce(msg.Mission.ID, mission.StatusClosed, "", msg.Plan.NeedsForce))
+		a.setStatusRequest(msg.Mission.ID, api.SetStatusRequest{To: mission.StatusClosed, Force: msg.Plan.NeedsForce, SkipMemory: msg.SkipMemory}))
 
 	return nil
 }
@@ -472,6 +472,23 @@ func (a *App) moveToLane(ms mission.Mission, to mission.Status) tea.Cmd {
 	}
 
 	if to == mission.StatusClosed && ms.Launched() {
+		if ms.Finish.Token != "" && ms.Finish.Phase != mission.FinishReady {
+			a.modal = newList("Finish "+ms.Name, ms.Finish.Error, []listItem{
+				{Key: "retry", Label: "Retry capture"},
+				{Key: "skip", Label: "Finish without memory"},
+				{Key: "cancel", Label: "Cancel finish"},
+			}, func(picked string) tea.Cmd {
+				switch picked {
+				case "retry":
+					return a.setStatusRequest(ms.ID, api.SetStatusRequest{To: mission.StatusClosed, RetryCapture: true})
+				case "skip":
+					return a.fetchFinishPlanWithMemory(ms, true)
+				default:
+					return a.setStatusRequest(ms.ID, api.SetStatusRequest{To: mission.StatusClosed, CancelFinish: true})
+				}
+			})
+			return nil
+		}
 		return a.fetchFinishPlan(ms)
 	}
 

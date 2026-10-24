@@ -380,3 +380,7 @@ func call[T any](ctx context.Context, p *Peer, method, path string, body any) (T
 
 	return out, nil
 }
+
+func (p *Peer) MemorySync(ctx context.Context, req api.MemorySyncRequest) (api.MemorySyncResponse, error) {
+	return call[api.MemorySyncResponse](ctx, p, http.MethodPost, "/v1/sync/memory", req)
+}

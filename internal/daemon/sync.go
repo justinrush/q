@@ -320,6 +320,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 	snap := s.store.Snapshot()
 
 	resp, err := s.remote.Sync(ctx, api.SyncRequest{
+		MemorySync:    s.memory != nil,
 		Protocol:      api.SyncProtocol,
 		Version:       s.version,
 		Payload:       snap.Payload(),
@@ -344,6 +345,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 	}
 
 	s.shareWorktrees(ctx, mine, resp.Refs)
+	s.syncMemory(ctx, resp.MemorySync)
 
 	if wasLinked != "" || snap.Peer == nil {
 		s.publishRemote()
@@ -460,6 +462,9 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 		return api.SyncResponse{}, err
 	}
 
+	if !req.MemorySync {
+		s.memoryLink.set("unavailable: upgrade both paired daemons")
+	}
 	results := s.runCommands(ctx, req.Commands)
 
 	if wasLinked != "" {
@@ -471,12 +476,13 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 	s.captured = s.captureWorktrees(ctx)
 
 	return api.SyncResponse{
-		Protocol: api.SyncProtocol,
-		Version:  s.version,
-		Payload:  s.store.Snapshot().Payload(),
-		Results:  results,
-		Refs:     s.captured,
-		Witness:  s.witnessName(),
+		MemorySync: s.memory != nil,
+		Protocol:   api.SyncProtocol,
+		Version:    s.version,
+		Payload:    s.store.Snapshot().Payload(),
+		Results:    results,
+		Refs:       s.captured,
+		Witness:    s.witnessName(),
 	}, nil
 }
 
@@ -508,6 +514,7 @@ func (s *Service) applyPeer(
 
 	primary := s.remote != nil
 
+	s.finishMu.Lock()
 	err := s.store.Apply("sync.merge", func(snap *mission.Snapshot) error {
 		paired, err := pair(snap, payload.From, takeoverAfter, witness)
 		if err != nil {
@@ -533,6 +540,7 @@ func (s *Service) applyPeer(
 
 		return nil
 	})
+	s.finishMu.Unlock()
 	if err != nil {
 		return err
 	}
@@ -835,6 +843,7 @@ func (s *Service) RemoteStatus() api.RemoteStatus {
 	last, errText := s.link.state()
 
 	status := api.RemoteStatus{
+		MemorySync:    s.memoryLink.get(),
 		Self:          snap.Self,
 		Role:          s.roleOf(snap),
 		LastSyncAt:    last,
@@ -923,6 +932,7 @@ func (s *Service) ForgetPeer(ctx context.Context) (api.Forgotten, error) {
 // It moves to debrief, the lane that asks for a human, and is marked as having
 // no session, which is what makes resuming it relaunch the agent here.
 func orphan(ms *mission.Mission, now time.Time) {
+	ms.Finish = mission.FinishCapture{}
 	if !ms.Running() {
 		return
 	}

@@ -203,12 +203,12 @@ func (a *App) setStatus(id mission.MissionID, to mission.Status, message string)
 
 // setStatusForce moves a mission and permits an explicitly confirmed dirty finish.
 func (a *App) setStatusForce(id mission.MissionID, to mission.Status, message string, force bool) tea.Cmd {
+	return a.setStatusRequest(id, api.SetStatusRequest{To: to, Message: message, Force: force})
+}
+
+func (a *App) setStatusRequest(id mission.MissionID, req api.SetStatusRequest) tea.Cmd {
 	return func() tea.Msg {
-		ms, err := a.client.SetStatus(a.ctx(), id, api.SetStatusRequest{
-			To:      to,
-			Message: message,
-			Force:   force,
-		})
+		ms, err := a.client.SetStatus(a.ctx(), id, req)
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
 		}
@@ -217,6 +217,9 @@ func (a *App) setStatusForce(id mission.MissionID, to mission.Status, message st
 			return toastMsg{text: "finished " + ms.Name + "; resources reclaimed"}
 		}
 
+		if ms.Finish.Token != "" {
+			return toastMsg{text: ms.Name + ": finish requested · " + string(ms.Finish.Phase)}
+		}
 		return toastMsg{text: ms.Name + " → " + ms.Status.Label()}
 	}
 }
@@ -387,13 +390,16 @@ func (a *App) fetchDeletePlan(ms mission.Mission) tea.Cmd {
 
 // fetchFinishPlan asks what filing a mission would reclaim.
 func (a *App) fetchFinishPlan(ms mission.Mission) tea.Cmd {
+	return a.fetchFinishPlanWithMemory(ms, false)
+}
+func (a *App) fetchFinishPlanWithMemory(ms mission.Mission, skip bool) tea.Cmd {
 	return func() tea.Msg {
 		plan, err := a.client.DeletePlan(a.ctx(), ms.ID)
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
 		}
 
-		return finishPlanMsg{Mission: ms, Plan: plan}
+		return finishPlanMsg{Mission: ms, Plan: plan, SkipMemory: skip}
 	}
 }
 
@@ -405,8 +411,9 @@ type deletePlanMsg struct {
 
 // finishPlanMsg carries what moving a mission to closed would reclaim.
 type finishPlanMsg struct {
-	Mission mission.Mission
-	Plan    mission.Plan
+	SkipMemory bool
+	Mission    mission.Mission
+	Plan       mission.Plan
 }
 
 // describeReport summarizes what a delete actually did.

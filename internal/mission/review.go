@@ -167,7 +167,7 @@ func ComposeReviewPrompt(operation Operation, source, review Mission, transcript
 		return "", fmt.Errorf("composing the review prompt for mission %s: %w", review.ID, err)
 	}
 
-	return b.String(), nil
+	return b.String() + MemoryInstructions, nil
 }
 
 // describeAgent names the agent a mission ran on, with its model and effort
