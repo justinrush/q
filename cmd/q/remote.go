@@ -421,6 +421,9 @@ func describeRemote(rep *report, status api.RemoteStatus) {
 	}
 
 	rep.row("role\t%s", status.Role)
+	if status.MemorySync != "" {
+		rep.row("memory sync\t%s", status.MemorySync)
+	}
 
 	if status.Peer == nil {
 		rep.row("paired with\tnobody yet")

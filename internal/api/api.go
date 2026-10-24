@@ -152,8 +152,11 @@ type UpdateMissionRequest struct {
 // active from a waiting or debrief lane delivers Message to the live session, if
 // one is supplied. Moving to closed reclaims the live session and worktrees first.
 type SetStatusRequest struct {
-	To      mission.Status `json:"to"`
-	Message string         `json:"message,omitempty"`
+	SkipMemory   bool           `json:"skipMemory,omitempty"`
+	RetryCapture bool           `json:"retryCapture,omitempty"`
+	CancelFinish bool           `json:"cancelFinish,omitempty"`
+	To           mission.Status `json:"to"`
+	Message      string         `json:"message,omitempty"`
 	// Force permits finishing to discard uncommitted work. Other lane moves
 	// ignore it.
 	Force bool `json:"force,omitempty"`
@@ -259,7 +262,8 @@ const SyncProtocol = 1
 
 // SyncRequest is the primary's half of an exchange.
 type SyncRequest struct {
-	Protocol int `json:"protocol"`
+	MemorySync bool `json:"memorySync,omitempty"`
+	Protocol   int  `json:"protocol"`
 	// Version is the sender's q version, reported when the protocols disagree
 	// so the error names what to upgrade.
 	Version string          `json:"version,omitempty"`
@@ -284,9 +288,10 @@ type SyncRequest struct {
 
 // SyncResponse is the secondary's half.
 type SyncResponse struct {
-	Protocol int             `json:"protocol"`
-	Version  string          `json:"version,omitempty"`
-	Payload  mission.Payload `json:"payload"`
+	MemorySync bool            `json:"memorySync,omitempty"`
+	Protocol   int             `json:"protocol"`
+	Version    string          `json:"version,omitempty"`
+	Payload    mission.Payload `json:"payload"`
 	// Results answers each command by id. A command with no result was not
 	// attempted and is retried on the next exchange.
 	Results []CommandResult `json:"results,omitempty"`
@@ -306,8 +311,9 @@ type CommandResult struct {
 // RemoteStatus describes this daemon's pairing with another, for q remote
 // status and the board's header.
 type RemoteStatus struct {
-	Self mission.HostInfo `json:"self"`
-	Role mission.Role     `json:"role,omitempty"`
+	MemorySync string           `json:"memorySync,omitempty"`
+	Self       mission.HostInfo `json:"self"`
+	Role       mission.Role     `json:"role,omitempty"`
 	// Peer is nil until the first exchange has told each side who the other is.
 	Peer *mission.HostInfo `json:"peer,omitempty"`
 	// LastSyncAt is the last completed exchange, zero if there has been none

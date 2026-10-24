@@ -76,13 +76,14 @@ type Repo struct {
 
 // Mission is one unit of agent work within an operation.
 type Mission struct {
-	ID          MissionID   `json:"id" q:"key"`
-	OperationID OperationID `json:"operationId" q:"spec"`
-	Name        string      `json:"name" q:"spec"`
-	Slug        string      `json:"slug" q:"spec"`
-	Tool        Tool        `json:"tool" q:"spec"`
-	Prompt      string      `json:"prompt" q:"spec"`
-	PlanMode    bool        `json:"planMode" q:"spec"`
+	Finish      FinishCapture `json:"finish,omitzero" q:"run"`
+	ID          MissionID     `json:"id" q:"key"`
+	OperationID OperationID   `json:"operationId" q:"spec"`
+	Name        string        `json:"name" q:"spec"`
+	Slug        string        `json:"slug" q:"spec"`
+	Tool        Tool          `json:"tool" q:"spec"`
+	Prompt      string        `json:"prompt" q:"spec"`
+	PlanMode    bool          `json:"planMode" q:"spec"`
 	// Model is the agent model this mission runs on, named as that agent's own
 	// CLI names it. Empty means q passes no model flag and the agent uses
 	// whatever it would have used anyway, which is what a mission created before

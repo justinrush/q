@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -365,6 +366,7 @@ func (p *placement) register(cmd *cobra.Command) {
 }
 
 func buildMissionMoveSubcommand() *cobra.Command {
+	var skipMemory, retryCapture, cancelFinish, asJSON bool
 	var (
 		message string
 		force   bool
@@ -389,14 +391,22 @@ func buildMissionMoveSubcommand() *cobra.Command {
 			}
 
 			ms, err := c.SetStatus(cmd.Context(), mission.MissionID(args[0]), api.SetStatusRequest{
-				To:      status,
-				Message: message,
-				Force:   force,
+				To:         status,
+				Message:    message,
+				Force:      force,
+				SkipMemory: skipMemory, RetryCapture: retryCapture, CancelFinish: cancelFinish,
 			})
 			if err != nil {
 				return err
 			}
 
+			if asJSON {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(ms)
+			}
+			if ms.Finish.Token != "" {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s: finish requested (%s) %s\n", ms.Name, ms.Finish.Phase, ms.Finish.Error)
+				return err
+			}
 			if ms.Status == mission.StatusClosed {
 				_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s is done; resources reclaimed\n", ms.Name)
 			} else {
@@ -409,6 +419,11 @@ func buildMissionMoveSubcommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&message, "message", "", "Text to send to the live agent session")
 	cmd.Flags().BoolVar(&force, "force", false, "Discard uncommitted changes when moving to closed")
+	cmd.Flags().BoolVar(&skipMemory, "skip-memory", false, "Finish without capturing memory")
+	cmd.Flags().BoolVar(&retryCapture, "retry-capture", false, "Retry memory capture before finishing")
+	cmd.Flags().BoolVar(&cancelFinish, "cancel-finish", false, "Cancel a pending finish and retain its resources")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "Print the mission as JSON")
+	cmd.MarkFlagsMutuallyExclusive("skip-memory", "retry-capture", "cancel-finish")
 
 	return cmd
 }

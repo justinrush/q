@@ -1259,3 +1259,91 @@ proxy targeting port 8765. Set `Q_ANALYTICS_URL` to use a different companion UR
 Frontend source, lockfile, tests, and asset embedding all live in `web/analytics`;
 Go facts projection and browser-server code live in `internal/analytics`; the
 pivot engine is `web/analytics/src/pivot.ts`.
+
+### Shared mission memory
+
+q keeps short mission summaries and reusable lessons shared by agents and paired
+machines. This supplements each agent's own memory. Agents receive CLI guidance
+in their mission prompt and decide when to search; q does not inject old memories
+into every conversation.
+
+```sh
+q memory search "worktree cleanup" --repo q
+q memory search --mission ms_… --json
+q memory search --operation "local dev env" --kind lesson --limit 20
+q memory show mem_… --json
+```
+
+Keywords are case-insensitive, with all terms required. Title and tag matches
+rank above body matches; ties prefer recent records. Filters match exact names
+or IDs and combine with the keywords. A repo filter can use its normalized origin
+URL to distinguish repositories with the same name. Results include dates and
+source missions: they are agent-written historical context, and should be checked
+against current code.
+
+To save context during a mission, pass a JSON batch on stdin (or use `--file PATH`):
+
+```sh
+q memory save --file - <<'JSON'
+{"records":[{"kind":"lesson","title":"A useful discovery","body":"What was learned, supporting evidence, and when it applies.","tags":["git"]}]}
+JSON
+```
+
+`Q_MISSION_ID` supplies the source automatically; outside a mission, add
+`--mission ms_…`. The daemon attaches mission, operation, repository, and agent
+metadata. Records are either `summary` or `lesson`, with required `title` and
+`body` and optional `tags`. Bodies support Markdown. Limit each complete record
+(including provenance) to 16 KiB and each input batch to 128 KiB. Save no credentials
+or raw transcripts. Newly saved records are immediately searchable.
+
+`q memory update mem_… --file PATH` replaces kind, title, body, and tags using a
+single JSON object; provenance stays attached. `q memory delete mem_…` removes the
+record from searches on both paired machines. Every memory command supports
+`--json` output. Deleting a mission does not delete its memories.
+
+**Finishing a mission.** Shift+L, or `q mission move ms_… closed`, first asks its
+existing agent to save one concise summary and any worthwhile lessons. q waits
+for a successful save and a subsequent idle observation before reclaiming the
+session and worktrees. A normal end-of-turn event alone is not an acknowledgment.
+The command returns while capture is pending, and the card shows its progress.
+Unlaunched missions finish immediately.
+
+A busy agent is allowed to finish its current turn before the prompt is sent.
+Unavailable agents, agents still in planning mode, failed delivery, and captures
+that take more than five minutes leave resources intact. Press Shift+L again for
+retry, skip, and cancel actions, or use:
+
+```sh
+q mission move ms_… closed --retry-capture
+q mission move ms_… closed --skip-memory
+q mission move ms_… closed --cancel-finish
+```
+
+Skipping memory does not authorize discarding dirty work. Dirty work or branches
+that will be retained require fresh cleanup confirmation after capture; finish
+again when the card says memory is saved. `--force` remains the explicit permission
+to discard uncommitted changes, and an earlier permission is not carried across
+the capture turn. Sending ordinary work to the agent cancels its pending finish.
+A changed run or lease invalidates the old capture token. Retries cannot duplicate
+a batch already saved under the same token.
+
+Capture is on by default. To disable automatic capture, set this in q's config
+and restart its daemon (manual saves and queries remain available):
+
+```json
+{"memory":{"captureOnFinish":false}}
+```
+
+Memory lives in `memory.json` under q's configured data directory, with a previous
+snapshot in `memory.json.bak`, both private to the user. The daemon is the sole
+writer. Paired machines exchange a paginated revision manifest and bounded record
+batches over their existing authenticated connection; the corpus is separate from
+board snapshots. Offline writes converge on reconnect. Higher revisions win,
+with the primary breaking ties; deletion markers prevent offline edits from
+resurrecting deleted records. Deleted text may remain in the previous-file backup.
+`q remote status` reports memory-sync availability separately from mission sync.
+An older peer can still share missions, but must be upgraded to share memory.
+
+There is no transcript backfill, embedding model, vector service, or external
+memory provider. Start by checking whether the first twenty captured missions
+help later agents recover decisions and avoid repeating discoveries.

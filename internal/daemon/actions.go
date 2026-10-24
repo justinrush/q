@@ -74,6 +74,8 @@ func (s *Service) DeleteMissionAndReclaim(
 	id mission.MissionID,
 	force bool,
 ) (mission.Report, error) {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	report, err := s.ReclaimMission(ctx, id, force)
 	if err != nil {
 		return report, err
@@ -158,6 +160,7 @@ func (s *Service) FinishMission(
 // FinishMission just reclaimed. StartedAt is cleared so a human reopening the card can
 // launch fresh resources rather than trying to resume paths that no longer exist.
 func clearFinishedResources(ms *mission.Mission) {
+	ms.Finish = mission.FinishCapture{}
 	ms.MissionDir = ""
 	ms.TmuxSession = ""
 	ms.AgentPaneID = ""
@@ -310,6 +313,9 @@ func (s *Service) AttachCommand(id mission.MissionID) (api.AttachCommand, error)
 // alive the message is delivered to it; when it is not, the agent is relaunched
 // against the surviving worktrees and given the message as its prompt.
 func (s *Service) Resume(ctx context.Context, id mission.MissionID, message string) (mission.Mission, error) {
+	if err := s.cancelFinish(id); err != nil {
+		return mission.Mission{}, err
+	}
 	if s.messenger == nil {
 		return mission.Mission{}, fmt.Errorf("%w: this daemon cannot talk to agent sessions", ErrConflict)
 	}
@@ -364,6 +370,9 @@ const (
 // ready from events that can be missed, and a human looking at a finished plan
 // in the pane should not be told there is nothing to approve.
 func (s *Service) ApprovePlan(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	if err := s.cancelFinish(id); err != nil {
+		return mission.Mission{}, err
+	}
 	if s.messenger == nil {
 		return mission.Mission{}, fmt.Errorf("%w: this daemon cannot talk to agent sessions", ErrConflict)
 	}
@@ -480,6 +489,18 @@ func (s *Service) Dispatch(
 	id mission.MissionID,
 	req api.SetStatusRequest,
 ) (mission.Mission, error) {
+	if (req.SkipMemory || req.RetryCapture || req.CancelFinish) && req.To != mission.StatusClosed {
+		return mission.Mission{}, fmt.Errorf("%w: memory finish controls require the closed lane", ErrInvalid)
+	}
+	controls := 0
+	for _, enabled := range []bool{req.SkipMemory, req.RetryCapture, req.CancelFinish} {
+		if enabled {
+			controls++
+		}
+	}
+	if controls > 1 {
+		return mission.Mission{}, fmt.Errorf("%w: choose only one memory finish action", ErrInvalid)
+	}
 	current, ok := s.store.Snapshot().Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
@@ -489,10 +510,13 @@ func (s *Service) Dispatch(
 		return s.dispatchToPeer(ctx, current, req)
 	}
 
-	if req.To == mission.StatusClosed {
-		ms, _, err := s.FinishMission(ctx, id, req.Force)
-
-		return ms, err
+	if req.To == mission.StatusClosed || req.CancelFinish {
+		return s.requestFinish(ctx, id, req)
+	}
+	if current.Finish.Token != "" {
+		if err := s.cancelFinish(id); err != nil {
+			return mission.Mission{}, err
+		}
 	}
 
 	if req.To != mission.StatusActive {

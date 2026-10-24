@@ -19,6 +19,7 @@ import (
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/k8s"
 	"github.com/justinrush/q/internal/launch"
+	"github.com/justinrush/q/internal/memory"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/opencode"
 	"github.com/justinrush/q/internal/paths"
@@ -52,9 +53,14 @@ func assembleService(
 		return nil, nil, err
 	}
 
+	memories, err := memory.Open(filepath.Join(dirs.Data, "memory.json"))
+	if err != nil {
+		return nil, nil, err
+	}
 	hub := daemon.NewHub()
 
 	opts := []daemon.Option{
+		daemon.WithMemory(memories, s.Memory.CaptureOnFinish),
 		daemon.WithLogger(logger),
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),

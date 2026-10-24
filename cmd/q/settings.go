@@ -18,6 +18,7 @@ import (
 // no JSON tags: the file format lives in config.go, so a change to either can be
 // made without touching the other.
 type settings struct {
+	Memory   memorySettings
 	Repos    reposSettings
 	Git      gitSettings
 	Agents   agentsSettings
@@ -36,6 +37,8 @@ type settings struct {
 }
 
 // queueSettings configures how the daemon works through queued missions.
+type memorySettings struct{ CaptureOnFinish bool }
+
 type queueSettings struct {
 	// MaxConcurrent is how many queued missions run at once on this machine. A
 	// mission started by hand is not held back by it, but does count against it.
@@ -241,6 +244,7 @@ func defaultSettings() settings {
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
 		TUI:      tuiSettings{Mouse: true, Lanes: lanesVertical},
 		Queue:    queueSettings{MaxConcurrent: daemon.DefaultMaxConcurrent},
+		Memory:   memorySettings{CaptureOnFinish: true},
 		Remote: remoteSettings{
 			Bin:           remote.DefaultBin,
 			Name:          defaultHostName(),

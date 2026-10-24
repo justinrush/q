@@ -98,6 +98,12 @@ func operationLabel(operation mission.Operation) string {
 // The order is deliberate. A failed launch and a blocked agent are the two things that
 // need a human, so they outrank the agent's closing message, which is only context.
 func detailLine(ms mission.Mission, width int) string {
+	if ms.Finish.Token != "" {
+		if ms.Finish.Error != "" {
+			return styles.CardError.Render(styles.Truncate("finish: "+ms.Finish.Error, width))
+		}
+		return styles.CardDetail.Render(styles.Truncate("saving memory · "+string(ms.Finish.Phase), width))
+	}
 	if ms.PlanFailed() {
 		return styles.CardError.Render(styles.Truncate("Codex handoff failed: "+ms.PlanTransition.Error, width))
 	}

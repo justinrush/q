@@ -61,7 +61,11 @@ func (s *Service) pollRuntimes(ctx context.Context) {
 		}
 
 		readCtx, cancel := context.WithTimeout(ctx, runtimeReadTimeout)
+		readStarted := s.now()
 		reading, found, err := runtime.Read(readCtx, ms)
+		if reading.ObservedAt.IsZero() {
+			reading.ObservedAt = readStarted
+		}
 		cancel()
 
 		if err != nil || !found || reading.Activity == mission.ActivityUnknown {
@@ -95,6 +99,8 @@ func (s *Service) applyRuntimeReading(id mission.MissionID, reading mission.Read
 
 // applyRuntimeReadingNow writes a reading through to the card.
 func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.Reading) {
+	s.finishMu.Lock()
+	defer s.finishMu.Unlock()
 	var updated mission.Mission
 	var switchModel bool
 
@@ -123,10 +129,11 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		if codexPlan(ms) && !before.PlanApproved && ms.PlanApproved {
 			pendingImplementation(&ms, now)
 		}
+		observeFinishIdle(&ms, reading.ObservedAt)
 		keepPlanFailure(&ms)
 		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexPlan(ms)) && !ms.Tool.PlanSwitchesItself()
 
-		if sameRuntimeState(before, ms) {
+		if sameRuntimeState(before, ms) && before.Finish == ms.Finish {
 			return nil
 		}
 

@@ -75,6 +75,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	// Queued missions start without anyone asking, which is what lets a machine
 	// nobody is sitting at work through a backlog.
 	go svc.RunScheduler(ctx)
+	go svc.RunFinishCaptures(ctx)
 
 	// A primary keeps its paired q current. This returns at once on a daemon
 	// that dials nobody.

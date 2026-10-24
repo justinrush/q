@@ -48,6 +48,7 @@ func BuildRootCommand() *cobra.Command {
 		buildRemoteSubcommand(),
 		buildOpenSubcommand(),
 		buildMissionSubcommand(),
+		buildMemorySubcommand(),
 		buildModelsSubcommand(),
 		buildOperationSubcommand(),
 		buildTUISubcommand(),

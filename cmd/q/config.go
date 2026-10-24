@@ -68,6 +68,7 @@ type fileConfig struct {
 	Paths    *pathsConfig    `json:"paths,omitempty"`
 	Cost     *costConfig     `json:"cost,omitempty"`
 	TUI      *tuiConfig      `json:"tui,omitempty"`
+	Memory   *memoryConfig   `json:"memory,omitempty"`
 	Queue    *queueConfig    `json:"queue,omitempty"`
 	Review   *reviewConfig   `json:"review,omitempty"`
 	Remote   *remoteConfig   `json:"remote,omitempty"`
@@ -81,6 +82,10 @@ type reviewConfig struct {
 	Tool   string `json:"tool,omitempty"`
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+}
+
+type memoryConfig struct {
+	CaptureOnFinish *bool `json:"captureOnFinish,omitempty"`
 }
 
 type queueConfig struct {
@@ -355,6 +360,7 @@ func applyFile(out *settings, file fileConfig) {
 		out.TUI.Lanes = strings.TrimSpace(*t.Lanes)
 	}
 
+	applyMemoryConfig(out, file.Memory)
 	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
 	}
@@ -673,6 +679,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
 		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
 		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
+		Memory:   &memoryConfig{CaptureOnFinish: &s.Memory.CaptureOnFinish},
 		Review:   &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
 			SSH:           s.Remote.SSH,
@@ -769,4 +776,10 @@ func refreshString(d time.Duration) string {
 	}
 
 	return d.String()
+}
+
+func applyMemoryConfig(out *settings, m *memoryConfig) {
+	if m != nil && m.CaptureOnFinish != nil {
+		out.Memory.CaptureOnFinish = *m.CaptureOnFinish
+	}
 }
