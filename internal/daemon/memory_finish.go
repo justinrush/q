@@ -185,7 +185,7 @@ func (s *Service) advanceCapture(ctx context.Context, id mission.MissionID) {
 		_ = s.failCapture(id, "checking cleanup safety: "+err.Error())
 		return
 	}
-	if plan.NeedsForce || len(plan.KeptBranches) > 0 {
+	if plan.NeedsForce {
 		_ = s.changeFinish(id, func(m *mission.Mission) {
 			m.Finish.Phase = mission.FinishReady
 			m.Finish.Error = "memory saved; finish again to confirm cleanup"

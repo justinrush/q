@@ -239,6 +239,20 @@ func TestCaptureFreshCleanupConfirmation(t *testing.T) {
 	}
 }
 
+func TestCaptureFinishesWhenBranchesAreKept(t *testing.T) {
+	s, ms, _, reclaim := captureFixture(t)
+	reclaim.plan.KeptBranches = []string{"feature"}
+	requestCapture(t, s, ms.ID)
+	s.advanceCapture(t.Context(), ms.ID)
+	saveCapture(t, s, ms.ID)
+	idleCapture(t, s, ms.ID)
+	s.advanceCapture(t.Context(), ms.ID)
+	current, _ := s.Snapshot().Mission(ms.ID)
+	if current.Status != mission.StatusClosed || reclaim.calls != 1 || reclaim.force {
+		t.Fatalf("finish with retained branch: status %s, reclaim calls %d, force %t", current.Status, reclaim.calls, reclaim.force)
+	}
+}
+
 func TestCaptureRecoversSaveAndRejectsLeaseChange(t *testing.T) {
 	s, ms, _, reclaim := captureFixture(t)
 	requestCapture(t, s, ms.ID)
