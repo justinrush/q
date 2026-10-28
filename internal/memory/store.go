@@ -285,12 +285,13 @@ func (s *Store) Update(id string, in Input, remove bool, now time.Time) (Record,
 }
 
 type Query struct {
-	Keywords  string `json:"keywords"`
-	Mission   string `json:"mission,omitempty"`
-	Operation string `json:"operation,omitempty"`
-	Repo      string `json:"repo,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
+	Keywords      string `json:"keywords"`
+	CallerMission string `json:"callerMission,omitempty"`
+	Mission       string `json:"mission,omitempty"`
+	Operation     string `json:"operation,omitempty"`
+	Repo          string `json:"repo,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
 }
 
 type Result struct {
