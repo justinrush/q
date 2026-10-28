@@ -3,6 +3,8 @@ package daemon
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -26,6 +28,10 @@ func TestMemoryHTTPClientLifecycle(t *testing.T) {
 	found, err := client.SearchMemory(t.Context(), memory.Query{Keywords: "cleanup", Mission: string(ms.ID)})
 	if err != nil || len(found) != 1 || found[0].Body != "" || found[0].Snippet == "" {
 		t.Fatalf("search: %+v, %v", found, err)
+	}
+	logData, err := os.ReadFile(filepath.Join(srv.svc.dirs.Data, "memory-queries.jsonl"))
+	if err != nil || !strings.Contains(string(logData), `"keywords":"cleanup"`) {
+		t.Fatalf("query history: %s, %v", logData, err)
 	}
 	shown, err := client.ShowMemory(t.Context(), r.ID)
 	if err != nil || shown.Body != r.Body {

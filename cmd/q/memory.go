@@ -1,10 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"github.com/justinrush/q/internal/paths"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
@@ -18,7 +22,7 @@ func buildMemorySubcommand() *cobra.Command {
 	root := &cobra.Command{Use: "memory", Short: "Save and query shared mission memory"}
 	root.PersistentFlags().BoolVar(&asJSON, "json", false, "Print JSON")
 
-	root.AddCommand(memorySaveCommand(&asJSON), memorySearchCommand(&asJSON), memoryShowCommand(&asJSON), memoryUpdateCommand(&asJSON), memoryDeleteCommand(&asJSON))
+	root.AddCommand(memorySaveCommand(&asJSON), memorySearchCommand(&asJSON), memoryShowCommand(&asJSON), memoryUpdateCommand(&asJSON), memoryDeleteCommand(&asJSON), memoryStatsCommand(&asJSON))
 	return root
 }
 
@@ -87,6 +91,7 @@ func memorySearchCommand(asJSON *bool) *cobra.Command {
 	var q memory.Query
 	search := &cobra.Command{Use: "search [keywords]", Short: "Search dated, agent-written context", RunE: func(cmd *cobra.Command, args []string) error {
 		q.Keywords = strings.Join(args, " ")
+		q.CallerMission = os.Getenv("Q_MISSION_ID")
 		c, err := connectDaemon(cmd.Context())
 		if err != nil {
 			return err
@@ -182,4 +187,76 @@ func memoryOutput(cmd *cobra.Command, v any, asJSON bool) error {
 		}
 	}
 	return nil
+}
+
+func memoryStatsCommand(asJSON *bool) *cobra.Command {
+	return &cobra.Command{Use: "stats", Short: "Count memory searches by day and agent", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		dirs, err := paths.Resolve(pathOverrides())
+		if err != nil {
+			return err
+		}
+		path := filepath.Join(dirs.Data, "memory-queries.jsonl")
+		f, err := os.Open(path)
+		if os.IsNotExist(err) {
+			if *asJSON {
+				_, err = fmt.Fprintln(cmd.OutOrStdout(), "[]")
+			} else {
+				_, err = fmt.Fprintf(cmd.OutOrStdout(), "No memory searches recorded.\nHistory: %s\n", path)
+			}
+			return err
+		}
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		type row struct {
+			Day   string `json:"day"`
+			Tool  string `json:"tool"`
+			Count int    `json:"count"`
+		}
+		counts := map[string]*row{}
+		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 4096), 1024*1024)
+		for scanner.Scan() {
+			var event struct {
+				At   string `json:"at"`
+				Tool string `json:"tool"`
+			}
+			if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+				return err
+			}
+			if len(event.At) < 10 {
+				continue
+			}
+			day := event.At[:10]
+			key := day + "\x00" + event.Tool
+			if counts[key] == nil {
+				counts[key] = &row{Day: day, Tool: event.Tool}
+			}
+			counts[key].Count++
+		}
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+		rows := make([]row, 0, len(counts))
+		for _, v := range counts {
+			rows = append(rows, *v)
+		}
+		sort.Slice(rows, func(i, j int) bool {
+			if rows[i].Day != rows[j].Day {
+				return rows[i].Day < rows[j].Day
+			}
+			return rows[i].Tool < rows[j].Tool
+		})
+		if *asJSON {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(rows)
+		}
+		for _, r := range rows {
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s  %-12s %d\n", r.Day, r.Tool, r.Count); err != nil {
+				return err
+			}
+		}
+		_, err = fmt.Fprintf(cmd.OutOrStdout(), "History: %s\n", path)
+		return err
+	}}
 }

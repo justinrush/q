@@ -396,6 +396,21 @@ func TestPlanApprovedInTheAgentRestartsOnlyASplit(t *testing.T) {
 			if ok && ms.Tool == mission.ToolCodex {
 				waitVerified(t, svc, ms.ID)
 			}
+			if ok {
+				// The messenger reports a relaunch before commitRelaunch persists it.
+				deadline := time.After(3 * time.Second)
+				for {
+					stored, _ := svc.Snapshot().Mission(ms.ID)
+					if stored.HookEpoch == relaunched.HookEpoch && stored.Status == mission.StatusActive {
+						break
+					}
+					select {
+					case <-deadline:
+						t.Fatal("relaunch was not persisted")
+					case <-time.After(time.Millisecond):
+					}
+				}
+			}
 			if ok && relaunched.Planning() {
 				t.Error("the session was restarted while the mission still read as planning")
 			}

@@ -2,10 +2,14 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/memory"
@@ -105,7 +109,11 @@ func (s *Server) memoryRoutes(mux *http.ServeMux) {
 			memoryReply(w, nil, ErrConflict)
 			return
 		}
-		writeJSON(w, http.StatusOK, s.svc.memory.Search(q))
+		results := s.svc.memory.Search(q)
+		if err := s.svc.recordMemoryQuery(q, len(results)); err != nil {
+			s.svc.warn("recording memory query", "error", err)
+		}
+		writeJSON(w, http.StatusOK, results)
 	})
 	mux.HandleFunc("GET /v1/memory/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if s.svc.memory == nil {
@@ -288,4 +296,43 @@ func remoteMemoryManifest(ctx context.Context, peer memoryRemote, req api.Memory
 		}
 		req.After = resp.Next
 	}
+}
+
+var memoryQueryMu sync.Mutex
+
+type memoryQueryEvent struct {
+	At            time.Time `json:"at"`
+	Tool          string    `json:"tool"`
+	Mission       string    `json:"mission,omitempty"`
+	Keywords      string    `json:"keywords"`
+	Repo          string    `json:"repo,omitempty"`
+	SourceMission string    `json:"sourceMission,omitempty"`
+	Operation     string    `json:"operation,omitempty"`
+	Kind          string    `json:"kind,omitempty"`
+	Limit         int       `json:"limit,omitempty"`
+	Results       int       `json:"results"`
+}
+
+func (s *Service) recordMemoryQuery(q memory.Query, results int) error {
+	event := memoryQueryEvent{At: s.now().UTC(), Tool: "unknown", Keywords: q.Keywords, Repo: q.Repo, SourceMission: q.Mission, Operation: q.Operation, Kind: q.Kind, Limit: q.Limit, Results: results}
+	if q.CallerMission != "" {
+		if ms, ok := s.store.Snapshot().Mission(mission.MissionID(q.CallerMission)); ok {
+			event.Mission = string(ms.ID)
+			event.Tool = string(ms.Tool)
+		}
+	}
+	memoryQueryMu.Lock()
+	defer memoryQueryMu.Unlock()
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(s.dirs.Data, "memory-queries.jsonl")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.Write(append(data, '\n'))
+	return err
 }

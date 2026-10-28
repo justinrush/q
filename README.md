@@ -1272,6 +1272,8 @@ q memory search "worktree cleanup" --repo q
 q memory search --mission ms_… --json
 q memory search --operation "local dev env" --kind lesson --limit 20
 q memory show mem_… --json
+q memory stats
+q memory stats --json
 ```
 
 Keywords are case-insensitive, with all terms required. Title and tag matches
@@ -1333,6 +1335,12 @@ and restart its daemon (manual saves and queries remain available):
 ```json
 {"memory":{"captureOnFinish":false}}
 ```
+
+Search requests are appended locally to `memory-queries.jsonl` in the same data
+directory. Each line records the time, query filters, result count, calling mission,
+and agent tool (`unknown` when no mission is available). `q memory stats` shows
+daily request counts by tool; `--json` emits the grouped rows. The request log is
+local to each machine and begins when this version is installed. It is not synced.
 
 Memory lives in `memory.json` under q's configured data directory, with a previous
 snapshot in `memory.json.bak`, both private to the user. The daemon is the sole
