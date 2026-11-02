@@ -177,3 +177,62 @@ func TestFindThreadSkipsSubagentsAndPaginates(t *testing.T) {
 		t.Fatalf("thread=%+v found=%v err=%v", thread, found, err)
 	}
 }
+
+// scriptedServer answers each request on a pipe with the next canned response
+// and records the methods it was asked for.
+func scriptedServer(t *testing.T, responses ...string) (*Proxy, *[]string) {
+	t.Helper()
+	conn, server := net.Pipe()
+	t.Cleanup(func() { _ = conn.Close(); _ = server.Close() })
+	var methods []string
+	go func() {
+		decoder := json.NewDecoder(server)
+		for _, response := range responses {
+			var request struct {
+				Method string `json:"method"`
+			}
+			if decoder.Decode(&request) != nil {
+				return
+			}
+			methods = append(methods, request.Method)
+			if _, err := server.Write([]byte(response + "\n")); err != nil {
+				return
+			}
+		}
+	}()
+	client := NewClient(conn, conn)
+	go func() { _ = client.Run(t.Context(), make(chan Notification)) }()
+	return &Proxy{client: client}, &methods
+}
+
+// A terminal launched without a prompt (a tool handoff) owns a thread codex
+// has not persisted, so thread/list omits it; the loaded set still has it.
+func TestFindThreadFallsBackToLoadedUnpersistedThread(t *testing.T) {
+	proxy, methods := scriptedServer(t,
+		`{"id":1,"result":{"data":[]}}`,
+		`{"id":2,"result":{"data":["other","stale","child","fresh"]}}`,
+		`{"id":3,"result":{"thread":{"id":"other","cwd":"/elsewhere","createdAt":9,"status":{"type":"idle"}}}}`,
+		`{"id":4,"result":{"thread":{"id":"stale","cwd":"/mission","createdAt":1,"status":{"type":"idle"}}}}`,
+		`{"id":5,"result":{"thread":{"id":"child","cwd":"/mission","createdAt":8,"parentThreadId":"fresh","status":{"type":"active","activeFlags":[]}}}}`,
+		`{"id":6,"result":{"thread":{"id":"fresh","cwd":"/mission","createdAt":5,"path":null,"status":{"type":"idle"}}}}`,
+	)
+	thread, found, err := proxy.FindThread(t.Context(), "/mission")
+	if err != nil || !found || thread.ID != "fresh" {
+		t.Fatalf("thread=%+v found=%v err=%v", thread, found, err)
+	}
+	if (*methods)[0] != "thread/list" || (*methods)[1] != "thread/loaded/list" {
+		t.Errorf("methods = %v", *methods)
+	}
+}
+
+// An app-server without thread/loaded/list leaves thread/list authoritative.
+func TestFindThreadToleratesMissingLoadedList(t *testing.T) {
+	proxy, _ := scriptedServer(t,
+		`{"id":1,"result":{"data":[]}}`,
+		`{"id":2,"error":{"code":-32601,"message":"method not found"}}`,
+	)
+	_, found, err := proxy.FindThread(t.Context(), "/mission")
+	if err != nil || found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+}
