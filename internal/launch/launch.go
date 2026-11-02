@@ -127,7 +127,7 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 	// the session is resumable from the instant it starts. codex generates its own
 	// internally, so its id has to be learned from its SessionStart hook instead,
 	// and stays empty until then.
-	if ms.Tool.SupportsPresetSessionID() && ms.AgentSessionID == "" {
+	if ms.RunningTool().SupportsPresetSessionID() && ms.AgentSessionID == "" {
 		sessionID, err := mission.NewSessionUUID()
 		if err != nil {
 			return ms, err

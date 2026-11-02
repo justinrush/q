@@ -32,9 +32,19 @@ export function Mission({
         Observed: {m.workflow} · iterate: {m.iterate}
       </p>
       <p className="muted">
-        Configured plan: {c.planModel || c.model || "agent default"} /{" "}
-        {c.planModel ? c.planEffort || "default" : c.effort || "default"} ·
-        Implement: {c.model || "agent default"} / {c.effort || "default"}
+        Configured plan: {c.planTool || m.tool} /{" "}
+        {c.planModel ||
+          (c.planTool && c.planTool !== m.tool
+            ? "agent default"
+            : c.model || "agent default")}{" "}
+        /{" "}
+        {c.planModel
+          ? c.planEffort || "default"
+          : c.planTool && c.planTool !== m.tool
+            ? "default"
+            : c.effort || "default"}{" "}
+        · Implement: {m.tool} / {c.model || "agent default"} /{" "}
+        {c.effort || "default"}
       </p>
       <p className="muted">
         Started{" "}

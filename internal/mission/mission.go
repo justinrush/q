@@ -92,15 +92,21 @@ type Mission struct {
 	// Effort is the reasoning effort level, for a model that accepts one. Empty
 	// means q passes no effort flag.
 	Effort string `json:"effort,omitempty" q:"spec"`
-	// PlanModel and PlanEffort are what a plan-mode mission plans on, leaving
-	// Model and Effort as what it implements on. An empty PlanModel means the
-	// mission does not distinguish: it plans on Model and Effort too.
-	//
-	// The pair is taken together rather than field by field, because an effort
-	// level belongs to a model and the implementing model's may mean nothing to
-	// the planning one.
+	// PlanTool selects the planning agent; empty means Tool. Different tools
+	// never inherit one another's model or effort defaults.
+	PlanTool Tool `json:"planTool,omitempty" q:"spec"`
+	// PlanModel and PlanEffort are a pair. With the same tool, an empty model
+	// reuses Model/Effort; with different tools it selects the planner's default.
 	PlanModel  string `json:"planModel,omitempty" q:"spec"`
 	PlanEffort string `json:"planEffort,omitempty" q:"spec"`
+	// ActiveTool describes the session that exists, including during approval.
+	ActiveTool  Tool        `json:"activeTool,omitempty" q:"run"`
+	ToolHandoff ToolHandoff `json:"toolHandoff,omitzero" q:"run"`
+	// The source session and its cumulative local usage survive replacement.
+	PlanningSessionID      string    `json:"planningSessionId,omitempty" q:"local"`
+	PlanningTranscriptPath string    `json:"planningTranscriptPath,omitempty" q:"local"`
+	ToolHandoffStartedAt   time.Time `json:"toolHandoffStartedAt,omitzero" q:"local"`
+	PriorToolUsage         Usage     `json:"priorToolUsage,omitzero" q:"local"`
 	// ExtraRepos are repositories this mission adds to the repositories inherited
 	// from its operation. They are editable until the mission starts.
 	ExtraRepos []Repo `json:"extraRepos,omitempty" q:"spec"`
@@ -446,15 +452,18 @@ func (t Mission) Planning() bool { return t.PlanMode && !t.PlanApproved }
 // ones it implements on, which is what makes approving its plan a restart
 // rather than something the agent carries on from by itself.
 func (t Mission) SplitsPlan() bool {
-	return t.PlanMode && t.PlanModel != "" && (t.PlanModel != t.Model || t.PlanEffort != t.Effort)
+	return t.CrossToolPlan() || (t.PlanMode && t.PlanModel != "" && (t.PlanModel != t.Model || t.PlanEffort != t.Effort))
 }
 
 // PhaseModel returns the model and effort for the phase the mission is in.
 func (t Mission) PhaseModel() (model, effort string) {
-	if t.Planning() && t.PlanModel != "" {
+	if t.Planning() && (t.PlanModel != "" || t.CrossToolPlan()) {
 		return t.PlanModel, t.PlanEffort
 	}
 
+	if t.CrossToolPlan() && !t.Planning() && t.Model == "" {
+		return t.ToolHandoff.ImplementationModel, t.Effort
+	}
 	return t.Model, t.Effort
 }
 

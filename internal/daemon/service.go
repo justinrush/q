@@ -459,6 +459,9 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		return zero, err
 	}
 
+	if err := validatePlanTool(tool, req.PlanTool, req.PlanMode); err != nil {
+		return zero, err
+	}
 	if err := validatePlanFlags(req.PlanModel, req.PlanEffort); err != nil {
 		return zero, err
 	}
@@ -479,6 +482,7 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 		PlanMode:     req.PlanMode,
 		Model:        req.Model,
 		Effort:       req.Effort,
+		PlanTool:     req.PlanTool,
 		PlanModel:    req.PlanModel,
 		PlanEffort:   req.PlanEffort,
 		ExtraRepos:   normalizeRepos(req.ExtraRepos),
@@ -663,7 +667,7 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 	// are baked into the agent's argv, so changing one afterwards would describe a
 	// session that is not the one running.
 	if req.Tool != nil || req.PlanMode != nil || req.Model != nil || req.Effort != nil ||
-		req.PlanModel != nil || req.PlanEffort != nil {
+		req.PlanTool != nil || req.PlanModel != nil || req.PlanEffort != nil {
 		if ms.Launched() {
 			return fmt.Errorf("%w: cannot change tool, plan mode, model, or effort after launch", ErrConflict)
 		}
@@ -685,6 +689,9 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 		}
 	}
 
+	if req.PlanTool != nil {
+		ms.PlanTool = *req.PlanTool
+	}
 	if req.PlanModel != nil {
 		ms.PlanModel = *req.PlanModel
 	}
@@ -709,8 +716,16 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 
 	if req.PlanMode != nil {
 		ms.PlanMode = *req.PlanMode
+		if !ms.PlanMode && req.PlanTool == nil && ms.PlanTool != "" {
+			ms.PlanTool = ""
+			ms.PlanModel = ""
+			ms.PlanEffort = ""
+		}
 	}
 
+	if err := validatePlanTool(ms.Tool, ms.PlanTool, ms.PlanMode); err != nil {
+		return err
+	}
 	if ms.PlanMode && !ms.Tool.SupportsPlanMode() {
 		return fmt.Errorf("%w: %s does not support plan mode", ErrInvalid, ms.Tool)
 	}
@@ -984,4 +999,23 @@ func validatePlanFlags(model, effort string) error {
 	}
 
 	return validateModelFlags(model, effort)
+}
+
+func validatePlanTool(tool, planner mission.Tool, plan bool) error {
+	if planner == "" {
+		return nil
+	}
+	if !plan {
+		return fmt.Errorf("%w: a planning tool needs plan mode", ErrInvalid)
+	}
+	if !planner.Valid() {
+		return fmt.Errorf("%w: unknown planning tool %q", ErrInvalid, planner)
+	}
+	if planner == tool {
+		return nil
+	}
+	if (planner != mission.ToolClaude && planner != mission.ToolCodex) || (tool != mission.ToolClaude && tool != mission.ToolCodex) {
+		return fmt.Errorf("%w: cross-tool planning supports only Claude and Codex", ErrInvalid)
+	}
+	return nil
 }

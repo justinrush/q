@@ -85,6 +85,7 @@ type CreateMissionRequest struct {
 	// PlanModel and PlanEffort are what a plan-mode mission plans on, when that
 	// differs from what it implements on. They are never inherited: like
 	// PlanMode, they describe one launch rather than a setup worth copying.
+	PlanTool   mission.Tool   `json:"planTool,omitempty"`
 	PlanModel  string         `json:"planModel,omitempty"`
 	PlanEffort string         `json:"planEffort,omitempty"`
 	ExtraRepos []mission.Repo `json:"extraRepos,omitempty"`
@@ -132,6 +133,7 @@ type UpdateMissionRequest struct {
 	PlanMode    *bool                `json:"planMode,omitempty"`
 	Model       *string              `json:"model,omitempty"`
 	Effort      *string              `json:"effort,omitempty"`
+	PlanTool    *mission.Tool        `json:"planTool,omitempty"`
 	PlanModel   *string              `json:"planModel,omitempty"`
 	PlanEffort  *string              `json:"planEffort,omitempty"`
 	OperationID *mission.OperationID `json:"operationId,omitempty"`
@@ -259,6 +261,7 @@ const (
 // one person's, upgraded together, so a mismatch means one was missed, and the
 // useful response is to say so rather than to guess at a common subset.
 const SyncProtocol = 1
+const SyncProtocolCrossTools = 2
 
 // SyncRequest is the primary's half of an exchange.
 type SyncRequest struct {

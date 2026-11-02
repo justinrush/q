@@ -136,3 +136,23 @@ describe("pivot", () => {
     expect(decode("#x=bogus&measure=nope").x).toBe("time");
   });
 });
+
+describe("cross-tool missions", () => {
+  it("filters spend by each slice's tool, retaining the legacy fallback", () => {
+    const mixed = mission(
+      "mixed",
+      undefined,
+      [
+        { ...slice("fable", "medium", "plan", 2), tool: "claude" },
+        { ...slice("gpt-6-astra", "low", "implement", 3), tool: "codex" },
+      ],
+      { tool: "codex" },
+    );
+    const matched = applyFilters(flatten([mixed]), {
+      ...open,
+      include: { tool: ["claude"] },
+    });
+    expect(matched).toHaveLength(1);
+    expect(matched[0].slice.usd).toBe(2);
+  });
+});

@@ -12,11 +12,12 @@ import (
 
 // Configured is what the mission asked for, as opposed to what was observed.
 type Configured struct {
-	Model      string `json:"model"`
-	Effort     string `json:"effort"`
-	PlanModel  string `json:"planModel"`
-	PlanEffort string `json:"planEffort"`
-	PlanMode   bool   `json:"planMode"`
+	Model      string       `json:"model"`
+	Effort     string       `json:"effort"`
+	PlanTool   mission.Tool `json:"planTool,omitempty"`
+	PlanModel  string       `json:"planModel"`
+	PlanEffort string       `json:"planEffort"`
+	PlanMode   bool         `json:"planMode"`
 }
 
 // Fact is one measured mission with its observed slices. Plan, Implement,
@@ -70,7 +71,11 @@ func phases(u mission.Usage) (plan, implement, iterate string) {
 		if seen[b.Phase] == nil {
 			seen[b.Phase] = map[string]bool{}
 		}
-		seen[b.Phase][dimension(b.Model)+" / "+dimension(b.Effort)] = true
+		label := dimension(b.Model) + " / " + dimension(b.Effort)
+		if b.Tool != "" {
+			label = string(b.Tool) + " / " + label
+		}
+		seen[b.Phase][label] = true
 	}
 	name := func(p mission.Phase) string {
 		switch m := seen[p]; len(m) {
@@ -104,7 +109,7 @@ func Project(snapshot api.AnalyticsSnapshot) Facts {
 		out.Missions = append(out.Missions, Fact{
 			ID: r.ID, Name: r.Name, OperationID: r.OperationID, OperationName: r.OperationName,
 			Tool: r.Tool, Status: r.Status, Deleted: r.Deleted, StartedAt: r.StartedAt, FinishedAt: r.FinishedAt,
-			Configured: Configured{Model: r.Model, Effort: r.Effort, PlanModel: r.PlanModel, PlanEffort: r.PlanEffort, PlanMode: r.PlanMode},
+			Configured: Configured{PlanTool: r.PlanTool, Model: r.Model, Effort: r.Effort, PlanModel: r.PlanModel, PlanEffort: r.PlanEffort, PlanMode: r.PlanMode},
 			Plan:       plan, Implement: implement, Iterate: iterate, Workflow: plan + " → " + implement,
 			USD: u.USD, Unpriced: u.Unpriced, Slices: slices,
 		})

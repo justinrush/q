@@ -162,7 +162,7 @@ wins, and a `--repo` or `--base` you name replaces the parent's list outright
 rather than adding to it — so naming one repo narrows the mission's worktrees
 instead of quietly widening them.
 
-`--plan` is the exception, with `--plan-model` and `--plan-effort`: none is inherited.
+`--plan` is the exception, with `--plan-tool`, `--plan-model`, and `--plan-effort`: none is inherited.
 Whether a mission stops for approval is the launcher's decision, not the parent brief's.
 
 Created missions land in briefing either way. Nothing runs until a mission is
@@ -937,6 +937,45 @@ agent allows:
 
 A mission that plans and implements on the same settings is never restarted, exactly as
 before.
+
+#### Planning and implementing with different tools
+
+Claude and Codex can hand a mission to one another after planning:
+
+```sh
+q mission add redesign --operation "$op" --prompt "…" \
+  --plan --plan-tool claude --plan-model fable --plan-effort medium \
+  --tool codex --model gpt-6-astra --effort low
+```
+
+Reverse `--plan-tool` and `--tool` to plan in Codex and implement in Claude.
+The form offers a **Plan agent** field and a model catalog for that agent.
+`--tool`, `--model`, and `--effort` still describe implementation. Omitting
+`--plan-tool` preserves the existing same-tool behavior. With different tools,
+an omitted plan model uses the planning agent's default; it never inherits the
+other tool's model. Follow-up missions inherit implementation settings only.
+
+Approve with `p`, `q mission approve`, or the planning agent's own UI. q stops
+the planner and creates a fresh destination session in the same mission and
+worktrees. The destination receives the original brief, the approved plan in
+`.q/approved-plan.md`, and visible planning messages and tool results in
+`.q/planning-conversation.md`. These artifacts also remain available to reviews
+and finish-memory capture. Native approval may briefly begin work in the planner
+before q observes it; existing changes are preserved for the destination to inspect.
+
+Approval and handoff progress are persisted separately. A missing executable,
+unreadable context, or failed launch leaves the mission paused with an error.
+Retry with `p` or resume after resolving it. A lost implementation-start response
+is verified from the destination session rather than submitting the prompt twice.
+If that session or its execution evidence is unavailable, q remains paused.
+Planning costs remain included when the implementation tool begins metering.
+
+Cross-tool missions require updated q daemons on both paired hosts. They use a
+new exchange protocol so an older peer rejects the exchange before adopting the
+mission. Ordinary exchanges remain compatible. Missions cannot change hosts
+while their tool handoff is unfinished. Completed handoffs carry their context
+when they move; session IDs and transcript paths stay local to each host.
+OpenCode and agy do not participate in cross-tool handoffs in this version.
 
 ## Operating it
 

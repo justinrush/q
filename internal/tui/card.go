@@ -125,7 +125,7 @@ func detailLine(ms mission.Mission, width int) string {
 // metaLine shows the tool, host, cost and run metadata. Models have their own lines
 // so long model names cannot crowd the cost or one another off the card.
 func metaLine(ms mission.Mission, host string, width int) string {
-	parts := []string{ms.Tool.Glyph() + " " + ms.Tool.String()}
+	parts := []string{ms.RunningTool().Glyph() + " " + ms.RunningTool().String()}
 
 	// The host comes straight after the agent, ahead of everything that can be
 	// truncated away, for the same reason cost does: it exists only here.
@@ -342,7 +342,7 @@ func modelLine(ms mission.Mission, phase mission.Phase, width int) string {
 		if !ms.PlanMode {
 			return styles.CardDetail.Render(styles.Truncate("plan: off", width))
 		}
-		if ms.PlanModel != "" {
+		if ms.PlanModel != "" || ms.CrossToolPlan() {
 			model, effort = ms.PlanModel, ms.PlanEffort
 		}
 	case mission.PhaseIterate:
@@ -356,6 +356,13 @@ func modelLine(ms mission.Mission, phase mission.Phase, width int) string {
 	}
 	if effort != "" {
 		model += "/" + effort
+	}
+	if ms.CrossToolPlan() {
+		tool := ms.Tool
+		if phase == mission.PhasePlan {
+			tool = ms.PlanningTool()
+		}
+		model = string(tool) + "/" + model
 	}
 	line := string(phase) + ": " + model
 	if cost := phaseCost(ms, phase); cost != "" {

@@ -325,6 +325,9 @@ func (s *Service) Resume(ctx context.Context, id mission.MissionID, message stri
 		return mission.Mission{}, err
 	}
 
+	if ms.ToolHandoffPending() {
+		return s.approveToolPlan(ctx, ms)
+	}
 	if codexPlan(ms) && ms.PlanFailed() {
 		return s.retryCodexPlan(ctx, ms)
 	}
@@ -382,6 +385,9 @@ func (s *Service) ApprovePlan(ctx context.Context, id mission.MissionID) (missio
 		return mission.Mission{}, err
 	}
 
+	if ms.CrossToolPlan() {
+		return s.approveToolPlan(ctx, ms)
+	}
 	if codexPlan(ms) {
 		return s.approveCodexPlan(ctx, ms)
 	}
@@ -452,6 +458,12 @@ func (s *Service) implementPlan(id mission.MissionID) {
 	defer cancel()
 
 	ms, ok := s.store.Snapshot().Mission(id)
+	if ok && ms.CrossToolPlan() && ms.ToolHandoff.State != mission.ToolHandoffVerified {
+		if _, err := s.approveToolPlan(ctx, ms); err != nil {
+			s.warn("tool handoff failed", "mission", id, "error", err)
+		}
+		return
+	}
 	if ok && codexPlan(ms) {
 		if !s.planFlights.claim(id) {
 			return
@@ -659,9 +671,13 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		stored.AgentState = relaunched.AgentState
 		stored.TmuxSession = relaunched.TmuxSession
 		stored.AgentPaneID = relaunched.AgentPaneID
-		stored.AgentSessionID = relaunched.AgentSessionID
+		if relaunched.AgentSessionID != "" || stored.HookEpoch != relaunched.HookEpoch {
+			stored.AgentSessionID = relaunched.AgentSessionID
+		}
 		stored.HookEpoch = relaunched.HookEpoch
-		stored.PlanTransition = relaunched.PlanTransition
+		if !stored.ToolHandoffPending() || !stored.ToolHandoff.TurnSubmitted {
+			stored.PlanTransition = relaunched.PlanTransition
+		}
 		stored.Badges = relaunched.Badges
 		stored.Badges = stored.WithoutBadge(mission.BadgeHandoff)
 		stored.Badges = stored.WithoutBadge(mission.BadgeLaunching)

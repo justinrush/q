@@ -94,6 +94,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 		model     string
 		effort    string
 		planMode  bool
+		planTool  string
 		planModel string
 		planEff   string
 		repos     []string
@@ -136,8 +137,8 @@ func buildMissionAddSubcommand() *cobra.Command {
 			// settings on a mission that never plans, and a flag that quietly
 			// did nothing would be discovered only once the work was done on
 			// the wrong model.
-			if !planMode && (planModel != "" || planEff != "") {
-				return errors.New("--plan-model and --plan-effort need --plan")
+			if !planMode && (planTool != "" || planModel != "" || planEff != "") {
+				return errors.New("--plan-tool, --plan-model and --plan-effort need --plan")
 			}
 
 			// Q_MISSION_ID is set only by the launch script q writes, so its
@@ -164,6 +165,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 				Model:        model,
 				Effort:       effort,
 				PlanMode:     planMode,
+				PlanTool:     mission.Tool(planTool),
 				PlanModel:    planModel,
 				PlanEffort:   planEff,
 				ExtraRepos:   parsedRepos,
@@ -196,6 +198,7 @@ func buildMissionAddSubcommand() *cobra.Command {
 		"Reasoning effort, for a model that takes one (see q models)")
 	cmd.Flags().BoolVar(&planMode, "plan", false,
 		"Start in plan mode and stop for approval (claude, codex, and opencode); never inherited")
+	cmd.Flags().StringVar(&planTool, "plan-tool", "", "Planning agent (claude or codex); defaults to --tool, needs --plan")
 	cmd.Flags().StringVar(&planModel, "plan-model", "",
 		"Model to plan on, leaving --model for implementing the approved plan; needs --plan")
 	cmd.Flags().StringVar(&planEff, "plan-effort", "",
@@ -716,7 +719,7 @@ func renderBoard(out io.Writer, snap mission.Snapshot, lanes []mission.Status) e
 			}
 
 			rep.row("  %s\t%s\t%s\t%s\t%s",
-				ms.ID, ms.Name, ms.Tool, operations[ms.OperationID], strings.TrimSuffix(detail, " · "))
+				ms.ID, ms.Name, ms.RunningTool(), operations[ms.OperationID], strings.TrimSuffix(detail, " · "))
 		}
 
 		rep.line("")
@@ -856,6 +859,16 @@ func defaultModelFor(
 // planLabel marks a plan-mode mission, naming what it plans on when that is
 // not what it implements on, e.g. "plan fable/high".
 func planLabel(ms mission.Mission) string {
+	if ms.CrossToolPlan() {
+		model := ms.PlanModel
+		if model == "" {
+			model = "default"
+		}
+		if ms.PlanEffort != "" {
+			model += "/" + ms.PlanEffort
+		}
+		return "plan " + string(ms.PlanningTool()) + "/" + model
+	}
 	if !ms.SplitsPlan() {
 		return "plan"
 	}

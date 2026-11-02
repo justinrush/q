@@ -42,6 +42,7 @@ func (t ModelTokens) Zero() bool { return t.Total() == 0 }
 // UsageSlice retains a measured attribution and its recorded estimate.
 // Empty dimensions mean unknown, never the configured mission defaults.
 type UsageSlice struct {
+	Tool     Tool        `json:"tool,omitempty"`
 	Model    string      `json:"model"`
 	Effort   string      `json:"effort"`
 	Phase    Phase       `json:"phase"`

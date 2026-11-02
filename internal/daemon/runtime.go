@@ -55,7 +55,8 @@ func (s *Service) RunRuntimeWatchers(ctx context.Context) {
 // pollRuntimes reads every live mission through its agent's runtime.
 func (s *Service) pollRuntimes(ctx context.Context) {
 	for _, ms := range s.store.Snapshot().Missions {
-		runtime, ok := s.runtimes[ms.Tool]
+		s.reconcileToolHandoff(ms)
+		runtime, ok := s.runtimes[ms.RunningTool()]
 		if !ok || ms.Status == mission.StatusBriefing || ms.Status.Terminal() || !s.holds(ms) {
 			continue
 		}
@@ -131,7 +132,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		}
 		observeFinishIdle(&ms, reading.ObservedAt)
 		keepPlanFailure(&ms)
-		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexPlan(ms)) && !ms.Tool.PlanSwitchesItself()
+		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexPlan(ms)) && !ms.RunningTool().PlanSwitchesItself()
 
 		if sameRuntimeState(before, ms) && before.Finish == ms.Finish {
 			return nil

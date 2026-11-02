@@ -101,6 +101,9 @@ func (s *Service) takeOver(ctx context.Context, snap mission.Snapshot) {
 
 // continueHere takes a mission and starts an agent for it on this host.
 func (s *Service) continueHere(ctx context.Context, ms mission.Mission, from string) bool {
+	if ms.ToolHandoffPending() {
+		return false
+	}
 	taken := s.updateLease(ms.ID, "mission.lease.takeover", func(stored *mission.Mission) bool {
 		if s.holds(*stored) || !stored.Running() {
 			return false
@@ -174,7 +177,7 @@ func handedOff(ms *mission.Mission, from string) {
 // atTurnEnd reports whether a mission's agent is between turns and waiting on
 // a human, which is when it can change hosts without losing work in flight.
 func atTurnEnd(ms mission.Mission) bool {
-	if ms.Finish.Token != "" {
+	if ms.Finish.Token != "" || ms.ToolHandoffPending() {
 		return false
 	}
 	if ms.Status != mission.StatusAwaiting && ms.Status != mission.StatusDebrief {
@@ -198,7 +201,7 @@ func (s *Service) release(ctx context.Context, ms mission.Mission, to mission.Ho
 	s.finishMu.Lock()
 	defer s.finishMu.Unlock()
 	current, ok := s.store.Snapshot().Mission(ms.ID)
-	if !ok || !s.holds(current) || current.Status.Terminal() {
+	if !ok || !s.holds(current) || current.Status.Terminal() || current.ToolHandoffPending() {
 		return false
 	}
 	ms = current

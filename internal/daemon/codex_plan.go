@@ -10,7 +10,7 @@ import (
 
 const planVerificationTimeout = 45 * time.Second
 
-func codexPlan(ms mission.Mission) bool { return ms.Tool == mission.ToolCodex && ms.PlanMode }
+func codexPlan(ms mission.Mission) bool { return ms.RunningTool() == mission.ToolCodex && ms.PlanMode }
 
 func pendingImplementation(ms *mission.Mission, now time.Time) {
 	ms.PlanTransition = mission.PlanTransition{State: mission.PlanTransitionPending,
@@ -20,6 +20,10 @@ func pendingImplementation(ms *mission.Mission, now time.Time) {
 // keepPlanFailure prevents late hooks and status polls from hiding a paused
 // transition. Approval remains recorded, so retry does not ask for it again.
 func keepPlanFailure(ms *mission.Mission) {
+	keepToolHandoffFailure(ms)
+	if ms.ToolHandoff.State == mission.ToolHandoffFailed {
+		return
+	}
 	if !ms.PlanFailed() {
 		return
 	}
@@ -127,6 +131,9 @@ func freshPlanEvidence(ms mission.Mission) bool {
 func (s *Service) reconcileCodexPlan(id mission.MissionID) {
 	ms, ok := s.store.Snapshot().Mission(id)
 	if !ok || !codexPlan(ms) || !ms.Running() || !s.holds(ms) || ms.PlanFailed() {
+		return
+	}
+	if ms.ToolHandoffPending() {
 		return
 	}
 	t := ms.PlanTransition

@@ -37,9 +37,13 @@ func (l *Launcher) Relaunch(
 	}
 
 	controlled := ms.PlanTransition.State == mission.PlanTransitionPending
-	ms.HookEpoch++
-	ms.BeginPlanVerification(l.now())
-	if ms.Tool == mission.ToolCodex && ms.PlanApproved && !controlled {
+	if !ms.ToolHandoffPending() {
+		ms.HookEpoch++
+	}
+	if !ms.ToolHandoffPending() || !ms.ToolHandoff.TurnSubmitted {
+		ms.BeginPlanVerification(l.now())
+	}
+	if ms.RunningTool() == mission.ToolCodex && ms.PlanApproved && !controlled {
 		ms.PlanTransition.State = mission.PlanTransitionPending
 		ms.PlanTransition.Message = message
 		if ms.PlanTransition.Message == "" {
@@ -54,7 +58,7 @@ func (l *Launcher) Relaunch(
 	// the next relaunch does have something to resume.
 	resume := ms.AgentSessionID != ""
 
-	if !resume && ms.Tool.SupportsPresetSessionID() {
+	if !resume && ms.RunningTool().SupportsPresetSessionID() {
 		sessionID, err := mission.NewSessionUUID()
 		if err != nil {
 			return ms, err
@@ -303,7 +307,7 @@ func PaneRunsAgent(command string) bool { return !shellCommands[command] }
 // ReadyForTurn waits until the terminal subscriber is attached before a runtime
 // starts a controlled turn. Approval requests must have an interactive owner.
 func (l *Launcher) ReadyForTurn(ctx context.Context, ms mission.Mission) error {
-	agent, err := l.agentFor(ms.Tool)
+	agent, err := l.agentFor(ms.RunningTool())
 	if err != nil {
 		return err
 	}

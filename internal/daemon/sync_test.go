@@ -307,7 +307,7 @@ func TestASecondPrimaryIsRefused(t *testing.T) {
 func TestAProtocolMismatchIsRefusedWithBothVersions(t *testing.T) {
 	_, secondary, _ := pairedServices(t)
 
-	_, err := secondary.SyncExchange(t.Context(), api.SyncRequest{Protocol: api.SyncProtocol + 1, Version: "9.9.9"})
+	_, err := secondary.SyncExchange(t.Context(), api.SyncRequest{Protocol: api.SyncProtocolCrossTools + 1, Version: "9.9.9"})
 	if !errors.Is(err, ErrConflict) || !strings.Contains(err.Error(), "9.9.9") {
 		t.Errorf("err = %v, want a conflict naming the other side's version", err)
 	}

@@ -210,6 +210,9 @@ func (s *Snapshot) mergeMission(in Mission, primary bool, out *Merge) {
 	if takeRun(local.Lease, in.Lease, s.Self.ID, primary) {
 		merged.Lease = in.Lease
 		adoptRun(&merged, in, known)
+		if local.RunningTool() != merged.RunningTool() {
+			merged.archivePlanningSession(local, s.Self.ID)
+		}
 	}
 
 	held, holds := local.Lease.HeldBy(s.Self.ID), merged.Lease.HeldBy(s.Self.ID)

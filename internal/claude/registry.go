@@ -193,7 +193,7 @@ func (r *Registry) Heal(_ context.Context, missions []mission.Mission) (map[miss
 	out := make(map[mission.MissionID]mission.Reading, len(missions))
 
 	for _, ms := range missions {
-		if ms.Tool != mission.ToolClaude || ms.AgentSessionID == "" {
+		if ms.RunningTool() != mission.ToolClaude || ms.AgentSessionID == "" {
 			continue
 		}
 

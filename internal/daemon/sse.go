@@ -3,6 +3,8 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/justinrush/q/internal/mission"
+	"slices"
 	"sync"
 )
 
@@ -113,7 +115,7 @@ func (h *Hub) Close() {
 // cosmetic: the SSE wire format is line-oriented, so an embedded newline would
 // be parsed as a field boundary and split one event into two malformed ones.
 func encodeFrame(event string, payload any) ([]byte, error) {
-	data, err := json.Marshal(payload)
+	data, err := json.Marshal(boardPayload(payload))
 	if err != nil {
 		return nil, fmt.Errorf("encoding %s event: %w", event, err)
 	}
@@ -126,4 +128,26 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 	frame = append(frame, "\n\n"...)
 
 	return frame, nil
+}
+
+// Conversation artifacts travel in durable state and peer exchange, not on
+// every board refresh. Large tool outputs must not exhaust the SSE frame limit.
+func boardPayload(payload any) any {
+	strip := func(m mission.Mission) mission.Mission {
+		m.ToolHandoff.Plan = ""
+		m.ToolHandoff.Conversation = ""
+		return m
+	}
+	switch value := payload.(type) {
+	case mission.Mission:
+		return strip(value)
+	case mission.Snapshot:
+		value.Missions = slices.Clone(value.Missions)
+		for i, m := range value.Missions {
+			value.Missions[i] = strip(m)
+		}
+		return value
+	default:
+		return payload
+	}
 }
