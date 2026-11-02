@@ -34,6 +34,7 @@ type ThreadSnapshot struct {
 	Status         ThreadStatus `json:"status"`
 	CWD            string       `json:"cwd"`
 	ParentThreadID string       `json:"parentThreadId"`
+	CreatedAt      int64        `json:"createdAt"`
 }
 
 // StartProxy connects to the managed app-server through Codex's stdio proxy.
@@ -153,7 +154,28 @@ func (p *Proxy) ReadThread(ctx context.Context, threadID string) (ThreadSnapshot
 // FindThread locates the loaded thread for an exact working directory. Task
 // directories are unique, so this recovers a session id even when SessionStart
 // hooks were missed.
+//
+// thread/list only reports threads codex has persisted, and codex persists a
+// thread on its first turn. A terminal UI launched without a prompt — a tool
+// handoff, where q submits the implementation turn itself — owns a loaded
+// thread that thread/list cannot see, so the loaded set is consulted too.
 func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
+	thread, found, err := p.findListedThread(ctx, cwd)
+	if err != nil || found {
+		return thread, found, err
+	}
+	return p.findLoadedThread(ctx, cwd)
+}
+
+// matchesRoot reports whether a thread is a mission's own live root thread.
+func matchesRoot(thread ThreadSnapshot, cwd string) bool {
+	if thread.ID == "" || thread.ParentThreadID != "" || thread.CWD != "" && thread.CWD != cwd {
+		return false
+	}
+	return thread.Status.Classify() != mission.ActivityUnknown
+}
+
+func (p *Proxy) findListedThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
 	params := struct {
 		CWD    string `json:"cwd"`
 		Limit  int    `json:"limit"`
@@ -169,10 +191,7 @@ func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, boo
 			return ThreadSnapshot{}, false, err
 		}
 		for _, thread := range result.Data {
-			if thread.ParentThreadID != "" || thread.CWD != "" && thread.CWD != cwd {
-				continue
-			}
-			if thread.ID != "" && thread.Status.Classify() != mission.ActivityUnknown {
+			if matchesRoot(thread, cwd) {
 				return thread, true, nil
 			}
 		}
@@ -185,6 +204,57 @@ func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, boo
 		params.Cursor = result.NextCursor
 	}
 	return ThreadSnapshot{}, false, fmt.Errorf("thread/list exceeded page limit")
+}
+
+// findLoadedThread searches the threads loaded in app-server memory, which
+// includes threads that have not yet taken a turn. thread/loaded/list reports
+// only ids, so each is read for its working directory. When a retried launch
+// briefly leaves two loaded threads in one directory, the newest is the live
+// terminal's.
+//
+// An app-server too old for thread/loaded/list answers with an RPC error, which
+// is treated as nothing found so thread/list remains the only source.
+func (p *Proxy) findLoadedThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
+	params := struct {
+		Cursor string `json:"cursor,omitempty"`
+	}{}
+	var best ThreadSnapshot
+	found := false
+	for range 20 {
+		var result struct {
+			Data       []string `json:"data"`
+			NextCursor string   `json:"nextCursor"`
+		}
+		err := p.client.Request(ctx, "thread/loaded/list", params, &result)
+		if err != nil {
+			var rpcErr *RPCError
+			if errors.As(err, &rpcErr) {
+				return best, found, nil
+			}
+			return ThreadSnapshot{}, false, err
+		}
+		for _, id := range result.Data {
+			thread, readErr := p.ReadThread(ctx, id)
+			if readErr != nil {
+				// A thread can unload between the listing and the read.
+				if ctx.Err() != nil {
+					return ThreadSnapshot{}, false, ctx.Err()
+				}
+				continue
+			}
+			if matchesRoot(thread, cwd) && (!found || thread.CreatedAt > best.CreatedAt) {
+				best, found = thread, true
+			}
+		}
+		if result.NextCursor == "" {
+			return best, found, nil
+		}
+		if result.NextCursor == params.Cursor {
+			return ThreadSnapshot{}, false, fmt.Errorf("thread/loaded/list repeated its cursor")
+		}
+		params.Cursor = result.NextCursor
+	}
+	return ThreadSnapshot{}, false, fmt.Errorf("thread/loaded/list exceeded page limit")
 }
 
 // Model is one entry of codex's own model catalog, as model/list reports it.
