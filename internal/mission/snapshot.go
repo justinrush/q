@@ -76,6 +76,7 @@ func cloneMission(t Mission) Mission {
 	t.Badges = slices.Clone(t.Badges)
 	t.LocalBadges = slices.Clone(t.LocalBadges)
 	t.BaseBranches = maps.Clone(t.BaseBranches)
+	t.PriorToolUsage = t.PriorToolUsage.Clone()
 	t.Usage = t.Usage.Clone()
 	t.CodexUsage = t.CodexUsage.Clone()
 
@@ -141,7 +142,7 @@ func (s Snapshot) MissionBySession(tool Tool, sessionID string) (Mission, bool) 
 	}
 
 	for _, t := range s.Missions {
-		if t.Tool == tool && t.AgentSessionID == sessionID {
+		if t.RunningTool() == tool && t.AgentSessionID == sessionID {
 			return t, true
 		}
 	}

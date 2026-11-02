@@ -445,3 +445,29 @@ For a live smoke check after upgrading both paired daemons:
 6. Disconnect the pair, save and edit records independently, and reconnect. Verify
    revision conflict handling, primary tie-breaking, and permanent deletion. Query
    enough records to span more than one 128-entry manifest page.
+
+## Cross-tool planning smoke checks
+
+Use disposable missions with no repositories and a brief asking for a small plan
+followed by an `OK` response, without external actions. Both CLIs must already be
+authenticated. Exercise Claude → Codex and Codex → Claude with explicit model and
+effort pairs, then repeat with the planning model omitted.
+
+1. Confirm the planner's tool/model, and that implementation settings are unchanged
+   in the mission configuration. Revise the plan once and add a clarification.
+2. Approve from q. Confirm a new destination session, the same mission directory,
+   the latest plan, and the clarification in `.q/planning-conversation.md`.
+3. Repeat using native approval. Confirm q stops the planner and hands over once.
+4. Temporarily make the destination executable unavailable, approve, restore it,
+   and retry. Confirm approval remains recorded and planning cost remains present.
+5. Restart the daemon during handoff; confirm recovery or an explicit paused error,
+   with no duplicate implementation turn. Send follow-up feedback and revive the
+   destination after its terminal exits to check ordinary recovery still works.
+6. With updated paired daemons, move a completed mission between hosts. Confirm
+   context and total usage survive and that the old planner ID is never resumed
+   in the destination tool. Check review and finish-memory capture as well.
+
+Automated tests cover both directions, native/q approval, stale hooks, persisted
+launch epochs, context export, peer session invalidation, accounting, and legacy
+configuration. The existing `Q_CODEX_PLAN_SMOKE=1` test additionally verifies live
+managed-server mode/model controls; it does not replace both interactive flows.

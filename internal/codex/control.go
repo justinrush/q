@@ -104,7 +104,7 @@ func (p *Proxy) activeTurn(ctx context.Context, thread ThreadSnapshot, observer 
 // implementationMode uses the current model only when the mission has no
 // explicit implementation model. A null effort leaves Codex's default intact.
 func implementationMode(ms mission.Mission) (map[string]any, error) {
-	model := ms.Model
+	model, _ := ms.PhaseModel()
 	if model == "" {
 		model = ms.ObservedSettings.Model
 	}

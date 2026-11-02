@@ -43,6 +43,9 @@ func (s *Service) ApplyHook(req api.HookRequest) {
 	// A hook for a mission the peer now runs comes from an agent this host has
 	// already been told to stop, or from one that woke with a sleeping laptop.
 	// Either way it no longer speaks for the mission.
+	if req.Tool != "" && req.Tool != ms.RunningTool() {
+		return
+	}
 	if !s.holds(ms) {
 		return
 	}
@@ -124,7 +127,7 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 		updated = next
 		changed = true
 		switched = !ms.PlanApproved && next.PlanApproved && (next.SplitsPlan() || codexPlan(next)) &&
-			!next.Tool.PlanSwitchesItself()
+			!next.RunningTool().PlanSwitchesItself()
 		snap.PutMission(next)
 
 		return nil
@@ -159,7 +162,7 @@ func (s *Service) stabilizeApproval(
 	res *mission.Reduction,
 	now time.Time,
 ) {
-	if _, authoritative := s.runtimes[ms.Tool]; !authoritative {
+	if _, authoritative := s.runtimes[ms.RunningTool()]; !authoritative {
 		return
 	}
 

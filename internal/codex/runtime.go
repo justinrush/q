@@ -33,7 +33,7 @@ func NewRuntime(threads threadReader) *Runtime { return &Runtime{threads: thread
 // A mission whose session id is not yet known is located by its working
 // directory instead, which is unique per mission.
 func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading, bool, error) {
-	if ms.Tool != mission.ToolCodex {
+	if ms.RunningTool() != mission.ToolCodex {
 		return mission.Reading{}, false, nil
 	}
 

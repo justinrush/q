@@ -48,7 +48,7 @@ func (m Mission) PlanFailed() bool { return m.PlanTransition.State == PlanTransi
 
 // BeginPlanVerification records the launch boundary before the agent starts.
 func (m *Mission) BeginPlanVerification(now time.Time) {
-	if m.Tool != ToolCodex || !m.PlanMode {
+	if m.RunningTool() != ToolCodex || !m.PlanMode {
 		return
 	}
 	phase := PhasePlan

@@ -24,6 +24,7 @@ type AnalyticsRecord struct {
 	FinishedAt    *time.Time                       `json:"finishedAt,omitempty"`
 	Model         string                           `json:"model,omitempty"`
 	Effort        string                           `json:"effort,omitempty"`
+	PlanTool      Tool                             `json:"planTool,omitempty"`
 	PlanModel     string                           `json:"planModel,omitempty"`
 	PlanEffort    string                           `json:"planEffort,omitempty"`
 	PlanMode      bool                             `json:"planMode"`
@@ -111,6 +112,7 @@ func (s *Snapshot) captureRecord(ms Mission, source Snapshot, deleted bool) {
 	next.FinishedAt = ms.FinishedAt
 	next.Model = ms.Model
 	next.Effort = ms.Effort
+	next.PlanTool = ms.PlanTool
 	next.PlanModel = ms.PlanModel
 	next.PlanEffort = ms.PlanEffort
 	next.PlanMode = ms.PlanMode
@@ -175,6 +177,7 @@ func (s *Snapshot) mergeAnalytics(incoming map[MissionID]AnalyticsRecord, primar
 		next.Tool = spec.Tool
 		next.Model = spec.Model
 		next.Effort = spec.Effort
+		next.PlanTool = spec.PlanTool
 		next.PlanModel = spec.PlanModel
 		next.PlanEffort = spec.PlanEffort
 		next.PlanMode = spec.PlanMode

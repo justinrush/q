@@ -50,7 +50,7 @@ func (t *Mission) SetTranscriptPath(path string) {
 	if path == "" {
 		return
 	}
-	if t.Tool == ToolCodex {
+	if t.RunningTool() == ToolCodex {
 		t.CodexUsage = maps.Clone(t.CodexUsage)
 		if t.CodexUsage == nil {
 			t.CodexUsage = CodexUsage{}

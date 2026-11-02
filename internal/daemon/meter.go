@@ -39,7 +39,7 @@ func (s *Service) meterMission(id mission.MissionID) {
 		return
 	}
 
-	meter, ok := s.meters[ms.Tool]
+	meter, ok := s.meters[ms.RunningTool()]
 	if !ok || !s.holds(ms) {
 		return
 	}
@@ -55,6 +55,15 @@ func (s *Service) meterMission(id mission.MissionID) {
 		return
 	}
 
+	if ms.CrossToolPlan() {
+		metering.Usage.Breakdown = metering.Usage.Slices()
+		for i := range metering.Usage.Breakdown {
+			metering.Usage.Breakdown[i].Tool = ms.RunningTool()
+		}
+	}
+	if !ms.PriorToolUsage.Empty() {
+		metering.Usage = mission.TotalUsage(map[mission.HostID]mission.Usage{"planning": ms.PriorToolUsage, "current": metering.Usage})
+	}
 	s.storeMetering(ms, metering)
 }
 

@@ -8,6 +8,7 @@ export type Tokens = Partial<
   >
 >;
 export type Slice = {
+  tool?: string;
   model: string;
   effort: string;
   phase: string;
@@ -26,6 +27,7 @@ export type Mission = {
   startedAt?: string;
   finishedAt?: string;
   configured: {
+    planTool?: string;
     model: string;
     effort: string;
     planModel: string;
@@ -124,7 +126,7 @@ export function value(row: Row, dim: Dimension, bucket: Bucket = "week") {
     case "phase":
       return unknown(s.phase);
     case "tool":
-      return unknown(m.tool);
+      return unknown(s.tool || m.tool);
     case "plan":
       return m.plan;
     case "implement":

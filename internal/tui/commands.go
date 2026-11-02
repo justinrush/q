@@ -272,6 +272,7 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			Model:        msg.Model,
 			Effort:       msg.Effort,
 			PlanMode:     msg.PlanMode,
+			PlanTool:     msg.PlanTool,
 			PlanModel:    msg.PlanModel,
 			PlanEffort:   msg.PlanEffort,
 			ExtraRepos:   msg.ExtraRepos,
@@ -334,6 +335,7 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 			req.Model = &msg.Model
 			req.Effort = &msg.Effort
 			req.PlanMode = &msg.PlanMode
+			req.PlanTool = &msg.PlanTool
 			req.PlanModel = &msg.PlanModel
 			req.PlanEffort = &msg.PlanEffort
 		}

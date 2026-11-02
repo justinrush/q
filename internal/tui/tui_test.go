@@ -1066,7 +1066,7 @@ func TestMissionFormSkipsHiddenPlanFields(t *testing.T) {
 	}{
 		{name: "forward without plan mode", from: fieldMissionPlan, delta: 1, want: fieldMissionRepos},
 		{name: "back without plan mode", from: fieldMissionRepos, delta: -1, want: fieldMissionPlan},
-		{name: "forward with plan mode", plan: true, from: fieldMissionPlan, delta: 1, want: fieldMissionPlanModel},
+		{name: "forward with plan mode", plan: true, from: fieldMissionPlan, delta: 1, want: fieldMissionPlanTool},
 		{name: "back with plan mode", plan: true, from: fieldMissionRepos, delta: -1, want: fieldMissionPlanEffort},
 	}
 
@@ -3134,5 +3134,22 @@ func TestIterateModelLine(t *testing.T) {
 				t.Errorf("modelLine() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPlanningToolUsesIndependentCatalog(t *testing.T) {
+	form := newMissionForm(mission.Mission{ID: "draft", Tool: mission.ToolCodex, PlanMode: true, Model: "implementer"}, nil, "", Options{}, nil, time.Now())
+	form.models = map[mission.Tool]mission.ModelSet{
+		mission.ToolClaude: {Options: []mission.ModelOption{{Value: "planner"}}},
+		mission.ToolCodex:  {Options: []mission.ModelOption{{Value: "implementer"}}},
+	}
+	form.cyclePlanTool("right")
+	form.cyclePlanModel("right")
+	if form.planningTool() != mission.ToolClaude || form.planModel != "planner" || form.model != "implementer" {
+		t.Fatalf("form: planner %s/%s, implementer %s", form.planningTool(), form.planModel, form.model)
+	}
+	form.cyclePlanTool("right")
+	if form.planTool != "" || form.planModel != "" || form.planEffort != "" {
+		t.Fatal("old planning settings crossed tools")
 	}
 }

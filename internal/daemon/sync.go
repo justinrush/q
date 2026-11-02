@@ -321,7 +321,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 
 	resp, err := s.remote.Sync(ctx, api.SyncRequest{
 		MemorySync:    s.memory != nil,
-		Protocol:      api.SyncProtocol,
+		Protocol:      exchangeProtocol(snap),
 		Version:       s.version,
 		Payload:       snap.Payload(),
 		TakeoverAfter: s.takeoverAfter,
@@ -334,7 +334,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		return err
 	}
 
-	if resp.Protocol != api.SyncProtocol {
+	if !supportedExchangeProtocol(resp.Protocol) || (exchangeProtocol(snap) == api.SyncProtocolCrossTools && resp.Protocol != api.SyncProtocolCrossTools) {
 		return protocolMismatch(resp.Protocol, resp.Version)
 	}
 
@@ -435,7 +435,7 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 			"%w: this q is itself configured to dial a peer, so it cannot be another's secondary", ErrConflict)
 	}
 
-	if req.Protocol != api.SyncProtocol {
+	if !supportedExchangeProtocol(req.Protocol) {
 		return api.SyncResponse{}, protocolMismatch(req.Protocol, req.Version)
 	}
 
@@ -477,7 +477,7 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 
 	return api.SyncResponse{
 		MemorySync: s.memory != nil,
-		Protocol:   api.SyncProtocol,
+		Protocol:   max(req.Protocol, exchangeProtocol(s.store.Snapshot())),
 		Version:    s.version,
 		Payload:    s.store.Snapshot().Payload(),
 		Results:    results,
@@ -981,4 +981,21 @@ func (s *Service) adoptHostName() {
 	if err != nil {
 		s.warn("recording this host's name", "error", err)
 	}
+}
+
+func supportedExchangeProtocol(protocol int) bool {
+	return protocol == api.SyncProtocol || protocol == api.SyncProtocolCrossTools
+}
+func exchangeProtocol(snap mission.Snapshot) int {
+	for _, ms := range snap.Missions {
+		if ms.CrossToolPlan() {
+			return api.SyncProtocolCrossTools
+		}
+	}
+	for _, record := range snap.Analytics {
+		if record.PlanTool != "" && record.PlanTool != record.Tool {
+			return api.SyncProtocolCrossTools
+		}
+	}
+	return api.SyncProtocol
 }

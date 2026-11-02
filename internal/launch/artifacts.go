@@ -66,7 +66,14 @@ func (l *Launcher) writeArtifacts(operation mission.Operation, ms mission.Missio
 // conversation of its own to resume.
 func (l *Launcher) brief(operation mission.Operation, ms mission.Mission) (string, error) {
 	if !ms.IsReview() {
-		return mission.ComposePrompt(operation, ms)
+		prompt, err := mission.ComposePrompt(operation, ms)
+		if err != nil {
+			return "", err
+		}
+		if err := writeHandoffArtifacts(ms); err != nil {
+			return "", err
+		}
+		return prompt + ms.HandoffPrompt(), nil
 	}
 
 	source, ok := l.reviewed(ms)
@@ -100,6 +107,21 @@ func (l *Launcher) reviewed(ms mission.Mission) (mission.Mission, bool) {
 // A missing log is not a failure. An agent that keeps none, or one whose
 // conversation happened on the paired machine, still leaves work to review.
 func (l *Launcher) copyTranscript(review, source mission.Mission) string {
+	if source.ToolHandoff.Plan != "" {
+		dir := filepath.Join(review.MissionDir, mission.ArtifactDir)
+		if err := os.MkdirAll(dir, paths.DirMode); err != nil {
+			return ""
+		}
+		text := "# Approved plan\n" + source.ToolHandoff.Plan + "\n# Planning conversation\n" + source.ToolHandoff.Conversation
+		if current, err := os.ReadFile(source.TranscriptPath); err == nil {
+			text += "\n# Implementation transcript\n" + string(current)
+		}
+		dst := filepath.Join(dir, mission.ReviewTranscriptFile)
+		if err := os.WriteFile(dst, []byte(text), paths.FileMode); err != nil {
+			return ""
+		}
+		return dst
+	}
 	if source.TranscriptPath == "" {
 		return ""
 	}
@@ -159,7 +181,7 @@ func (l *Launcher) writePrompt(ms mission.Mission, prompt string) error {
 // writeScript renders the agent's configuration, the launch script, and the
 // launch metadata.
 func (l *Launcher) writeScript(ms mission.Mission, resume bool) error {
-	agent, err := l.agentFor(ms.Tool)
+	agent, err := l.agentFor(ms.RunningTool())
 	if err != nil {
 		return err
 	}
@@ -230,7 +252,7 @@ func writeArtifact(inv mission.Invocation, artifact mission.Artifact) error {
 func (l *Launcher) writeMeta(ms mission.Mission, agent mission.Agent, inv mission.Invocation) error {
 	data, err := json.MarshalIndent(meta{
 		MissionID:   ms.ID,
-		Tool:        ms.Tool,
+		Tool:        ms.RunningTool(),
 		Model:       ms.Model,
 		Effort:      ms.Effort,
 		HookEpoch:   ms.HookEpoch,
@@ -272,7 +294,7 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 	model, effort := ms.PhaseModel()
 
 	var implementModel, implementEffort string
-	if ms.Planning() {
+	if ms.Planning() && !ms.CrossToolPlan() {
 		implementModel, implementEffort = ms.Model, ms.Effort
 	}
 
@@ -285,7 +307,7 @@ func (l *Launcher) invocation(ms mission.Mission, resume bool) (mission.Invocati
 		SessionID:      ms.AgentSessionID,
 		Resume:         resume,
 		PlanMode:       ms.Planning(),
-		ControlledTurn: ms.Tool == mission.ToolCodex && ms.PlanTransition.Phase == mission.PhaseImplement && ms.PlanTransition.State != "",
+		ControlledTurn: ms.RunningTool() == mission.ToolCodex && ((ms.CrossToolPlan() && ms.PlanApproved) || (ms.PlanTransition.Phase == mission.PhaseImplement && ms.PlanTransition.State != "")),
 		Model:          model,
 		Effort:         effort,
 
@@ -392,7 +414,7 @@ const openingTimeout = 15 * time.Minute
 // long it takes to reach its input line is the agent's business; a launch that
 // waited on it would block every other one behind it.
 func (l *Launcher) open(ms mission.Mission, resume bool) {
-	agent, err := l.agentFor(ms.Tool)
+	agent, err := l.agentFor(ms.RunningTool())
 	if err != nil {
 		return
 	}

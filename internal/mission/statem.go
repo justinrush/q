@@ -251,7 +251,7 @@ func applyUserPrompt(ms *Mission, ev HookEvent) Status {
 	ms.PlanPending = false
 	ms.Badges = ms.WithoutBadge(BadgeStale)
 
-	if ms.Planning() && ms.Tool.PlanEndsTurn() && ev.IsPlanGoAhead() {
+	if ms.Planning() && ms.RunningTool().PlanEndsTurn() && ev.IsPlanGoAhead() {
 		ms.PlanApproved = true
 	}
 
@@ -497,7 +497,7 @@ func applyStop(ms *Mission, ev HookEvent, now time.Time) Status {
 // planning turn that ends on a message is the agent asking something or
 // reporting back, and is left to the ordinary rules.
 func proposesPlan(ms Mission, ev HookEvent) bool {
-	return ms.Planning() && ms.Tool.PlanEndsTurn() && strings.TrimSpace(ev.LastAssistantMessage) == ""
+	return ms.Planning() && ms.RunningTool().PlanEndsTurn() && strings.TrimSpace(ev.LastAssistantMessage) == ""
 }
 
 // applyStopFailure records a turn that ended in an API error.

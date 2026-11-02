@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/justinrush/q/internal/conversation"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/runner"
 )
@@ -63,6 +64,15 @@ func TestLivePlanHandoff(t *testing.T) {
 	}
 	waitLiveTurn(t, ctx, owner, ms.AgentSessionID, turn.Turn.ID)
 	assertLiveSettings(t, ctx, observer, ms.AgentSessionID, "plan", "gpt-6-astra")
+	thread, err := owner.ReadThread(ctx, ms.AgentSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := conversation.FromMission(mission.Mission{Tool: mission.ToolCodex, TranscriptPath: thread.Path})
+	if err != nil || exported.Plan == "" || exported.Conversation == "" {
+		t.Fatalf("exporting live planning context: %v", err)
+	}
+
 	// Match q's terminal restart: detach the planning subscriber, then resume
 	// the thread on the implementation configuration before updating its mode.
 	if err = owner.client.Request(ctx, "thread/unsubscribe", map[string]string{"threadId": ms.AgentSessionID}, nil); err != nil {

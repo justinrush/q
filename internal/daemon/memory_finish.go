@@ -89,7 +89,11 @@ func (s *Service) requestFinish(ctx context.Context, id mission.MissionID, req a
 }
 
 func capturePrompt(ms mission.Mission) string {
-	return fmt.Sprintf(`q is preparing to finish this mission. Save shared memory before its session and worktrees are removed.
+	context := ""
+	if ms.CrossToolPlan() {
+		context = "Read .q/approved-plan.md and .q/planning-conversation.md as well as your implementation conversation when capturing this mission.\n"
+	}
+	return context + fmt.Sprintf(`q is preparing to finish this mission. Save shared memory before its session and worktrees are removed.
 Capture token: %s
 Do not edit repositories, commit, push, or continue implementation. Do not change your native memory.
 Save exactly one concise summary of the work, outcomes, decisions, tests actually run, and unresolved issues. Add only worthwhile reusable lessons (zero is fine). Include evidence and limitations; exclude credentials and raw transcripts. Keep the whole batch below 128 KiB, each record below 16 KiB.
