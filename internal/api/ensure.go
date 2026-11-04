@@ -71,12 +71,9 @@ func spawn(dirs paths.Dirs) error {
 		return err
 	}
 
-	// A stale handle would otherwise let a later connect attempt read the dead
-	// daemon's address and token.
-	if err := RemoveHandle(dirs.DaemonFile()); err != nil {
-		return err
-	}
-
+	// Leave the handle in place. The new daemon replaces it after acquiring the
+	// instance lock and starting its listener. Clients can keep reading the old
+	// handle until then, and sandboxed callers need no permission to remove it.
 	_, err = runner.StartDetached(
 		runner.Spec{Name: self, Args: []string{"daemon", "run"}, Env: os.Environ()},
 		dirs.LogFile("daemon"),
