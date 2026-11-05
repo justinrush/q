@@ -12,6 +12,10 @@ const planVerificationTimeout = 45 * time.Second
 
 func codexPlan(ms mission.Mission) bool { return ms.RunningTool() == mission.ToolCodex && ms.PlanMode }
 
+// codexHandoff reports a Codex plan mission whose approval q must carry out,
+// rather than one Codex has already continued on unchanged settings.
+func codexHandoff(ms mission.Mission) bool { return codexPlan(ms) && !ms.PlanContinuesInPlace() }
+
 func pendingImplementation(ms *mission.Mission, now time.Time) {
 	ms.PlanTransition = mission.PlanTransition{State: mission.PlanTransitionPending,
 		Phase: mission.PhaseImplement, SessionID: ms.AgentSessionID, HookEpoch: ms.HookEpoch, Since: now}
@@ -130,7 +134,7 @@ func freshPlanEvidence(ms mission.Mission) bool {
 // the first verified implementation turn.
 func (s *Service) reconcileCodexPlan(id mission.MissionID) {
 	ms, ok := s.store.Snapshot().Mission(id)
-	if !ok || !codexPlan(ms) || !ms.Running() || !s.holds(ms) || ms.PlanFailed() {
+	if !ok || !codexHandoff(ms) || !ms.Running() || !s.holds(ms) || ms.PlanFailed() {
 		return
 	}
 	if ms.ToolHandoffPending() {

@@ -254,3 +254,56 @@ func TestCodexDuplicateApprovalIsSerialized(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A Codex plan approved in its own UI on unchanged settings has already left
+// Plan Mode on the right model, so q must not interrupt it or replace its pane.
+func TestCodexNativeApprovalOnSameSettingsKeepsSession(t *testing.T) {
+	svc := newTestService(t)
+	runtime := &controlledRuntime{}
+	messenger := newPlanMessenger()
+	svc.apply(WithMessenger(messenger), WithRuntime(mission.ToolCodex, runtime))
+	ms := seedPlanning(t, svc, func(m *mission.Mission) {
+		m.Tool = mission.ToolCodex
+		m.Model = "gpt-6-sol"
+		m.Effort = "low"
+		m.PlanModel = ""
+		m.PlanEffort = ""
+		m.PlanTransition = mission.PlanTransition{State: mission.PlanTransitionVerified, Phase: mission.PhasePlan,
+			SessionID: m.AgentSessionID, HookEpoch: m.HookEpoch, Since: time.Now().Add(-time.Hour)}
+	})
+
+	// The approval may be seen before the implementing turn reaches the
+	// rollout, so the last observed settings are still the planning turn's.
+	planning := mission.TurnSettings{SessionID: ms.AgentSessionID, TurnID: "plan", Mode: "plan", Model: ms.Model, Effort: ms.Effort, At: time.Now()}
+	svc.applyRuntimeReadingNow(ms.ID, mission.Reading{SessionID: ms.AgentSessionID, HookEpoch: ms.HookEpoch,
+		Activity: mission.ActivityBusy, PlanKnown: true, PlanApproved: true, Settings: planning})
+	svc.reconcileCodexPlan(ms.ID)
+
+	select {
+	case <-messenger.relaunched:
+		t.Fatal("session restarted for an approval that changes nothing")
+	case <-time.After(200 * time.Millisecond):
+	}
+	got, _ := svc.Snapshot().Mission(ms.ID)
+	if !got.PlanApproved || got.PlanFailed() || got.PlanTransition.Phase == mission.PhaseImplement {
+		t.Fatalf("mission=%+v", got.PlanTransition)
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.interrupts != 0 || runtime.starts != 0 {
+		t.Fatalf("interrupts=%d starts=%d", runtime.interrupts, runtime.starts)
+	}
+}
+
+// Different implementation settings still need q's verified handoff.
+func TestCodexNativeApprovalOnNewSettingsHandsOff(t *testing.T) {
+	svc, ms, _, messenger := setupControlledPlan(t)
+	svc.applyRuntimeReadingNow(ms.ID, mission.Reading{SessionID: ms.AgentSessionID, HookEpoch: ms.HookEpoch,
+		Activity: mission.ActivityBusy, PlanKnown: true, PlanApproved: true})
+	select {
+	case <-messenger.relaunched:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handoff did not restart the session")
+	}
+	waitVerified(t, svc, ms.ID)
+}

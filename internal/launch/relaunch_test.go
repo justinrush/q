@@ -417,3 +417,30 @@ func TestViewRunsQInTheAgentWindow(t *testing.T) {
 		t.Error("a mission with no worktrees here has nothing to view beside")
 	}
 }
+
+// A Codex plan approved on unchanged settings continued in place, so reviving
+// it later is an ordinary resume, not a q-controlled implementation handoff.
+func TestRelaunchOfAPlanContinuedInPlaceIsAnOrdinaryResume(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	fake.Default = runner.Result{Stdout: []byte("%77")}
+	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+	ms := launchedMission(t, t.TempDir())
+	ms.Tool = mission.ToolCodex
+	ms.Model = "gpt-6-sol"
+	ms.PlanMode = true
+	ms.PlanApproved = true
+	ms.PlanTransition = mission.PlanTransition{State: mission.PlanTransitionVerified, Phase: mission.PhasePlan}
+
+	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "keep going")
+	if err != nil {
+		t.Fatalf("Relaunch: %v", err)
+	}
+
+	if got.PlanTransition.Phase == mission.PhaseImplement || got.PlanTransition.State == mission.PlanTransitionPending {
+		t.Errorf("relaunch began a handoff: %+v", got.PlanTransition)
+	}
+	if !strings.Contains(readArtifact(t, got, "prompt.md"), "keep going") {
+		t.Error("an ordinary resume should be given its message")
+	}
+}
