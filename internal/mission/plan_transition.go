@@ -44,11 +44,21 @@ type PlanController interface {
 	StartImplementation(context.Context, Mission, string) (string, error)
 }
 
+// PlanContinuesInPlace reports a Codex plan approved in Codex's own UI on
+// settings no different from the planning ones. Codex leaves Plan Mode by
+// itself on the same model and effort, so there is nothing to hand off and the
+// session is left running rather than interrupted and restarted. A handoff q
+// began itself (an approval from q, or a retry) is still followed to the end.
+func (m Mission) PlanContinuesInPlace() bool {
+	return m.RunningTool() == ToolCodex && m.PlanMode && m.PlanApproved && !m.SplitsPlan() &&
+		m.PlanTransition.Phase != PhaseImplement
+}
+
 func (m Mission) PlanFailed() bool { return m.PlanTransition.State == PlanTransitionFailed }
 
 // BeginPlanVerification records the launch boundary before the agent starts.
 func (m *Mission) BeginPlanVerification(now time.Time) {
-	if m.RunningTool() != ToolCodex || !m.PlanMode {
+	if m.RunningTool() != ToolCodex || !m.PlanMode || m.PlanContinuesInPlace() {
 		return
 	}
 	phase := PhasePlan

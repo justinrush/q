@@ -127,12 +127,12 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 			ms.ObservedSettings = reading.Settings
 		}
 		applyActivity(&ms, reading, now)
-		if codexPlan(ms) && !before.PlanApproved && ms.PlanApproved {
+		if codexPlan(ms) && !before.PlanApproved && ms.PlanApproved && !ms.PlanContinuesInPlace() {
 			pendingImplementation(&ms, now)
 		}
 		observeFinishIdle(&ms, reading.ObservedAt)
 		keepPlanFailure(&ms)
-		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexPlan(ms)) && !ms.RunningTool().PlanSwitchesItself()
+		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexHandoff(ms)) && !ms.RunningTool().PlanSwitchesItself()
 
 		if sameRuntimeState(before, ms) && before.Finish == ms.Finish {
 			return nil

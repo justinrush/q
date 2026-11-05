@@ -43,7 +43,7 @@ func (l *Launcher) Relaunch(
 	if !ms.ToolHandoffPending() || !ms.ToolHandoff.TurnSubmitted {
 		ms.BeginPlanVerification(l.now())
 	}
-	if ms.RunningTool() == mission.ToolCodex && ms.PlanApproved && !controlled {
+	if ms.RunningTool() == mission.ToolCodex && ms.PlanApproved && !controlled && !ms.PlanContinuesInPlace() {
 		ms.PlanTransition.State = mission.PlanTransitionPending
 		ms.PlanTransition.Message = message
 		if ms.PlanTransition.Message == "" {

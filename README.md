@@ -935,8 +935,10 @@ agent allows:
   from its last message whatever it is told, so a restart would leave it on the planning
   model, and `p` says so rather than doing it.
 
-A mission that plans and implements on the same settings is never restarted, exactly as
-before.
+A mission that plans and implements on the same settings is never restarted when its
+plan is approved in the agent's own dialog: claude and codex leave plan mode themselves
+and carry on in the same pane. Approving one from q (`p` or `q mission approve`) still
+resumes the session, since that is how q tells the agent the plan was accepted.
 
 #### Planning and implementing with different tools
 
