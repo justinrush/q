@@ -36,15 +36,26 @@ func TestReadPlan(t *testing.T) {
 type recoveryThreads struct {
 	status ThreadStatus
 	path   string
-	thread ThreadSnapshot
-	found  bool
-	plan   planState
+	// createdAt is the recorded thread's creation time.
+	createdAt int64
+	thread    ThreadSnapshot
+	found     bool
+	// unpersisted hides thread from FindPersistedThread, as for a loaded
+	// thread that has not yet taken a turn.
+	unpersisted bool
+	plan        planState
 }
 
 func (f recoveryThreads) ReadThread(_ context.Context, _ string) (ThreadSnapshot, error) {
-	return ThreadSnapshot{ID: "old", Status: f.status, Path: f.path}, nil
+	return ThreadSnapshot{ID: "old", Status: f.status, Path: f.path, CreatedAt: f.createdAt}, nil
 }
 func (f recoveryThreads) FindThread(_ context.Context, _ string) (ThreadSnapshot, bool, error) {
+	return f.thread, f.found, nil
+}
+func (f recoveryThreads) FindPersistedThread(_ context.Context, _ string) (ThreadSnapshot, bool, error) {
+	if f.unpersisted {
+		return ThreadSnapshot{}, false, nil
+	}
 	return f.thread, f.found, nil
 }
 func (f recoveryThreads) ReadPlan(_ context.Context, _ string) (planState, error) { return f.plan, nil }
@@ -65,6 +76,35 @@ func TestRuntimeRecoversTranscriptForKnownSession(t *testing.T) {
 	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusActive}, path: "/rollout.jsonl"})
 	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, AgentSessionID: "old", HookEpoch: 2})
 	if err != nil || !found || got.TranscriptPath != "/rollout.jsonl" || got.SessionID != "old" || got.HookEpoch != 2 {
+		t.Fatalf("reading=%+v found=%v err=%v", got, found, err)
+	}
+}
+
+// After a reboot the recorded thread is unloaded until the terminal resumes
+// it. A loaded thread that has never taken a turn must not replace it, or the
+// next resume targets a thread codex never wrote and the conversation is lost.
+func TestRuntimeKeepsUnloadedSessionOverUnpersistedThread(t *testing.T) {
+	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusNotLoaded}, thread: ThreadSnapshot{ID: "phantom", Status: ThreadStatus{Type: statusIdle}}, found: true, unpersisted: true})
+	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, AgentSessionID: "old", MissionDir: "/mission"})
+	if err != nil || found {
+		t.Fatalf("reading=%+v found=%v err=%v, want no reading", got, found, err)
+	}
+}
+
+func TestRuntimeKeepsUnloadedSessionOverOlderThread(t *testing.T) {
+	runtime := NewRuntime(recoveryThreads{status: ThreadStatus{Type: statusNotLoaded}, createdAt: 200, thread: ThreadSnapshot{ID: "older", CreatedAt: 100, Status: ThreadStatus{Type: statusIdle}}, found: true})
+	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, AgentSessionID: "old", MissionDir: "/mission"})
+	if err != nil || found {
+		t.Fatalf("reading=%+v found=%v err=%v, want no reading", got, found, err)
+	}
+}
+
+// A mission with no recorded thread, such as a tool handoff, still adopts the
+// loaded thread its terminal owns before the first turn.
+func TestRuntimeAdoptsUnpersistedThreadWithoutRecordedSession(t *testing.T) {
+	runtime := NewRuntime(recoveryThreads{thread: ThreadSnapshot{ID: "fresh", Status: ThreadStatus{Type: statusIdle}}, found: true, unpersisted: true})
+	got, found, err := runtime.Read(t.Context(), mission.Mission{Tool: mission.ToolCodex, MissionDir: "/mission"})
+	if err != nil || !found || got.SessionID != "fresh" || got.PreviousSessionID != "" {
 		t.Fatalf("reading=%+v found=%v err=%v", got, found, err)
 	}
 }
