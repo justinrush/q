@@ -167,6 +167,13 @@ func (p *Proxy) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, boo
 	return p.findLoadedThread(ctx, cwd)
 }
 
+// FindPersistedThread locates a live root thread for an exact working
+// directory among the threads codex has persisted, ignoring loaded threads that
+// have not yet taken a turn.
+func (p *Proxy) FindPersistedThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
+	return p.findListedThread(ctx, cwd)
+}
+
 // matchesRoot reports whether a thread is a mission's own live root thread.
 func matchesRoot(thread ThreadSnapshot, cwd string) bool {
 	if thread.ID == "" || thread.ParentThreadID != "" || thread.CWD != "" && thread.CWD != cwd {
@@ -388,6 +395,26 @@ func (m *Manager) FindThread(ctx context.Context, cwd string) (ThreadSnapshot, b
 	err := m.withProxy(func(proxy *Proxy) error {
 		var readErr error
 		thread, found, readErr = proxy.FindThread(ctx, cwd)
+
+		return readErr
+	})
+	if err != nil {
+		return ThreadSnapshot{}, false, err
+	}
+
+	return thread, found, nil
+}
+
+// FindPersistedThread locates a persisted thread by its exact working directory.
+func (m *Manager) FindPersistedThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error) {
+	var (
+		thread ThreadSnapshot
+		found  bool
+	)
+
+	err := m.withProxy(func(proxy *Proxy) error {
+		var readErr error
+		thread, found, readErr = proxy.FindPersistedThread(ctx, cwd)
 
 		return readErr
 	})

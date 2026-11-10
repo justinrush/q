@@ -11,6 +11,7 @@ import (
 type threadReader interface {
 	ReadThread(ctx context.Context, threadID string) (ThreadSnapshot, error)
 	FindThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error)
+	FindPersistedThread(ctx context.Context, cwd string) (ThreadSnapshot, bool, error)
 	Close() error
 }
 
@@ -37,20 +38,39 @@ func (r *Runtime) Read(ctx context.Context, ms mission.Mission) (mission.Reading
 		return mission.Reading{}, false, nil
 	}
 
-	if ms.AgentSessionID != "" {
-		thread, err := r.threads.ReadThread(ctx, ms.AgentSessionID)
-		if err != nil {
+	if ms.AgentSessionID == "" {
+		thread, found, err := r.threads.FindThread(ctx, ms.MissionDir)
+		if err != nil || !found {
 			return mission.Reading{}, false, err
 		}
 
-		if thread.Status.Type != statusNotLoaded {
-			return r.reading(ctx, ms, thread), true, nil
-		}
+		return r.reading(ctx, ms, thread), true, nil
 	}
 
-	thread, found, err := r.threads.FindThread(ctx, ms.MissionDir)
-	if err != nil || !found {
+	recorded, err := r.threads.ReadThread(ctx, ms.AgentSessionID)
+	if err != nil {
 		return mission.Reading{}, false, err
+	}
+
+	if recorded.Status.Type != statusNotLoaded {
+		return r.reading(ctx, ms, recorded), true, nil
+	}
+
+	// The recorded thread is unloaded. That is what every thread looks like
+	// after a reboot or an app-server restart, before the terminal has resumed
+	// it, so it is no evidence the conversation moved on. Only a thread codex
+	// has persisted, one that has taken a turn and is no older than the
+	// recorded one, may replace it. A loaded thread that has never taken a turn
+	// is not enough: a resuming terminal can briefly own one, and adopting it
+	// pointed the next resume at a thread that was never written, losing the
+	// conversation.
+	thread, found, err := r.threads.FindPersistedThread(ctx, ms.MissionDir)
+	if err != nil || !found || thread.ID == ms.AgentSessionID {
+		return mission.Reading{}, false, err
+	}
+
+	if recorded.CreatedAt != 0 && thread.CreatedAt != 0 && thread.CreatedAt < recorded.CreatedAt {
+		return mission.Reading{}, false, nil
 	}
 
 	out := r.reading(ctx, ms, thread)
