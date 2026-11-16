@@ -98,6 +98,7 @@ var boardActions = map[string]boardAction{
 	"p":      (*Board).togglePlan,
 	"a":      (*Board).toggleQueued,
 	"t":      (*Board).takeMission,
+	"S":      (*Board).sendMission,
 	"r":      (*Board).reviewMission,
 	"/":      (*Board).filterByOperation,
 	"s":      (*Board).statusMenu,
@@ -651,7 +652,20 @@ func (b *Board) renderCollapsedDone(missions []mission.Mission, width int) strin
 
 // hostOf names the other host when a mission is running there, or is pinned to
 // it, and is empty for a mission that is simply this machine's.
-func (b *Board) hostOf(ms mission.Mission) string { return b.snapshot.Elsewhere(ms) }
+//
+// A pinned mission is marked as such, because it is the difference between a
+// card that will come back here at its next turn end and one that will not.
+func (b *Board) hostOf(ms mission.Mission) string {
+	host := b.snapshot.Elsewhere(ms)
+	if host != "" && b.snapshot.Peer != nil && ms.Pin == b.snapshot.Peer.ID {
+		return host + pinnedMark
+	}
+
+	return host
+}
+
+// pinnedMark follows a host name on a card for a mission pinned there.
+const pinnedMark = "⌖"
 
 // renderCards renders a lane's visible cards.
 func (b *Board) renderCards(lane, width int, layout Layout) string {

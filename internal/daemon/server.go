@@ -190,6 +190,8 @@ func (s *Server) routes() http.Handler {
 
 	mux.HandleFunc("POST /v1/missions/{id}/take", s.handleTake)
 	mux.HandleFunc("POST /v1/missions/{id}/release", s.handleRelease)
+	mux.HandleFunc("POST /v1/missions/{id}/send", s.handleSend)
+	mux.HandleFunc("GET /v1/missions/{id}/ready", s.handleReady)
 	mux.HandleFunc("POST /v1/missions/{id}/open", s.handleOpenDebrief)
 	mux.HandleFunc("POST /v1/missions/{id}/message", s.handleMessage)
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
@@ -263,6 +265,23 @@ func (s *Server) handleTake(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleSend pins a mission to the paired q and moves it there between turns.
+func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
+	ms, err := s.svc.Send(r.Context(), mission.MissionID(r.PathValue("id")))
+	if err != nil {
+		writeServiceError(w, err)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ms)
+}
+
+// handleReady answers the peer asking whether this host could run a mission.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.svc.Readiness(mission.MissionID(r.PathValue("id"))))
 }
 
 // handleRelease hands a mission this host is running to its peer. It is the

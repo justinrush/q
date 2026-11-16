@@ -455,3 +455,12 @@ func (c *Client) AttachCommand(ctx context.Context, id mission.MissionID) (Attac
 func (c *Client) TakeMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
 	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/take", struct{}{}, refreshTimeout)
 }
+
+// SendMission pins a mission to the paired machine and moves it there, now if
+// its agent is between turns and at the end of the current turn otherwise.
+//
+// It can take as long as an exchange does, since a mission between turns is
+// stopped here and its final state carried across before this returns.
+func (c *Client) SendMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/send", struct{}{}, refreshTimeout)
+}

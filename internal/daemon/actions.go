@@ -540,6 +540,10 @@ func (s *Service) Dispatch(
 	}
 
 	if !current.Launched() {
+		if s.pinnedElsewhere(current) {
+			return s.launchOnPeer(ctx, current)
+		}
+
 		return s.Start(ctx, id)
 	}
 

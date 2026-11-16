@@ -271,9 +271,39 @@ If the old machine cannot be reached when you forget it, the command says so.
 Run `q remote forget` there as well: a machine left believing in the pairing
 waits out `remote.takeoverAfter` and then starts running the laptop's missions.
 
-To pin a mission to a host at creation, use `q mission add ... --on local` or
-`--on remote`. Run `q mission take ms_…` (or press `t` on its card) to bring an
-existing mission to this machine.
+To pin a mission to a host at creation, choose it in the new-mission form's
+**Runs on** field, or use `q mission add ... --on local` or `--on remote`. A
+mission pinned to the other machine starts there however it is started,
+including with `ctrl+r` or a move to active; if that machine cannot be reached
+it is queued for it instead.
+
+To move an existing mission to the other machine and keep it there, press `S`
+on its card or run `q mission send ms_…`. Run `q mission take ms_…` (or press
+`t`) to bring a mission to this machine. Taking a mission also removes a pin
+that names the other machine.
+
+### Running work on the always-on machine
+
+Sending is for work you want off the laptop: a long run, or anything you want
+to keep going while the lid is closed. A sent mission is pinned to the other
+machine, so it stays there when the laptop comes back, and its card is marked
+`@mini⌖`.
+
+- One that has not started is only pinned, and starts on the other machine.
+- One between turns moves now. Its agent here is stopped, its worktrees go
+  across in the same exchange, and the other machine starts an agent for it.
+  That agent is told it is continuing from the laptop and shown the last thing
+  the previous agent said, as one started for a takeover is.
+- One in the middle of a turn finishes the turn here, marked `sending`, and
+  moves after.
+
+Before it stops anything, the laptop asks the other machine whether it could
+run the mission now. If it lacks a checkout of one of the repositories, or is
+still mirroring the worktrees, the mission stays here and the `sending` badge
+says why. The laptop asks again on every scheduler tick.
+
+`enter` on a sent mission attaches to its agent on the other machine over ssh,
+as it does for any mission running there.
 
 ### What each machine does
 
@@ -290,7 +320,7 @@ worktree per repository. What moves between them is which one runs the agent.
 | the laptop has been silent for `remote.takeoverAfter` | on the secondary, including a mission whose agent was mid-turn |
 | the same, with a [witness](#a-witness-for-split-networks) that says the laptop is still awake | on the laptop |
 | the laptop is back, and an agent on the secondary finishes a turn | the next turn runs on the laptop |
-| a mission was created with `--on remote`, or `--on local` | where it was pinned, always |
+| a mission was pinned with **Runs on**, `--on`, or sent with `S` / `q mission send` | where it was pinned, always; a running one moves at its next turn end |
 
 A card for a mission the other machine is running is marked `@mini`. Everything
 you can do to a card still works. Messages and lane moves are carried out by

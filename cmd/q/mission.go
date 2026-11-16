@@ -33,6 +33,7 @@ func buildMissionSubcommand() *cobra.Command {
 		buildMissionQueueSubcommand(),
 		buildMissionUnqueueSubcommand(),
 		buildMissionTakeSubcommand(),
+		buildMissionSendSubcommand(),
 		buildMissionReviewSubcommand(),
 		buildMissionRemoveSubcommand(),
 	)
@@ -537,6 +538,61 @@ func buildMissionTakeSubcommand() *cobra.Command {
 			return err
 		},
 	}
+}
+
+func buildMissionSendSubcommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "send <mission-id>",
+		Short: "Run a mission on the paired machine from now on",
+		Long: "Pin a mission to the paired machine and move its agent there. One between " +
+			"turns moves now, and the other machine starts an agent for it, told it is " +
+			"continuing from here. One in the middle of a turn finishes the turn here " +
+			"and moves after. A brief that has not started is only pinned, and starts " +
+			"there.\n\n" +
+			"Unlike a takeover, a sent mission stays on the other machine when this one " +
+			"comes back. Run `q mission take` to bring it back.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			c, err := connectDaemon(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			ms, err := c.SendMission(cmd.Context(), mission.MissionID(args[0]))
+			if err != nil {
+				return err
+			}
+
+			snap, err := c.State(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), sendOutcome(snap, ms))
+
+			return err
+		},
+	}
+}
+
+// sendOutcome says where a sent mission is now.
+func sendOutcome(snap mission.Snapshot, ms mission.Mission) string {
+	there := snap.HostName(ms.Pin)
+
+	switch {
+	case !ms.Launched():
+		return fmt.Sprintf("%s is pinned to %s and starts there", ms.Name, there)
+	case ms.Lease.Holder == ms.Pin:
+		return fmt.Sprintf("%s now runs on %s", ms.Name, there)
+	}
+
+	for _, badge := range ms.LocalBadges {
+		if badge.Kind == mission.BadgeSending && badge.Detail != "" {
+			return fmt.Sprintf("%s is pinned to %s and moves there when it can (waiting: %s)", ms.Name, there, badge.Detail)
+		}
+	}
+
+	return fmt.Sprintf("%s is pinned to %s and moves there when it can", ms.Name, there)
 }
 
 // patchMissions applies one patch to several missions, reporting each.

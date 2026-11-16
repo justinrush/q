@@ -277,6 +277,7 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			PlanEffort:   msg.PlanEffort,
 			ExtraRepos:   msg.ExtraRepos,
 			BaseBranches: msg.BaseBranches,
+			Pin:          msg.Pin,
 		})
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
@@ -286,12 +287,12 @@ func (a *App) createMission(msg submitMissionMsg) tea.Cmd {
 			return toastMsg{text: "created " + ms.Name}
 		}
 
-		if _, err := a.client.SetStatus(a.ctx(), ms.ID,
-			api.SetStatusRequest{To: mission.StatusActive}); err != nil {
+		launched, err := a.client.SetStatus(a.ctx(), ms.ID, api.SetStatusRequest{To: mission.StatusActive})
+		if err != nil {
 			return toastMsg{text: "created, but launching failed: " + err.Error(), err: true}
 		}
 
-		return toastMsg{text: "launched " + ms.Name}
+		return toastMsg{text: launchedToast(a.snapshot, launched)}
 	}
 }
 
@@ -343,6 +344,10 @@ func (a *App) updateMission(msg submitMissionMsg) tea.Cmd {
 		if ms, ok := a.snapshot.Mission(msg.ID); ok && ms.Status == mission.StatusBriefing {
 			req.ExtraRepos = &msg.ExtraRepos
 			req.BaseBranches = &msg.BaseBranches
+		}
+
+		if msg.HasPin {
+			req.Pin = &msg.Pin
 		}
 
 		ms, err := a.client.UpdateMission(a.ctx(), msg.ID, req)
@@ -487,6 +492,52 @@ func (a *App) takeMission(ms mission.Mission) tea.Cmd {
 
 		return toastMsg{text: taken.Name + ": now runs here"}
 	}
+}
+
+// sendMission asks the daemon to pin a mission to the paired machine and move
+// it there.
+func (a *App) sendMission(ms mission.Mission) tea.Cmd {
+	return func() tea.Msg {
+		sent, err := a.client.SendMission(a.ctx(), ms.ID)
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: sentToast(a.snapshot, sent)}
+	}
+}
+
+// sentToast says where a sent mission is now.
+func sentToast(snap mission.Snapshot, ms mission.Mission) string {
+	there := snap.HostName(ms.Pin)
+
+	switch {
+	case !ms.Launched():
+		return ms.Name + ": pinned to " + there + ", starts there"
+	case ms.Lease.Holder == ms.Pin:
+		return ms.Name + ": now runs on " + there
+	}
+
+	for _, badge := range ms.LocalBadges {
+		if badge.Kind == mission.BadgeSending && badge.Detail != "" {
+			return ms.Name + ": moves to " + there + " when it can (" + badge.Detail + ")"
+		}
+	}
+
+	return ms.Name + ": moves to " + there + " when it can"
+}
+
+// launchedToast reports a launch, naming the other machine when it went there.
+func launchedToast(snap mission.Snapshot, ms mission.Mission) string {
+	if snap.Peer != nil && ms.Pin == snap.Peer.ID {
+		if ms.Launched() {
+			return "launched " + ms.Name + " on " + snap.HostName(ms.Pin)
+		}
+
+		return ms.Name + ": queued for " + snap.HostName(ms.Pin) + ", which cannot be reached now"
+	}
+
+	return "launched " + ms.Name
 }
 
 // reorderMission changes a mission's position within its lane.

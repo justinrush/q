@@ -38,6 +38,10 @@ type submitMissionMsg struct {
 	Launch bool
 	// ReviewOf names the mission to review, for a form opened to request one.
 	ReviewOf mission.MissionID
+	// Pin is where the mission must run: "local", "remote", or empty for q to
+	// decide. HasPin says the form offered the choice, so an edit sends it.
+	Pin    string
+	HasPin bool
 }
 
 // submitOperationMsg carries a completed operation form.
@@ -95,7 +99,27 @@ type missionForm struct {
 	// does it, and what to look at.
 	reviewOf   mission.MissionID
 	reviewName string
+	// hosts names this machine and its peer, for the host field. It is nil
+	// when q is not paired, and the field is not offered.
+	hosts *formHosts
+	// pin is the host field's value: one of hostChoices.
+	pin string
 }
+
+// formHosts are the two machines a mission can be pinned to.
+type formHosts struct {
+	self, peer string
+}
+
+// hostChoices are the host field's values in the order it cycles through
+// them. They are what the daemon's pin field accepts.
+var hostChoices = []string{"", pinLocal, pinRemote}
+
+// The host field's values other than auto.
+const (
+	pinLocal  = "local"
+	pinRemote = "remote"
+)
 
 // reviewFields are the fields a review form offers, in tab order. A review has
 // its subject's operation, no repositories of its own, and no plan to approve.
@@ -148,6 +172,7 @@ const (
 	fieldMissionPlanTool
 	fieldMissionPlanModel
 	fieldMissionPlanEffort
+	fieldMissionHost
 	fieldMissionRepos
 	fieldMissionPrompt
 	fieldMissionCount
@@ -289,6 +314,8 @@ func (f *missionForm) updateField(msg tea.KeyMsg) (modal, tea.Cmd) {
 		f.cyclePlanModel(msg.String())
 	case fieldMissionPlanEffort:
 		f.cyclePlanEffort(msg.String())
+	case fieldMissionHost:
+		f.cycleHost(msg.String())
 	case fieldMissionRepos:
 		if !f.reposLocked {
 			f.repos.Update(msg)
@@ -328,8 +355,55 @@ func (f *missionForm) hidden(field int) bool {
 	switch field {
 	case fieldMissionPlanTool, fieldMissionPlanModel, fieldMissionPlanEffort:
 		return !f.plans()
+	case fieldMissionHost:
+		return !f.offersHost()
 	default:
 		return false
+	}
+}
+
+// offersHost reports whether the form lets the mission be pinned to a host.
+//
+// Only a paired q has a choice to offer, and only before launch: a running
+// mission is moved with send and take, which wait for its turn to end.
+func (f *missionForm) offersHost() bool { return f.hosts != nil && !f.launched && f.reviewOf == "" }
+
+// setHosts offers the host field for a paired q, starting on the mission's
+// current pin.
+func (f *missionForm) setHosts(self, peer mission.HostID, selfName, peerName string, pin mission.HostID) {
+	f.hosts = &formHosts{self: selfName, peer: peerName}
+
+	switch pin {
+	case self:
+		f.pin = pinLocal
+	case peer:
+		f.pin = pinRemote
+	default:
+		f.pin = ""
+	}
+}
+
+// cycleHost steps the host field.
+func (f *missionForm) cycleHost(keyName string) {
+	delta, ok := cycleDelta(keyName)
+	if !ok {
+		return
+	}
+
+	n := len(hostChoices)
+	idx := max(slices.Index(hostChoices, f.pin), 0)
+	f.pin = hostChoices[((idx+delta)%n+n)%n]
+}
+
+// hostValue renders the host field.
+func (f *missionForm) hostValue() string {
+	switch f.pin {
+	case pinLocal:
+		return f.hosts.self + styles.CardDetail.Render("  always here")
+	case pinRemote:
+		return f.hosts.peer + styles.CardDetail.Render("  always there; this machine can sleep")
+	default:
+		return "auto" + styles.CardDetail.Render("  here while awake, "+f.hosts.peer+" while not")
 	}
 }
 
@@ -675,6 +749,8 @@ func (f *missionForm) submit(launch bool) (modal, tea.Cmd) {
 		ExtraRepos:   parseRepoLines(f.repos.Value()),
 		BaseBranches: f.baseBranches,
 		Launch:       launch,
+		Pin:          f.pin,
+		HasPin:       f.offersHost(),
 	})
 }
 
@@ -721,6 +797,10 @@ func (f *missionForm) View(width, height int) string {
 		if f.field == fieldMissionPlanModel && !f.launched && len(f.planModelSet().Options) > 0 {
 			rows = append(rows, styles.CardDetail.Render("  enter to choose from the full list"))
 		}
+	}
+
+	if f.offersHost() {
+		rows = append(rows, f.label("Runs on", fieldMissionHost)+"   "+f.hostValue())
 	}
 
 	rows = append(rows,

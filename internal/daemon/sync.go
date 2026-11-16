@@ -55,6 +55,9 @@ type Remote interface {
 	Forget(ctx context.Context) error
 	// Release asks the peer to stop running a mission and hand it over.
 	Release(ctx context.Context, id mission.MissionID) error
+	// Ready asks the peer whether it could run a mission now, before this
+	// host stops its own agent to send it there.
+	Ready(ctx context.Context, id mission.MissionID) (api.Readiness, error)
 	// AttachArgv is the command that attaches a terminal to a mission's agent
 	// on the peer, or nil when there is no way to.
 	AttachArgv(id mission.MissionID) []string

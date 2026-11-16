@@ -58,6 +58,8 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		return a.handleToggleQueued(m.Mission), true
 	case takeMissionMsg:
 		return a.handleTake(m.Mission), true
+	case sendMissionMsg:
+		return a.handleSend(m.Mission), true
 	case reviewMissionMsg:
 		return a.showReviewForm(m.Mission), true
 	case moveMissionMsg:
@@ -112,9 +114,16 @@ func (a *App) handleOperationIntent(msg tea.Msg) tea.Cmd {
 // and a fresh one is fetched behind it: a board left open overnight would
 // otherwise keep offering the models it learned when it started.
 func (a *App) showMissionForm(ms mission.Mission) tea.Cmd {
-	a.modal = newMissionForm(
+	form := newMissionForm(
 		ms, a.snapshot.Operations, a.currentOperationID(), a.opts, a.snapshot.Limits, time.Now(),
 	)
+
+	if peer := a.snapshot.Peer; peer != nil {
+		self := a.snapshot.Self
+		form.setHosts(self.ID, peer.ID, a.snapshot.HostName(self.ID), a.snapshot.HostName(peer.ID), ms.Pin)
+	}
+
+	a.modal = form
 
 	return a.fetchModels()
 }
@@ -372,7 +381,10 @@ func (a *App) handleToggleQueued(ms mission.Mission) tea.Cmd {
 // handleTake brings a mission to this machine, explaining when there is
 // nothing to take.
 func (a *App) handleTake(ms mission.Mission) tea.Cmd {
-	if a.snapshot.Elsewhere(ms) == "" || !ms.Launched() {
+	// A pin to the other machine is undone by a take too, which is how a send
+	// still waiting for its turn to end is called off.
+	pinnedThere := a.snapshot.Peer != nil && ms.Pin == a.snapshot.Peer.ID
+	if !pinnedThere && (a.snapshot.Elsewhere(ms) == "" || !ms.Launched()) {
 		return emit(toastMsg{
 			text: ms.Name + " is not running on the paired machine",
 			err:  true,
@@ -380,6 +392,25 @@ func (a *App) handleTake(ms mission.Mission) tea.Cmd {
 	}
 
 	return a.takeMission(ms)
+}
+
+// handleSend pins a mission to the paired machine, explaining when there is
+// nowhere to send it or it is already there.
+func (a *App) handleSend(ms mission.Mission) tea.Cmd {
+	peer := a.snapshot.Peer
+
+	switch {
+	case peer == nil:
+		return emit(toastMsg{text: "this q is not paired with another machine", err: true})
+	case ms.Status.Terminal():
+		return emit(toastMsg{text: ms.Name + " is closed", err: true})
+	case ms.IsReview():
+		return emit(toastMsg{text: "a review runs beside the mission it reviews", err: true})
+	case ms.Pin == peer.ID && (!ms.Launched() || ms.Lease.Holder == peer.ID):
+		return emit(toastMsg{text: ms.Name + " is already pinned to " + a.snapshot.HostName(peer.ID)})
+	}
+
+	return a.sendMission(ms)
 }
 
 // handleReorder computes the mission's new position and sends it.

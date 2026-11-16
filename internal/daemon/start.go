@@ -73,6 +73,13 @@ func (s *Service) Start(ctx context.Context, id mission.MissionID) (mission.Miss
 		return mission.Mission{}, fmt.Errorf("%w: mission %s has already been launched", ErrConflict, id)
 	}
 
+	// A pin is an instruction. Every route to a launch that should happen on
+	// the other host goes there first; this is the backstop for one that did not.
+	if s.pinnedElsewhere(ms) {
+		return mission.Mission{}, fmt.Errorf("%w: %s is pinned to %s and starts there",
+			ErrConflict, ms.Name, snap.HostName(ms.Pin))
+	}
+
 	operation, ok := snap.Operation(ms.OperationID)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: operation %s", ErrNotFound, ms.OperationID)
@@ -110,6 +117,13 @@ func (s *Service) markLaunching(id mission.MissionID) error {
 		ms, ok := snap.Mission(id)
 		if !ok {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
+		}
+
+		// A mission is started by the host that holds it. One started here by
+		// hand that was passed along earlier, say before its pin was changed
+		// back, is this host's again.
+		if !ms.Lease.HeldBy(s.self) {
+			ms.Lease = ms.Lease.Take(s.self)
 		}
 
 		ms.Status = mission.StatusActive

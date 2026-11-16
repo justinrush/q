@@ -101,6 +101,16 @@ func (w *wire) Release(ctx context.Context, id mission.MissionID) error {
 	return nil
 }
 
+func (w *wire) Ready(ctx context.Context, id mission.MissionID) (api.Readiness, error) {
+	if w.down {
+		return api.Readiness{}, fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
+	}
+
+	var received api.Readiness
+
+	return received, roundTrip(w.peer.Readiness(id), &received)
+}
+
 func (w *wire) Forget(ctx context.Context) error {
 	if w.down {
 		return fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
