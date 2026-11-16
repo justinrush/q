@@ -52,6 +52,13 @@ func (s *Service) tendLeases(ctx context.Context) {
 	case mission.RoleStandalone:
 	}
 
+	// Pins are followed in both directions, by whichever host holds the
+	// mission, and only while the two are talking.
+	if s.roleOf(snap) != mission.RoleStandalone && !standby {
+		s.sendPinned(ctx, snap)
+		s.adoptSent(ctx, s.store.Snapshot())
+	}
+
 	s.tendStandby(ctx, standby)
 }
 
@@ -281,8 +288,13 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
+	// Taking a mission here overrides a pin that would send it straight back.
+	s.clearOpposingPin(id)
+
 	if s.holds(ms) {
-		return ms, nil
+		current, _ := s.store.Snapshot().Mission(id)
+
+		return current, nil
 	}
 
 	if s.remote != nil && ms.Running() {

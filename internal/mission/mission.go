@@ -348,6 +348,10 @@ const (
 	// whether the peer had taken the mission over. The agent is started again
 	// when one of them answers and the mission is still this host's.
 	BadgeStandby = "standby"
+	// BadgeSending marks a mission pinned to the other host that this host is
+	// still running. It moves at the end of its current turn; the detail says
+	// what it is waiting for.
+	BadgeSending = "sending"
 )
 
 // AllBadges returns the holder's badges followed by this host's own.

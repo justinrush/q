@@ -2853,7 +2853,7 @@ func TestBoardNamesThePeerOnlyForItsMissions(t *testing.T) {
 	board.snapshot.Self = mission.HostInfo{ID: "h_aaaaaaaaaaaa", Name: "laptop"}
 	board.snapshot.Peer = &mission.Peer{HostInfo: mission.HostInfo{ID: "h_bbbbbbbbbbbb", Name: "mini"}}
 
-	for name, want := range map[string]string{"ms_peer": "mini", "ms_here": "", "ms_pinned": "mini"} {
+	for name, want := range map[string]string{"ms_peer": "mini", "ms_here": "", "ms_pinned": "mini" + pinnedMark} {
 		ms, _ := board.snapshot.Mission(mission.MissionID(name))
 
 		if got := board.hostOf(ms); got != want {

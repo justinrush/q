@@ -378,6 +378,15 @@ type SettleResponse struct {
 	Refs []mission.RepoState `json:"refs,omitempty"`
 }
 
+// Readiness is a host's answer to its peer asking whether it could run a
+// mission now.
+type Readiness struct {
+	Ready bool `json:"ready"`
+	// Reason says why not, phrased to follow the host's name: "is still
+	// mirroring its worktrees".
+	Reason string `json:"reason,omitempty"`
+}
+
 // AttachCommand is how to attach a terminal to a mission's agent on the paired
 // host.
 type AttachCommand struct {

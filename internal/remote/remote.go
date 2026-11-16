@@ -328,6 +328,11 @@ func (p *Peer) Release(ctx context.Context, id mission.MissionID) error {
 	return err
 }
 
+// Ready asks the peer whether it could run a mission now.
+func (p *Peer) Ready(ctx context.Context, id mission.MissionID) (api.Readiness, error) {
+	return call[api.Readiness](ctx, p, http.MethodGet, "/v1/missions/"+string(id)+"/ready", nil)
+}
+
 // AttachArgv returns the command that attaches a terminal to a mission's agent
 // on the peer, or nil when the transport cannot carry one.
 func (p *Peer) AttachArgv(id mission.MissionID) []string {
