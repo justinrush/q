@@ -402,8 +402,20 @@ type Readiness struct {
 type AttachCommand struct {
 	// Argv is the command to run, with this terminal as its own.
 	Argv []string `json:"argv"`
+	// StealArgv is Argv that first detaches the session's other clients.
+	StealArgv []string `json:"stealArgv,omitempty"`
 	// Host names the machine the agent is on, for messages.
 	Host string `json:"host"`
+}
+
+// ArgvFor returns the command to run, detaching the session's other clients
+// first when steal is set and the command can.
+func (c AttachCommand) ArgvFor(steal bool) []string {
+	if steal && len(c.StealArgv) > 0 {
+		return c.StealArgv
+	}
+
+	return c.Argv
 }
 
 // Forgotten reports what ending a pairing did.

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/justinrush/q/internal/api"
@@ -55,6 +57,10 @@ func buildOpenSubcommand() *cobra.Command {
 				return err
 			}
 
+			if attach && !result.NeedsRelaunch && result.Remote != nil {
+				return attachRemote(cmd, *result.Remote, steal)
+			}
+
 			if attach && !result.NeedsRelaunch {
 				child := terminal.CurrentCommand(cmd.Context(), bin, result.Session, steal)
 				child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
@@ -71,11 +77,38 @@ func buildOpenSubcommand() *cobra.Command {
 	return cmd
 }
 
+// attachRemote connects this terminal to a mission's session on the paired
+// machine, and waits for it to detach.
+//
+// Inside tmux this cannot switch the client the way a local open does: the
+// session is in another machine's tmux server, so it runs nested in this pane,
+// and this machine's tmux sees the prefix key first.
+func attachRemote(cmd *cobra.Command, target api.AttachCommand, steal bool) error {
+	argv := target.ArgvFor(steal)
+
+	if os.Getenv("TMUX") != "" {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"q: the agent runs on %s; its tmux is nested in this one, so press the prefix twice to reach it\n",
+			target.Host)
+	}
+
+	// The argv comes from this machine's daemon, which built it from the
+	// configured remote command. It is passed literally, never through a shell.
+	child := exec.CommandContext(cmd.Context(), argv[0], argv[1:]...) // #nosec G204
+	child.Stdin, child.Stdout, child.Stderr = cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr()
+
+	return child.Run()
+}
+
 // renderOpenResult explains what opening the debrief did.
 func renderOpenResult(out io.Writer, result api.Result) error {
 	rep := newReport()
 
-	rep.line("session  %s", result.Session)
+	if result.Remote != nil {
+		rep.line("session  %s on %s", result.Session, result.Remote.Host)
+	} else {
+		rep.line("session  %s", result.Session)
+	}
 
 	if result.NeedsRelaunch {
 		rep.line("")
@@ -106,6 +139,9 @@ func renderOpenResult(out io.Writer, result api.Result) error {
 	case result.AttachCommand != "":
 		rep.line("attach   run this to join the session:")
 		rep.line("  %s", result.AttachCommand)
+	case result.Remote != nil:
+		rep.line("attach   run this to join the session on %s:", result.Remote.Host)
+		rep.line("  %s", strings.Join(result.Remote.Argv, " "))
 	default:
 		rep.line("attach   not attached")
 	}

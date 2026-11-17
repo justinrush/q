@@ -13,6 +13,7 @@ import (
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/remote"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 // wire carries requests from one in-process service to another, through JSON,
@@ -121,8 +122,28 @@ func (w *wire) Forget(ctx context.Context) error {
 	return err
 }
 
-func (w *wire) AttachArgv(id mission.MissionID) []string {
-	return []string{"/usr/bin/ssh", "-t", "mini", "q", "attach", string(id)}
+func (w *wire) AttachArgv(id mission.MissionID, steal bool) []string {
+	argv := []string{"/usr/bin/ssh", "-t", "mini", "q", "attach"}
+	if steal {
+		argv = append(argv, "--steal")
+	}
+
+	return append(argv, string(id))
+}
+
+func (w *wire) OpenDebrief(ctx context.Context, id mission.MissionID) (api.Result, error) {
+	if w.down {
+		return api.Result{}, fmt.Errorf("%w: connection timed out", remote.ErrUnreachable)
+	}
+
+	result, err := w.peer.OpenDebrief(ctx, id, api.ModePrepare)
+	if err != nil {
+		return api.Result{}, asStatus(err)
+	}
+
+	var received api.Result
+
+	return received, roundTrip(result, &received)
 }
 
 // roundTrip copies a value through JSON.
@@ -475,7 +496,6 @@ func TestForgettingThePeerTakesOverItsMissions(t *testing.T) {
 type recordingMessenger struct {
 	relaunched []string
 	stopped    []mission.MissionID
-	viewed     []mission.MissionID
 }
 
 func (m *recordingMessenger) SendMessage(context.Context, mission.Mission, string) error { return nil }
@@ -498,44 +518,108 @@ func (m *recordingMessenger) Stop(_ context.Context, ms mission.Mission) error {
 	return nil
 }
 
-func (m *recordingMessenger) View(
-	_ context.Context,
-	_ mission.Operation,
-	ms mission.Mission,
-) (mission.Mission, error) {
-	m.viewed = append(m.viewed, ms.ID)
-	ms.TmuxSession, ms.AgentPaneID = "q-viewer", "%9"
-
-	return ms, nil
+// recordingDebriefs remembers what each host was asked to open.
+type recordingDebriefs struct {
+	opened  []api.Mode
+	windows []terminal.Spec
+	noTerm  bool
 }
 
-// Opening a mission the peer runs must show the peer's agent, not start one
-// here, and must refuse rather than open something half-built.
-func TestOpeningAMissionThePeerRunsStartsAViewer(t *testing.T) {
+func (r *recordingDebriefs) Open(_ context.Context, ms mission.Mission, mode api.Mode) (api.Result, mission.Mission, error) {
+	r.opened = append(r.opened, mode)
+
+	return api.Result{Session: ms.TmuxSession, PanesAdded: 1}, ms, nil
+}
+
+func (*recordingDebriefs) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
+	return nil, nil
+}
+
+func (r *recordingDebriefs) OpenWindow(_ context.Context, spec terminal.Spec) error {
+	if r.noTerm {
+		return terminal.ErrNoTerminal
+	}
+
+	r.windows = append(r.windows, spec)
+
+	return nil
+}
+
+// Opening a mission the peer runs arranges the debrief in the peer's own
+// session and connects a terminal to it. Nothing is opened in this host's
+// tmux: a pane split there would be on the mirror, which the agent never sees.
+func TestOpeningAMissionThePeerRunsOpensItThere(t *testing.T) {
 	primary, secondary, _ := pairedServices(t)
 	ms := runOnSecondary(t, primary, secondary)
 
-	messenger := &recordingMessenger{}
-	primary.apply(WithMessenger(messenger), WithDebriefer(stubDebriefer{}))
+	here, there := &recordingDebriefs{}, &recordingDebriefs{}
+	primary.apply(WithMessenger(&recordingMessenger{}), WithDebriefer(here))
+	secondary.apply(WithMessenger(&recordingMessenger{}), WithDebriefer(there))
 
-	// Not mirrored yet: there is no code here to open editors on.
-	if _, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare); !errors.Is(err, ErrConflict) {
-		t.Fatalf("opening before the mirror exists: err = %v, want a refusal", err)
-	}
-
-	primary.updateLocal(ms.ID, "test.mirrored", func(stored *mission.Mission) { stored.MissionDir = "/mirror" })
-
-	result, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare)
+	// Opening needs no mirror here: the code being debriefed is on the peer.
+	result, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModeAttach)
 	if err != nil {
 		t.Fatalf("OpenDebrief: %v", err)
 	}
 
-	if !slices.Equal(messenger.viewed, []mission.MissionID{ms.ID}) {
-		t.Fatalf("viewers started for %v, want one for the mission", messenger.viewed)
+	if len(here.opened) != 0 {
+		t.Errorf("this host arranged a local session %v; want none", here.opened)
 	}
 
-	// What the viewer runs is asked for when it runs, so it is still right
-	// after the mission has moved.
+	if !slices.Equal(there.opened, []api.Mode{api.ModePrepare}) {
+		t.Errorf("the peer was asked to open %v, want only to prepare its panes", there.opened)
+	}
+
+	stored, _ := secondary.Snapshot().Mission(ms.ID)
+	if result.Session != stored.TmuxSession || result.PanesAdded != 1 {
+		t.Errorf("result %+v, want the peer's session %q and the panes it added", result, stored.TmuxSession)
+	}
+
+	if result.Remote == nil || result.Remote.Host != "mini" || !slices.Contains(result.Remote.StealArgv, "--steal") {
+		t.Fatalf("remote = %+v, want how to attach to the agent on mini", result.Remote)
+	}
+
+	if len(here.windows) != 1 || !slices.Equal(here.windows[0].Argv, result.Remote.Argv) || !result.Attached {
+		t.Errorf("windows %+v attached %v, want one window running the remote attach", here.windows, result.Attached)
+	}
+
+	if _, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModeSteal); err != nil {
+		t.Fatalf("OpenDebrief steal: %v", err)
+	}
+
+	if got := here.windows[len(here.windows)-1].Argv; !slices.Contains(got, "--steal") {
+		t.Errorf("steal opened %v, want it to steal on the peer", got)
+	}
+
+	// A board attaching in its own terminal only prepares, and runs the
+	// command itself.
+	windows := len(here.windows)
+
+	if result, err = primary.OpenDebrief(t.Context(), ms.ID, api.ModePrepare); err != nil {
+		t.Fatalf("OpenDebrief prepare: %v", err)
+	}
+
+	if len(here.windows) != windows || result.Attached || result.Remote == nil {
+		t.Errorf("prepare opened a window or lost the command: %+v", result)
+	}
+
+	// With windows turned off, the command to run by hand is the remote one.
+	here.noTerm = true
+
+	if result, err = primary.OpenDebrief(t.Context(), ms.ID, api.ModeAttach); err != nil {
+		t.Fatalf("OpenDebrief without windows: %v", err)
+	}
+
+	if result.AttachCommand != strings.Join(result.Remote.Argv, " ") {
+		t.Errorf("attach command %q, want the remote attach", result.AttachCommand)
+	}
+
+	local, _ := primary.Snapshot().Mission(ms.ID)
+	if local.Lease.Holder != secondary.self {
+		t.Errorf("holder %s, want the lease untouched", local.Lease.Holder)
+	}
+
+	// What a paired q runs over ssh is still answered by the host that dials.
 	command, err := primary.AttachCommand(ms.ID)
 	if err != nil || !slices.Contains(command.Argv, "attach") || command.Host != "mini" {
 		t.Errorf("attach command = %+v, err %v; want one that attaches to the agent on mini", command, err)
@@ -544,15 +628,26 @@ func TestOpeningAMissionThePeerRunsStartsAViewer(t *testing.T) {
 	if _, err := secondary.AttachCommand(ms.ID); !errors.Is(err, ErrConflict) {
 		t.Errorf("asking the host that runs it: err = %v, want a refusal", err)
 	}
+}
 
-	if result.Session != "q-viewer" {
-		t.Errorf("opened session %q, want the viewer", result.Session)
+// An unreachable peer is an error that names it, not a local session that
+// looks like the agent's.
+func TestOpeningAMissionOnAnUnreachablePeerFails(t *testing.T) {
+	primary, secondary, link := pairedServices(t)
+	ms := runOnSecondary(t, primary, secondary)
+
+	here := &recordingDebriefs{}
+	primary.apply(WithMessenger(&recordingMessenger{}), WithDebriefer(here))
+
+	link.down = true
+
+	_, err := primary.OpenDebrief(t.Context(), ms.ID, api.ModeAttach)
+	if err == nil || !strings.Contains(err.Error(), "mini") {
+		t.Errorf("err = %v, want a failure naming the peer", err)
 	}
 
-	stored, _ := primary.Snapshot().Mission(ms.ID)
-	if stored.TmuxSession != "q-viewer" || stored.Lease.Holder != secondary.self {
-		t.Errorf("session %q holder %s, want the viewer recorded and the lease untouched",
-			stored.TmuxSession, stored.Lease.Holder)
+	if len(here.opened) != 0 || len(here.windows) != 0 {
+		t.Errorf("opened %v windows %v, want nothing opened here", here.opened, here.windows)
 	}
 }
 
@@ -581,6 +676,8 @@ type stubDebriefer struct{}
 func (stubDebriefer) Open(_ context.Context, ms mission.Mission, _ api.Mode) (api.Result, mission.Mission, error) {
 	return api.Result{Session: ms.TmuxSession}, ms, nil
 }
+
+func (stubDebriefer) OpenWindow(context.Context, terminal.Spec) error { return nil }
 
 func (stubDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
 	return nil, nil

@@ -42,10 +42,6 @@ func (m *planMessenger) Relaunch(
 
 func (*planMessenger) Stop(context.Context, mission.Mission) error { return nil }
 
-func (*planMessenger) View(_ context.Context, _ mission.Operation, ms mission.Mission) (mission.Mission, error) {
-	return ms, nil
-}
-
 // awaitRelaunch reports the mission a relaunch was asked for, or false if none
 // came.
 func (m *planMessenger) awaitRelaunch(wait time.Duration) (mission.Mission, bool) {

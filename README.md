@@ -305,6 +305,15 @@ machine, so it stays there when the laptop comes back, and its card is marked
 - One in the middle of a turn finishes the turn here, marked `sending`, and
   moves after.
 
+Opening a mission that runs on the other machine (`enter`, or `q open`) opens it
+there. That machine arranges the editor panes in the agent's own tmux session,
+on its own worktrees, and the laptop connects a terminal to that session over
+ssh. Every pane you split is on the machine the agent can see, so files the
+mirror does not carry, such as a review's ignored `.review/feedback.json`, are
+where the agent will look for them. With `terminal.mode` set to `current`
+inside tmux, the other machine's tmux runs nested in your pane: press the
+prefix twice to reach it, or use a window instead.
+
 Before it stops anything, the laptop asks the other machine whether it could
 run the mission now. If it lacks a checkout of one of the repositories, or is
 still mirroring the worktrees, the mission stays here and the `sending` badge
@@ -332,8 +341,8 @@ worktree per repository. What moves between them is which one runs the agent.
 
 A card for a mission the other machine is running is marked `@mini`. Everything
 you can do to a card still works. Messages and lane moves are carried out by
-the machine running the agent; `enter` opens editors on this machine's own
-worktrees, with the agent's pane attached to the other machine over ssh. Press
+the machine running the agent; `enter` opens the debrief on that machine,
+editors and all, and attaches to it over ssh (see above). Press
 `t`, or run `q mission take`, to bring a mission here without waiting for a
 turn to end.
 

@@ -37,6 +37,10 @@ type Result struct {
 	// NeedsRelaunch reports that the session is gone and the agent must be
 	// restarted before there is anything to attach to.
 	NeedsRelaunch bool `json:"needsRelaunch"`
+	// Remote is set when the agent runs on the paired host. The session was
+	// arranged there, Session names it on that host, and attaching means running
+	// this command rather than attaching to any tmux session on this machine.
+	Remote *AttachCommand `json:"remote,omitempty"`
 }
 
 // Touched is one repo with debriefable changes.

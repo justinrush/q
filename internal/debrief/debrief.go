@@ -267,6 +267,12 @@ func (o *Opener) editorArgv() ([]string, error) {
 	return append([]string{abs}, command[1:]...), nil
 }
 
+// OpenWindow opens a terminal window running spec, for a session this host
+// does not have: one on the paired machine, reached by the command in spec.
+func (o *Opener) OpenWindow(ctx context.Context, spec terminal.Spec) error {
+	return o.term.Open(ctx, spec)
+}
+
 // attach brings a client to the session according to mode.
 func (o *Opener) attach(ctx context.Context, ms mission.Mission, mode api.Mode, result *api.Result) error {
 	switch mode {

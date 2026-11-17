@@ -59,8 +59,12 @@ type Remote interface {
 	// host stops its own agent to send it there.
 	Ready(ctx context.Context, id mission.MissionID) (api.Readiness, error)
 	// AttachArgv is the command that attaches a terminal to a mission's agent
-	// on the peer, or nil when there is no way to.
-	AttachArgv(id mission.MissionID) []string
+	// on the peer, or nil when there is no way to. steal detaches the
+	// session's other clients there first.
+	AttachArgv(id mission.MissionID, steal bool) []string
+	// OpenDebrief asks the peer to arrange a mission's debrief session in its
+	// own tmux, without attaching anything.
+	OpenDebrief(ctx context.Context, id mission.MissionID) (api.Result, error)
 }
 
 // RepoLocator maps a repository between its origin and this machine's checkout
