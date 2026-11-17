@@ -97,7 +97,7 @@ func ComposePrompt(operation Operation, ms Mission) (string, error) {
 		return "", fmt.Errorf("composing prompt for mission %s: %w", ms.ID, err)
 	}
 
-	return b.String() + MemoryInstructions, nil
+	return b.String(), nil
 }
 
 // shortRef trims the refs/remotes prefix so the prompt reads as "origin/main".

@@ -481,3 +481,27 @@ func TestCaptureRestartDoesNotResendUncertainDelivery(t *testing.T) {
 		t.Fatal("restart guessed delivery outcome")
 	}
 }
+
+func TestDisabledCaptureFinishesWithoutTraceAndAbandonsStaleCapture(t *testing.T) {
+	s, ms, msg, reclaim := captureFixture(t)
+	requested := requestCapture(t, s, ms.ID)
+	if requested.Finish.Token == "" {
+		t.Fatal("capture did not start while enabled")
+	}
+
+	// Capture is turned off while one is pending: the board must not keep it.
+	s.apply(WithMemory(s.memory, false))
+	s.advanceCapture(t.Context(), ms.ID)
+	if msg.calls != 0 {
+		t.Fatal("capture prompt sent while disabled")
+	}
+	stale, _ := s.Snapshot().Mission(ms.ID)
+	if stale.Finish.Token != "" {
+		t.Fatalf("stale capture kept: %+v", stale.Finish)
+	}
+
+	finished := requestCapture(t, s, ms.ID)
+	if finished.Status != mission.StatusClosed || finished.Finish.Token != "" || reclaim.calls != 1 || msg.calls != 0 {
+		t.Fatalf("disabled finish: status %s, finish %+v, reclaims %d", finished.Status, finished.Finish, reclaim.calls)
+	}
+}

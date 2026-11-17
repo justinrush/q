@@ -1338,6 +1338,15 @@ machines. This supplements each agent's own memory. Agents receive CLI guidance
 in their mission prompt and decide when to search; q does not inject old memories
 into every conversation.
 
+Shared memory is off by default. While it is off, agents are not told about it,
+finishing a mission does not ask the agent to save anything, and the board shows
+no sign of it; records already saved are kept and the `q memory` commands still
+work. Turn it on in q's config and restart its daemon:
+
+```json
+{"memory":{"enabled":true}}
+```
+
 ```sh
 q memory search "worktree cleanup" --repo q
 q memory search --mission ms_… --json
@@ -1400,11 +1409,12 @@ the capture turn. Sending ordinary work to the agent cancels its pending finish.
 A changed run or lease invalidates the old capture token. Retries cannot duplicate
 a batch already saved under the same token.
 
-Capture is on by default. To disable automatic capture, set this in q's config
-and restart its daemon (manual saves and queries remain available):
+Capture is on whenever memory is enabled. To keep memory enabled but disable
+automatic capture, set this in q's config and restart its daemon (manual saves
+and queries remain available):
 
 ```json
-{"memory":{"captureOnFinish":false}}
+{"memory":{"enabled":true,"captureOnFinish":false}}
 ```
 
 Search requests are appended locally to `memory-queries.jsonl` in the same data

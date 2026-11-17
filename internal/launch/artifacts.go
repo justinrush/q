@@ -65,6 +65,15 @@ func (l *Launcher) writeArtifacts(operation mission.Operation, ms mission.Missio
 // brief composes what a mission's agent is told when it starts with no
 // conversation of its own to resume.
 func (l *Launcher) brief(operation mission.Operation, ms mission.Mission) (string, error) {
+	prompt, err := l.composeBrief(operation, ms)
+	if err != nil || !l.memory {
+		return prompt, err
+	}
+
+	return prompt + mission.MemoryInstructions, nil
+}
+
+func (l *Launcher) composeBrief(operation mission.Operation, ms mission.Mission) (string, error) {
 	if !ms.IsReview() {
 		prompt, err := mission.ComposePrompt(operation, ms)
 		if err != nil {

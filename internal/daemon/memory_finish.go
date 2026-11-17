@@ -150,7 +150,9 @@ func (s *Service) advanceCapture(ctx context.Context, id mission.MissionID) {
 	if !s.holds(ms) {
 		return
 	}
-	if f.Lease != ms.Lease || f.HookEpoch != ms.HookEpoch || ms.Status.Terminal() {
+	// A capture begun before capture was turned off is abandoned rather than
+	// left on the card, so a disabled feature leaves no trace on the board.
+	if !s.captureOnFinish || f.Lease != ms.Lease || f.HookEpoch != ms.HookEpoch || ms.Status.Terminal() {
 		_ = s.changeFinish(id, func(m *mission.Mission) { m.Finish = mission.FinishCapture{} })
 		return
 	}

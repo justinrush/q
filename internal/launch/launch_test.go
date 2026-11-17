@@ -495,3 +495,20 @@ func TestLaunchFailsForUnknownTool(t *testing.T) {
 		t.Error("expected an error for an unknown tool")
 	}
 }
+
+func TestBriefAdvertisesMemoryOnlyWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		launcher, fake, _ := newTestLauncher(t)
+		WithMemory(enabled)(launcher)
+		seedGitResponses(fake, "/dev/weave", "/dev/weave/.git")
+
+		got, err := launcher.Launch(t.Context(), testOperation("/dev/weave"), testMission())
+		if err != nil {
+			t.Fatalf("Launch: %v", err)
+		}
+
+		if has := strings.Contains(readArtifact(t, got, mission.PromptFile), "Shared q memory"); has != enabled {
+			t.Errorf("memory enabled %v, prompt advertises it %v", enabled, has)
+		}
+	}
+}

@@ -428,7 +428,12 @@ bounds, keyword ranking and filters, idempotent capture, paginated pairing, edit
 and deletion markers. The finish tests use fake agent sessions: no paid agent
 calls or changes to real worktrees are needed.
 
-For a live smoke check after upgrading both paired daemons:
+With memory left at its default (off), finishing a mission with Shift+L closes it
+straight away, the card never shows a saving indicator, and a new mission's
+`.q` prompt has no "Shared q memory" section.
+
+For a live smoke check, set `{"memory":{"enabled":true}}` on both paired daemons,
+then:
 
 1. Finish a clean Claude mission with Shift+L. Observe the saving indicator, the
    extra capture turn, and cleanup only after the save succeeds and the agent stops.
