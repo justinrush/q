@@ -110,6 +110,9 @@ func (s *Service) Send(ctx context.Context, id mission.MissionID) (mission.Missi
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
+	if familyHasOpenChildren(&snap, ms) {
+		return mission.Mission{}, fmt.Errorf("%w: mission has an open child or borrows a parent workspace", ErrConflict)
+	}
 	if ms.Status.Terminal() {
 		return mission.Mission{}, fmt.Errorf("%w: %s is closed", ErrConflict, ms.Name)
 	}
@@ -174,7 +177,7 @@ func (s *Service) sendPinned(ctx context.Context, snap mission.Snapshot) {
 	peer := snap.PeerID()
 
 	for _, ms := range snap.Missions {
-		want := peer != "" && ms.Pin == peer && s.holds(ms) && ms.Running()
+		want := peer != "" && ms.Pin == peer && s.holds(ms) && ms.Running() && !familyHasOpenChildren(&snap, ms)
 		if !want {
 			if ms.HasLocalBadge(mission.BadgeSending) {
 				s.updateLocal(ms.ID, "mission.send.cleared", func(stored *mission.Mission) {

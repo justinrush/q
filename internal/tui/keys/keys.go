@@ -19,6 +19,7 @@ type Global struct {
 	Operations key.Binding
 	Refresh    key.Binding
 	Help       key.Binding
+	Features   key.Binding
 	Quit       key.Binding
 }
 
@@ -30,6 +31,7 @@ func NewGlobal() Global {
 		Board:      key.NewBinding(key.WithKeys("B"), key.WithHelp("B", "board")),
 		Operations: key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "operations")),
 		Refresh:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "refresh")),
+		Features:   key.NewBinding(key.WithKeys("F"), key.WithHelp("F", "features")),
 		Help:       key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Quit:       key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 	}
@@ -42,7 +44,7 @@ func (g Global) ShortHelp() []key.Binding {
 
 // FullHelp implements help.KeyMap.
 func (g Global) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{g.NextTab, g.Board, g.Operations}, {g.Refresh, g.Help, g.Quit}}
+	return [][]key.Binding{{g.NextTab, g.Board, g.Operations}, {g.Refresh, g.Features, g.Help, g.Quit}}
 }
 
 // Board bindings, available on the kanban view.
@@ -62,6 +64,8 @@ type Board struct {
 	Log        key.Binding
 	Message    key.Binding
 	New        key.Binding
+	Child      key.Binding
+	Results    key.Binding
 	Edit       key.Binding
 	Delete     key.Binding
 	TogglePlan key.Binding
@@ -96,6 +100,8 @@ func NewBoard() Board {
 		Log:        key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "launch log")),
 		Message:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "message agent")),
 		New:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new mission")),
+		Child:      key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "child mission")),
+		Results:    key.NewBinding(key.WithKeys("I"), key.WithHelp("I", "child reports")),
 		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:     key.NewBinding(key.WithKeys("d", "x"), key.WithHelp("d", "delete")),
 		TogglePlan: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "plan mode / approve plan")),
@@ -141,7 +147,7 @@ func (b Board) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{b.Left, b.Right, b.Up, b.Down, b.Lane, b.First},
 		{b.MoveLeft, b.ReorderUp, b.Open, b.Log, b.Message},
-		{b.New, b.Edit, b.Delete, b.TogglePlan, b.Queue},
+		{b.New, b.Child, b.Results, b.Edit, b.Delete, b.TogglePlan, b.Queue},
 		{b.Status, b.ToggleDone, b.Filter, b.Take, b.TakeFresh, b.Send, b.Review},
 		{b.Orientation},
 	}

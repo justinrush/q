@@ -133,6 +133,11 @@ type Mission struct {
 	// session, and card. What it lacks is worktrees of its own, because the
 	// thing it reads is the reviewed mission's, uncommitted changes included.
 	ReviewOf MissionID `json:"reviewOf,omitempty" q:"spec"`
+	// ParentMissionID identifies a child using its parent's worktrees.
+	SiblingOrder    int                  `json:"siblingOrder,omitempty" q:"spec"`
+	ParentMissionID MissionID            `json:"parentMissionId,omitempty" q:"spec"`
+	ResultPath      string               `json:"resultPath,omitempty" q:"local"`
+	ChildReports    map[MissionID]string `json:"childReports,omitempty" q:"local"`
 	// LaunchRepos freezes the complete repository set used for a launch.
 	LaunchRepos []Repo `json:"launchRepos,omitempty" q:"run"`
 	// LaunchReposFrozen distinguishes a repo-less launch from a draft whose
@@ -303,7 +308,8 @@ type Badge struct {
 const (
 	// BadgeStale marks a mission whose agent has been quiet for an unexpectedly
 	// long time.
-	BadgeStale = "stale"
+	BadgeChildResult = "child-result"
+	BadgeStale       = "stale"
 	// BadgeTmuxGone marks a mission whose tmux session or pane has died.
 	BadgeTmuxGone = "tmux-gone"
 	// BadgeHooksSilent marks a launched mission whose SessionStart hook never

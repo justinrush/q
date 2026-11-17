@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +42,14 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		a.modal = newMissionLog(m.Mission)
 
 		return nil, true
+	case childResultPickMsg:
+		return a.showChildResult(m.Path), true
+	case childResultsMsg:
+		return a.showChildResults(m.Mission), true
+	case childNameMsg:
+		return a.showChildTask(m), true
+	case childMissionMsg:
+		return a.showChildForm(m.Parent), true
 	case newMissionMsg:
 		return a.showMissionForm(mission.Mission{}), true
 	case editMissionMsg:
@@ -441,23 +451,13 @@ func (a *App) handleSend(ms mission.Mission) tea.Cmd {
 
 // handleReorder computes the mission's new position and sends it.
 func (a *App) handleReorder(msg reorderMsg) tea.Cmd {
-	missions := a.snapshot.MissionsInLane(msg.Mission.Status)
-
-	for i, ms := range missions {
-		if ms.ID != msg.Mission.ID {
-			continue
-		}
-
-		target := i + msg.Delta
-		if target < 0 || target >= len(missions) {
-			return nil
-		}
-
-		// Adopt the neighbour's position, which is what moving past it means.
-		return a.reorderMission(msg.Mission, missions[target].Order)
+	if msg.Target.ID == "" {
+		return nil
 	}
-
-	return nil
+	if msg.Mission.ParentMissionID != "" {
+		return a.reorderMission(msg.Mission, msg.Target.SiblingOrder)
+	}
+	return a.reorderMission(msg.Mission, msg.Target.Order)
 }
 
 // showResumePrompt asks what to tell an agent before putting it back to work.
@@ -613,4 +613,74 @@ func (a *App) handleDebriefOpened(msg debriefOpenedMsg) tea.Cmd {
 	}
 
 	return emit(toastMsg{text: "opened " + msg.Mission.Name + " (" + strings.Join(repos, ", ") + ")"})
+}
+
+func (a *App) showChildForm(parent mission.Mission) tea.Cmd {
+	a.modal = newPrompt("Child mission", "Name", "", false, false, func(name string) tea.Cmd {
+		return emit(childNameMsg{Parent: parent, Name: name})
+	})
+	return nil
+}
+
+type childNameMsg struct {
+	Parent mission.Mission
+	Name   string
+}
+
+func (a *App) showChildTask(msg childNameMsg) tea.Cmd {
+	a.modal = newPrompt("Child mission: "+msg.Name, fmt.Sprintf("Shared %s workspace · %s/%s/%s · ctrl+s starts", parentName(msg.Parent), msg.Parent.Tool, defaultLabel(msg.Parent.Model), defaultLabel(msg.Parent.Effort)), "", true, false, func(task string) tea.Cmd {
+		return a.createChild(msg.Parent, msg.Name, task)
+	})
+	return nil
+}
+
+type childResultPickMsg struct{ Path string }
+
+func (a *App) showChildResults(ms mission.Mission) tea.Cmd {
+	if ms.ParentMissionID != "" {
+		return a.showChildResult(ms.ResultPath)
+	}
+	var items []listItem
+	for id, path := range ms.ChildReports {
+		label := string(id)
+		detail := "saved report"
+		if child, ok := a.snapshot.Mission(id); ok {
+			label = child.Name
+			detail = string(child.Status)
+		}
+		items = append(items, listItem{Key: path, Label: label, Detail: detail})
+	}
+	if len(items) == 0 {
+		return emit(toastMsg{text: "No child reports yet"})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Label < items[j].Label })
+	a.modal = newList("Child reports", "Select a report", items, func(path string) tea.Cmd { return emit(childResultPickMsg{Path: path}) })
+	return nil
+}
+func (a *App) showChildResult(path string) tea.Cmd {
+	if path == "" {
+		return emit(toastMsg{text: "No child report yet"})
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return emit(toastMsg{text: "Could not read report: " + err.Error(), err: true})
+	}
+	report := newMissionLog(mission.Mission{})
+	report.title, report.body = "Child report", string(data)
+	a.modal = report
+	return nil
+}
+
+func parentName(ms mission.Mission) string {
+	if ms.Name != "" {
+		return ms.Name
+	}
+	return string(ms.ID)
+}
+
+func defaultLabel(v string) string {
+	if v == "" {
+		return "default"
+	}
+	return v
 }

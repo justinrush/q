@@ -28,6 +28,8 @@ func buildMissionSubcommand() *cobra.Command {
 	cmd.AddCommand(
 		buildMissionListSubcommand(),
 		buildMissionAddSubcommand(),
+		buildMissionChildSubcommand(),
+		buildMissionResultSubcommand(),
 		buildMissionMoveSubcommand(),
 		buildMissionApproveSubcommand(),
 		buildMissionQueueSubcommand(),
@@ -960,4 +962,92 @@ func modelLabel(ms mission.Mission) string {
 	}
 
 	return ms.Model + "/" + ms.Effort
+}
+
+func buildMissionChildSubcommand() *cobra.Command {
+	var parent, prompt, tool, model, effort string
+	var draft, plan bool
+	cmd := &cobra.Command{Use: "child <name>", Short: "Start a child mission in the parent's workspace", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if parent == "" {
+			parent = os.Getenv(mission.EnvMissionID)
+		}
+		if parent == "" {
+			return errors.New("--parent or Q_MISSION_ID is required")
+		}
+		if strings.TrimSpace(prompt) == "" {
+			return errors.New("--prompt is required")
+		}
+		c, err := connectDaemon(cmd.Context())
+		if err != nil {
+			return err
+		}
+		selected, err := parseToolFlag(tool)
+		if err != nil {
+			return err
+		}
+		ms, err := c.CreateMission(cmd.Context(), api.CreateMissionRequest{ParentMissionID: mission.MissionID(parent), Name: args[0], Prompt: prompt, Tool: selected, Model: model, Effort: effort, PlanMode: plan})
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), ms.ID); err != nil {
+			return err
+		}
+		if draft {
+			return nil
+		}
+		_, err = c.SetStatus(cmd.Context(), ms.ID, api.SetStatusRequest{To: mission.StatusActive})
+		if err != nil {
+			return fmt.Errorf("child %s was created but could not start: %w", ms.ID, err)
+		}
+		return nil
+	}}
+	cmd.Flags().StringVar(&parent, "parent", "", "Parent mission ID (defaults to Q_MISSION_ID)")
+	cmd.Flags().StringVar(&prompt, "prompt", "", "Complete task brief")
+	cmd.Flags().StringVar(&tool, "tool", "", "Agent tool override")
+	cmd.Flags().StringVar(&model, "model", "", "Model override")
+	cmd.Flags().StringVar(&effort, "effort", "", "Reasoning effort override")
+	cmd.Flags().BoolVar(&plan, "plan", false, "Start in planning mode")
+	cmd.Flags().BoolVar(&draft, "draft", false, "Create without starting")
+	return cmd
+}
+
+func buildMissionResultSubcommand() *cobra.Command {
+	var id, file string
+	cmd := &cobra.Command{Use: "result", Short: "Publish a child mission report", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if id == "" {
+			id = os.Getenv(mission.EnvMissionID)
+		}
+		if id == "" {
+			return errors.New("--mission or Q_MISSION_ID is required")
+		}
+		if file == "" {
+			return errors.New("--file is required")
+		}
+		var data []byte
+		var err error
+		if file == "-" {
+			data, err = io.ReadAll(io.LimitReader(cmd.InOrStdin(), (64<<10)+1))
+		} else {
+			data, err = os.ReadFile(file)
+		}
+		if err != nil {
+			return err
+		}
+		if len(data) > 64<<10 {
+			return errors.New("report exceeds 64 KiB")
+		}
+		c, err := connectDaemon(cmd.Context())
+		if err != nil {
+			return err
+		}
+		ms, err := c.PublishChildResult(cmd.Context(), mission.MissionID(id), string(data))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), ms.ResultPath)
+		return err
+	}}
+	cmd.Flags().StringVar(&id, "mission", "", "Child mission ID (defaults to Q_MISSION_ID)")
+	cmd.Flags().StringVar(&file, "file", "", "Markdown report path, or - for stdin")
+	return cmd
 }

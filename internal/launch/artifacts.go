@@ -65,6 +65,9 @@ func (l *Launcher) writeArtifacts(operation mission.Operation, ms mission.Missio
 // brief composes what a mission's agent is told when it starts with no
 // conversation of its own to resume.
 func (l *Launcher) brief(operation mission.Operation, ms mission.Mission) (string, error) {
+	if ms.ParentMissionID != "" {
+		return l.childBrief(ms)
+	}
 	prompt, err := l.composeBrief(operation, ms)
 	if err != nil || !l.memory {
 		return prompt, err
@@ -618,4 +621,45 @@ func (l *Launcher) executorBanner(ms mission.Mission) string {
 		banner += " · from: " + literal(from)
 	}
 	return fmt.Sprintf("%s · ownership: %d · started: %s", banner, ms.Lease.Epoch, l.now().Format(time.RFC3339))
+}
+
+// childBrief names the borrowed worktrees and a searchable history snapshot.
+func (l *Launcher) childBrief(ms mission.Mission) (string, error) {
+	if l.hostSnapshot == nil {
+		return "", fmt.Errorf("parent lookup unavailable")
+	}
+	parent, ok := l.hostSnapshot().Mission(ms.ParentMissionID)
+	if !ok || parent.MissionDir == "" {
+		return "", fmt.Errorf("parent mission %s has no workspace", ms.ParentMissionID)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Child mission: %s\n\nParent: %s (%s). Your working directory is your own session directory.\n", ms.Name, parent.Name, parent.ID)
+	b.WriteString("You share the parent's exact worktrees and branches. The parent and other children may edit them concurrently; coordinate edits and inspect current state before committing.\n\n## Shared repositories\n")
+	for _, work := range parent.Worktrees() {
+		fmt.Fprintf(&b, "- %s: %s (branch %s)\n", work.RepoName, work.WorktreePath, work.Branch)
+	}
+	history := filepath.Join(ms.MissionDir, mission.ArtifactDir, "parent-history.jsonl")
+	if parent.ToolHandoff.Conversation != "" {
+		planPath := filepath.Join(ms.MissionDir, mission.ArtifactDir, "parent-planning.md")
+		if _, err := os.Stat(planPath); errors.Is(err, os.ErrNotExist) {
+			if err := os.WriteFile(planPath, []byte(parent.ToolHandoff.Conversation), paths.FileMode); err != nil {
+				l.logger.Warn("copying parent planning conversation", "mission", ms.ID, "error", err)
+			}
+		}
+		fmt.Fprintf(&b, "\nThe parent's planning conversation is at %s. Search it if needed.\n", planPath)
+	}
+	if _, err := os.Stat(history); errors.Is(err, os.ErrNotExist) && parent.TranscriptPath != "" {
+		if err := copyFile(parent.TranscriptPath, filepath.Dir(history), history); err != nil {
+			l.logger.Warn("copying parent history", "mission", ms.ID, "error", err)
+		}
+	}
+	if _, err := os.Stat(history); err == nil {
+		fmt.Fprintf(&b, "\nA launch-time copy of the parent's conversation is at %s. It is JSON Lines and may be large; search it for context instead of reading it all.\n", history)
+	} else {
+		b.WriteString("\nNo parent conversation log was available at launch.\n")
+	}
+	b.WriteString("\n## Task\n\n")
+	b.WriteString(ms.Prompt)
+	b.WriteString("\n\nWhen done, write a concise Markdown report and publish it with q mission result --file <path>. Include changes, checks run, and unresolved issues.\n")
+	return b.String(), nil
 }

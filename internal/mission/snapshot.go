@@ -76,6 +76,7 @@ func cloneMission(t Mission) Mission {
 	t.Badges = slices.Clone(t.Badges)
 	t.LocalBadges = slices.Clone(t.LocalBadges)
 	t.BaseBranches = maps.Clone(t.BaseBranches)
+	t.ChildReports = maps.Clone(t.ChildReports)
 	t.PriorToolUsage = t.PriorToolUsage.Clone()
 	t.Usage = t.Usage.Clone()
 	t.CodexUsage = t.CodexUsage.Clone()

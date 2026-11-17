@@ -466,3 +466,8 @@ func (c *Client) TakeMission(ctx context.Context, id mission.MissionID, req Take
 func (c *Client) SendMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
 	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/send", struct{}{}, refreshTimeout)
 }
+
+// PublishChildResult saves a report for the parent to inspect.
+func (c *Client) PublishChildResult(ctx context.Context, id mission.MissionID, text string) (mission.Mission, error) {
+	return send[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/result", ChildResultRequest{Text: text})
+}

@@ -60,7 +60,8 @@ func assembleService(
 	hub := daemon.NewHub()
 
 	opts := []daemon.Option{
-		daemon.WithMemory(memories, s.Memory.CaptureEnabled()),
+		daemon.WithMemory(memories, s.Features.Memory),
+		daemon.WithNestedMissions(s.Features.NestedMissions),
 		daemon.WithLogger(logger),
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
@@ -98,6 +99,7 @@ func assembleService(
 	workspace := git.NewProvisioner(dirs, gitc, tmux,
 		git.WithLogger(logger),
 		git.WithBranchPrefix(s.Git.BranchPrefix),
+		git.WithParentLookup(func(id mission.MissionID) (mission.Mission, bool) { return store.Snapshot().Mission(id) }),
 	)
 
 	pairing, err := pairingOptions(s, dirs, run, gitc, workspace)
@@ -107,7 +109,7 @@ func assembleService(
 
 	opts = append(append(opts, daemon.WithBrancher(gitc)), pairing...)
 
-	launchOpts := []launch.Option{launch.WithLogger(logger), launch.WithHostSnapshot(store.Snapshot), launch.WithMemory(s.Memory.Enabled)}
+	launchOpts := []launch.Option{launch.WithLogger(logger), launch.WithHostSnapshot(store.Snapshot), launch.WithMemory(s.Features.Memory)}
 	for _, agent := range agentsFor(s) {
 		launchOpts = append(launchOpts, launch.WithAgent(agent))
 	}

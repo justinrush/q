@@ -611,3 +611,17 @@ func (a *App) attachSessionCmd(session string, steal bool) tea.Cmd {
 		return toastMsg{text: "returned from " + session}
 	})
 }
+
+func (a *App) createChild(parent mission.Mission, name, task string) tea.Cmd {
+	return func() tea.Msg {
+		ms, err := a.client.CreateMission(a.ctx(), api.CreateMissionRequest{ParentMissionID: parent.ID, Name: name, Prompt: task})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+		started, err := a.client.SetStatus(a.ctx(), ms.ID, api.SetStatusRequest{To: mission.StatusActive})
+		if err != nil {
+			return toastMsg{text: "child " + string(ms.ID) + " created but launch failed: " + err.Error(), err: true}
+		}
+		return toastMsg{text: launchedToast(a.snapshot, started)}
+	}
+}

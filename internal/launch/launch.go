@@ -117,6 +117,12 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 	ms.HookEpoch++
 
 	repos, err := mission.MissionRepos(operation, ms)
+	if ms.ParentMissionID != "" && l.hostSnapshot != nil {
+		if parent, ok := l.hostSnapshot().Mission(ms.ParentMissionID); ok && parent.LaunchReposFrozen {
+			repos = parent.LaunchRepos
+			err = nil
+		}
+	}
 	if err != nil {
 		return ms, err
 	}
@@ -152,7 +158,9 @@ func (l *Launcher) Launch(ctx context.Context, operation mission.Operation, ms m
 
 	provisioned, err := l.workspace.Prepare(ctx, operation, &ms)
 	if err != nil {
-		provisioned.Rollback(ctx)
+		if provisioned != nil {
+			provisioned.Rollback(ctx)
+		}
 
 		return ms, err
 	}

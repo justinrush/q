@@ -12,37 +12,23 @@ import (
 
 func TestMemoryCaptureConfiguration(t *testing.T) {
 	s := defaultSettings()
-	if s.Memory.Enabled || s.Memory.CaptureEnabled() {
-		t.Fatal("memory should default off")
+	if s.Features.Memory || s.Features.NestedMissions {
+		t.Fatal("features should default off")
 	}
-	if !s.Memory.CaptureOnFinish {
-		t.Fatal("capture should default on once memory is enabled")
-	}
-
 	var file fileConfig
-	if err := json.Unmarshal([]byte(`{"memory":{"enabled":true}}`), &file); err != nil {
+	if err := json.Unmarshal([]byte(`{"featureFlags":{"memory":true,"nestedMissions":true}}`), &file); err != nil {
 		t.Fatal(err)
 	}
 	applyFile(&s, file)
-	if !s.Memory.Enabled || !s.Memory.CaptureEnabled() {
-		t.Fatal("explicit enable was ignored")
+	if !s.Features.Memory || !s.Features.NestedMissions {
+		t.Fatal("feature flags ignored")
 	}
-
-	file = fileConfig{}
-	if err := json.Unmarshal([]byte(`{"memory":{"captureOnFinish":false}}`), &file); err != nil {
-		t.Fatal(err)
-	}
-	applyFile(&s, file)
-	if s.Memory.CaptureOnFinish || s.Memory.CaptureEnabled() || !s.Memory.Enabled {
-		t.Fatal("explicit capture false was ignored")
-	}
-
 	var buf bytes.Buffer
 	if err := writeSampleConfig(&buf, defaultSettings()); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), `"enabled": false`) {
-		t.Fatal("disabled memory omitted from config export")
+	if !strings.Contains(buf.String(), `"featureFlags"`) || strings.Contains(buf.String(), `"captureOnFinish"`) {
+		t.Fatal("feature flags omitted or legacy memory settings exported")
 	}
 }
 

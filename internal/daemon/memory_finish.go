@@ -55,6 +55,12 @@ func (s *Service) requestFinish(ctx context.Context, id mission.MissionID, req a
 	if err != nil {
 		return ms, err
 	}
+	if !req.CancelFinish {
+		snap := s.store.Snapshot()
+		if err := requireChildrenClosed(&snap, id); err != nil {
+			return ms, err
+		}
+	}
 	switch {
 	case req.CancelFinish:
 		err = s.changeFinish(id, func(m *mission.Mission) { m.Finish = mission.FinishCapture{} })

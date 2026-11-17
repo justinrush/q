@@ -323,15 +323,16 @@ func (s *Service) SyncNow(ctx context.Context) error {
 	snap := s.store.Snapshot()
 
 	resp, err := s.remote.Sync(ctx, api.SyncRequest{
-		MemorySync:    s.memory != nil,
-		Protocol:      exchangeProtocol(snap),
-		Version:       s.version,
-		Payload:       snap.Payload(),
-		TakeoverAfter: s.takeoverAfter,
-		Commands:      snap.Outbox,
-		Refs:          mine,
-		Expect:        snap.PeerID(),
-		Witness:       s.witnessName(),
+		MemorySync:     s.memory != nil,
+		NestedMissions: s.nestedMissions,
+		Protocol:       exchangeProtocol(snap),
+		Version:        s.version,
+		Payload:        snap.Payload(),
+		TakeoverAfter:  s.takeoverAfter,
+		Commands:       snap.Outbox,
+		Refs:           mine,
+		Expect:         snap.PeerID(),
+		Witness:        s.witnessName(),
 	})
 	if err != nil {
 		return err
@@ -341,6 +342,7 @@ func (s *Service) SyncNow(ctx context.Context) error {
 		return protocolMismatch(resp.Protocol, resp.Version)
 	}
 
+	s.peerNestedSupport.Store(resp.NestedMissions)
 	_, wasLinked := s.link.state()
 
 	if err := s.applyPeer(ctx, resp.Payload, 0, resp.Witness, resp.Results); err != nil {
@@ -459,6 +461,7 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 		window = DefaultTakeoverAfter
 	}
 
+	s.peerNestedSupport.Store(req.NestedMissions)
 	_, wasLinked := s.link.state()
 
 	if err := s.applyPeer(ctx, req.Payload, window, req.Witness, nil); err != nil {
@@ -479,13 +482,14 @@ func (s *Service) SyncExchange(ctx context.Context, req api.SyncRequest) (api.Sy
 	s.captured = s.captureWorktrees(ctx)
 
 	return api.SyncResponse{
-		MemorySync: s.memory != nil,
-		Protocol:   max(req.Protocol, exchangeProtocol(s.store.Snapshot())),
-		Version:    s.version,
-		Payload:    s.store.Snapshot().Payload(),
-		Results:    results,
-		Refs:       s.captured,
-		Witness:    s.witnessName(),
+		MemorySync:     s.memory != nil,
+		NestedMissions: s.nestedMissions,
+		Protocol:       max(req.Protocol, exchangeProtocol(s.store.Snapshot())),
+		Version:        s.version,
+		Payload:        s.store.Snapshot().Payload(),
+		Results:        results,
+		Refs:           s.captured,
+		Witness:        s.witnessName(),
 	}, nil
 }
 

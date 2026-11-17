@@ -24,7 +24,22 @@ func (b *Board) rowHeight(lane int) int {
 		return 2
 	}
 
+	if b.rowHasFamily(lane) {
+		return 1 + cardHeight()*min(max(len(b.missionsIn(lane))-b.scroll[lane], 0), b.layout().CardsPerRow)
+	}
 	return 1 + cardHeight()
+}
+
+func (b *Board) rowHasFamily(lane int) bool {
+	if !b.nestedMissions {
+		return false
+	}
+	for _, ms := range b.missionsIn(lane) {
+		if ms.ParentMissionID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // collapsedDone reports whether lane is the done lane shown as a summary.
@@ -128,10 +143,14 @@ func (b *Board) renderLaneRow(lane int, layout Layout) string {
 
 		for i := start; i < end; i++ {
 			selected := lane == b.lane && i == b.cursor[lane]
-			cards = append(cards, renderCard(missions[i], b.operation(missions[i]), b.hostOf(missions[i]), layout.CardWidth, selected))
+			cards = append(cards, b.renderMissionCard(missions[i], layout.CardWidth, selected))
 		}
 
-		body = lipgloss.JoinHorizontal(lipgloss.Top, spaceColumns(cards)...)
+		if b.rowHasFamily(lane) {
+			body = lipgloss.JoinVertical(lipgloss.Left, cards...)
+		} else {
+			body = lipgloss.JoinHorizontal(lipgloss.Top, spaceColumns(cards)...)
+		}
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body)
@@ -215,6 +234,9 @@ func (b *Board) handleMouseRows(msg tea.MouseMsg, layout Layout, x, y int) tea.C
 	}
 
 	slot := x / (layout.CardWidth + laneGap)
+	if b.rowHasFamily(lane) {
+		slot = (line - 1) / cardHeight()
+	}
 	idx := b.scroll[lane] + slot
 
 	if x < 0 || slot >= layout.CardsPerRow || idx >= len(missions) {
