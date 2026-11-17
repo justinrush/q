@@ -29,6 +29,9 @@ type (
 	toggleQueuedMsg struct{ Mission mission.Mission }
 	// takeMissionMsg asks to bring a mission the paired machine runs to this one.
 	takeMissionMsg struct{ Mission mission.Mission }
+	// takeFreshMsg asks to confirm taking a mission and starting a new agent
+	// for it, discarding the conversation.
+	takeFreshMsg struct{ Mission mission.Mission }
 	// sendMissionMsg asks to pin a mission to the paired machine and move it there.
 	sendMissionMsg struct{ Mission mission.Mission }
 	// reviewMissionMsg asks for the form that has another agent review a mission.
@@ -127,6 +130,13 @@ func (b *Board) toggleQueued() tea.Cmd {
 func (b *Board) takeMission() tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
 		return emit(takeMissionMsg{Mission: ms})
+	})
+}
+
+// takeMissionFresh brings the focused mission here and starts it over.
+func (b *Board) takeMissionFresh() tea.Cmd {
+	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		return emit(takeFreshMsg{Mission: ms})
 	})
 }
 

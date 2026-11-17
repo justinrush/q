@@ -112,6 +112,7 @@ Press `?` for the full keymap. The essentials:
 | `r` | have another agent review the selected mission; pick the agent, model, and effort |
 | `a` (Board) | queue a briefed mission so q starts it when a slot is free; press again to unqueue |
 | `t` | take a mission from the paired host and run its agent here |
+| `T` | take a mission and start a fresh agent for it here, discarding its conversation (asks first) |
 | `d` | delete a mission and reclaim its worktrees |
 | `/` | filter the board to one operation |
 | `v` | draw lanes as rows instead of columns, for a narrow window. In rows, `↑`/`↓` (`k`/`j`) change lane, `←`/`→` (`h`) change card, `K`/`J` move a card between lanes, and `H`/`L` reorder it. Set the starting layout with `tui.lanes` |
@@ -280,7 +281,14 @@ it is queued for it instead.
 To move an existing mission to the other machine and keep it there, press `S`
 on its card or run `q mission send ms_…`. Run `q mission take ms_…` (or press
 `t`) to bring a mission to this machine. Taking a mission also removes a pin
-that names the other machine.
+that names the other machine, and taking one on the always-on machine pins it
+there, so it is not handed straight back to the laptop.
+
+An agent's conversation lives on the machine that ran it. When a mission's
+conversation is not on this machine, q starts a fresh agent in the same
+worktrees, given the brief, instead of trying to resume it. To start over on
+purpose, press `T` or run `q mission take --fresh ms_…`: the mission is taken,
+its conversation is discarded, and a new agent starts here.
 
 ### Running work on the always-on machine
 

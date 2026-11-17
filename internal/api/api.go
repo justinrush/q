@@ -125,6 +125,13 @@ type CreateMissionRequest struct {
 	Pin string `json:"pin,omitempty"`
 }
 
+// TakeMissionRequest brings a mission to this host.
+type TakeMissionRequest struct {
+	// Fresh also discards the conversation this host remembers and starts a new
+	// agent for the mission in its existing worktrees.
+	Fresh bool `json:"fresh,omitempty"`
+}
+
 // UpdateMissionRequest patches a mission. Nil fields are left unchanged.
 type UpdateMissionRequest struct {
 	Name        *string              `json:"name,omitempty"`

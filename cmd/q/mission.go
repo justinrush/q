@@ -510,7 +510,9 @@ func buildMissionUnqueueSubcommand() *cobra.Command {
 }
 
 func buildMissionTakeSubcommand() *cobra.Command {
-	return &cobra.Command{
+	var fresh bool
+
+	cmd := &cobra.Command{
 		Use:   "take <mission-id>",
 		Short: "Bring a mission the paired machine is running to this one",
 		Long: "Move a mission's agent to this machine. The other machine is asked to stop " +
@@ -520,7 +522,12 @@ func buildMissionTakeSubcommand() *cobra.Command {
 			"happens here.\n\n" +
 			"q moves missions by itself: to the always-on machine when this one goes " +
 			"quiet, and back when an agent there finishes a turn. This is for when you " +
-			"do not want to wait for that.",
+			"do not want to wait for that.\n\n" +
+			"Taken on the always-on machine, a mission is also pinned there, so it is " +
+			"not handed straight back; taking it from the other machine undoes that.\n\n" +
+			"With --fresh, the conversation this machine remembers is discarded and a new " +
+			"agent is started in the mission's worktrees, given the brief. Use it when the " +
+			"old conversation cannot be resumed here.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := connectDaemon(cmd.Context())
@@ -528,16 +535,25 @@ func buildMissionTakeSubcommand() *cobra.Command {
 				return err
 			}
 
-			ms, err := c.TakeMission(cmd.Context(), mission.MissionID(args[0]))
+			ms, err := c.TakeMission(cmd.Context(), mission.MissionID(args[0]), api.TakeMissionRequest{Fresh: fresh})
 			if err != nil {
 				return err
 			}
 
-			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s now runs here (%s)\n", ms.Name, ms.Status.Label())
+			how := "now runs here"
+			if fresh {
+				how = "restarted fresh here"
+			}
+
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s %s (%s)\n", ms.Name, how, ms.Status.Label())
 
 			return err
 		},
 	}
+
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "start a new agent here instead of resuming the old conversation")
+
+	return cmd
 }
 
 func buildMissionSendSubcommand() *cobra.Command {

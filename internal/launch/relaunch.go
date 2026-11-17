@@ -2,10 +2,12 @@ package launch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/justinrush/q/internal/mission"
 	"github.com/justinrush/q/internal/paths"
 	"github.com/justinrush/q/internal/terminal"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,17 @@ func (l *Launcher) Relaunch(
 
 	if _, err := os.Stat(ms.MissionDir); err != nil {
 		return ms, fmt.Errorf("mission directory %s is gone: %w", ms.MissionDir, err)
+	}
+
+	// A session whose conversation is not on this disk cannot be resumed: the
+	// agent exits at once, and every retry does the same. That is a mission
+	// whose conversation happened on the other machine, or one since deleted.
+	// Starting fresh in the same worktrees is what can still work.
+	if ms.AgentSessionID != "" && !conversationHere(ms) {
+		l.logger.Info("starting a fresh agent: the conversation to resume is not on this machine",
+			"mission", ms.ID, "session", ms.AgentSessionID, "transcript", ms.TranscriptPath)
+		ms.AgentSessionID = ""
+		ms.TranscriptPath = ""
 	}
 
 	controlled := ms.PlanTransition.State == mission.PlanTransitionPending
@@ -321,4 +334,17 @@ func (l *Launcher) ReadyForTurn(ctx context.Context, ms mission.Mission) error {
 		return fmt.Errorf("codex terminal did not become ready")
 	}
 	return l.verifyAgentPane(ctx, ms)
+}
+
+// conversationHere reports whether a mission's agent conversation can be found
+// on this machine. With no log learned yet there is nothing to contradict the
+// session id, so it is trusted.
+func conversationHere(ms mission.Mission) bool {
+	if ms.TranscriptPath == "" {
+		return true
+	}
+
+	_, err := os.Stat(ms.TranscriptPath)
+
+	return !errors.Is(err, fs.ErrNotExist)
 }
