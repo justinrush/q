@@ -272,11 +272,13 @@ const hookQueueSize = 1024
 // while git or tmux work happens elsewhere.
 type hookQueue struct {
 	events chan api.HookRequest
+	// done closes once run has applied every queued event and returned.
+	done chan struct{}
 }
 
 // newHookQueue returns an empty queue.
 func newHookQueue() *hookQueue {
-	return &hookQueue{events: make(chan api.HookRequest, hookQueueSize)}
+	return &hookQueue{events: make(chan api.HookRequest, hookQueueSize), done: make(chan struct{})}
 }
 
 // offer enqueues an event, reporting false if the queue is full.
@@ -291,13 +293,19 @@ func (q *hookQueue) offer(req api.HookRequest) bool {
 
 // run reduces queued events until the channel closes.
 func (q *hookQueue) run(svc *Service) {
+	defer close(q.done)
+
 	for req := range q.events {
 		svc.ApplyHook(req)
 	}
 }
 
-// close stops the queue.
-func (q *hookQueue) close() { close(q.events) }
+// close stops the queue and waits for run to finish applying what was already
+// queued, so nothing is still writing to q's directories once it returns.
+func (q *hookQueue) close() {
+	close(q.events)
+	<-q.done
+}
 
 // DrainSpool applies every hook event that was recorded while the daemon was
 // unreachable, in the order it was observed.
