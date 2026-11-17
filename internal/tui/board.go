@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,9 +18,10 @@ import (
 type Board struct {
 	keys keys.Board
 
-	snapshot mission.Snapshot
-	width    int
-	height   int
+	snapshot       mission.Snapshot
+	nestedMissions bool
+	width          int
+	height         int
 
 	// lane is the focused column, indexed as domain.Lanes.
 	lane int
@@ -92,6 +94,8 @@ var boardActions = map[string]boardAction{
 	"ctrl+o": (*Board).openDebrief,
 	"m":      (*Board).messageAgent,
 	"n":      (*Board).newMission,
+	"N":      (*Board).childMission,
+	"I":      (*Board).childResults,
 	"e":      (*Board).editMission,
 	"d":      (*Board).deleteMission,
 	"x":      (*Board).deleteMission,
@@ -404,7 +408,21 @@ func (b *Board) registerClick(lane, cursor int) tea.Cmd {
 func (b *Board) Help() []key.Binding { return b.keys.ShortHelp() }
 
 // FullHelp returns the board's grouped bindings.
-func (b *Board) FullHelp() [][]key.Binding { return b.keys.FullHelp() }
+func (b *Board) FullHelp() [][]key.Binding {
+	groups := b.keys.FullHelp()
+	if !b.nestedMissions {
+		for i := range groups {
+			filtered := groups[i][:0]
+			for _, binding := range groups[i] {
+				if binding.Help().Key != "N" && binding.Help().Key != "I" {
+					filtered = append(filtered, binding)
+				}
+			}
+			groups[i] = filtered
+		}
+	}
+	return groups
+}
 
 // Title names the view.
 func (b *Board) Title() string { return "Board" }
@@ -417,6 +435,32 @@ func (b *Board) missionsIn(lane int) []mission.Mission {
 
 	missions := b.snapshot.MissionsInLane(mission.Lanes[lane])
 
+	if b.nestedMissions {
+		var grouped []mission.Mission
+		for _, parent := range missions {
+			if parent.ParentMissionID != "" {
+				continue
+			}
+			grouped = append(grouped, parent)
+			var children []mission.Mission
+			for _, child := range b.snapshot.Missions {
+				if child.ParentMissionID == parent.ID {
+					children = append(children, child)
+				}
+			}
+			sort.SliceStable(children, func(i, j int) bool { return children[i].SiblingOrder < children[j].SiblingOrder })
+			grouped = append(grouped, children...)
+		}
+		for _, child := range b.snapshot.Missions {
+			if child.ParentMissionID == "" {
+				continue
+			}
+			if _, ok := b.snapshot.Mission(child.ParentMissionID); !ok && child.Status == mission.Lanes[lane] {
+				grouped = append(grouped, child)
+			}
+		}
+		missions = grouped
+	}
 	if b.filter == "" {
 		return missions
 	}
@@ -682,7 +726,7 @@ func (b *Board) renderCards(lane, width int, layout Layout) string {
 
 	for i := start; i < end; i++ {
 		selected := lane == b.lane && i == b.cursor[lane]
-		cards = append(cards, renderCard(missions[i], b.operation(missions[i]), b.hostOf(missions[i]), width, selected))
+		cards = append(cards, b.renderMissionCard(missions[i], width, selected))
 	}
 
 	if end < len(missions) {
@@ -705,4 +749,31 @@ func (b *Board) FilterLabel() string {
 	}
 
 	return "filter: " + operation.Name
+}
+
+func (b *Board) renderMissionCard(ms mission.Mission, width int, selected bool) string {
+	if !b.nestedMissions {
+		copy := ms
+		copy.LocalBadges = nil
+		for _, badge := range ms.LocalBadges {
+			if badge.Kind != mission.BadgeChildResult {
+				copy.LocalBadges = append(copy.LocalBadges, badge)
+			}
+		}
+		return renderCard(copy, b.operation(ms), b.hostOf(ms), width, selected)
+	}
+	if ms.ParentMissionID == "" {
+		return renderCard(ms, b.operation(ms), b.hostOf(ms), width, selected)
+	}
+	copy := ms
+	connector := "└─"
+	for _, sibling := range b.snapshot.Missions {
+		if sibling.ParentMissionID == ms.ParentMissionID && sibling.SiblingOrder > ms.SiblingOrder {
+			connector = "├─"
+			break
+		}
+	}
+	copy.Name = connector + " " + ms.Name + " [" + string(ms.Status) + "]"
+	card := renderCard(copy, b.operation(ms), b.hostOf(ms), max(width-2, MinCardWidth), selected)
+	return "  " + strings.ReplaceAll(card, "\n", "\n  ")
 }

@@ -60,18 +60,18 @@ const (
 // tags, pointers for "was this key present", tolerant shapes — stay in the cmd
 // package, and the internal packages take plain Go values.
 type fileConfig struct {
-	Repos    *reposConfig    `json:"repos,omitempty"`
-	Git      *gitConfig      `json:"git,omitempty"`
-	Agents   *agentsConfig   `json:"agents,omitempty"`
-	Editor   *editorConfig   `json:"editor,omitempty"`
-	Terminal *terminalConfig `json:"terminal,omitempty"`
-	Paths    *pathsConfig    `json:"paths,omitempty"`
-	Cost     *costConfig     `json:"cost,omitempty"`
-	TUI      *tuiConfig      `json:"tui,omitempty"`
-	Memory   *memoryConfig   `json:"memory,omitempty"`
-	Queue    *queueConfig    `json:"queue,omitempty"`
-	Review   *reviewConfig   `json:"review,omitempty"`
-	Remote   *remoteConfig   `json:"remote,omitempty"`
+	Repos        *reposConfig        `json:"repos,omitempty"`
+	Git          *gitConfig          `json:"git,omitempty"`
+	Agents       *agentsConfig       `json:"agents,omitempty"`
+	Editor       *editorConfig       `json:"editor,omitempty"`
+	Terminal     *terminalConfig     `json:"terminal,omitempty"`
+	Paths        *pathsConfig        `json:"paths,omitempty"`
+	Cost         *costConfig         `json:"cost,omitempty"`
+	TUI          *tuiConfig          `json:"tui,omitempty"`
+	FeatureFlags *featureFlagsConfig `json:"featureFlags,omitempty"`
+	Queue        *queueConfig        `json:"queue,omitempty"`
+	Review       *reviewConfig       `json:"review,omitempty"`
+	Remote       *remoteConfig       `json:"remote,omitempty"`
 	// Tools maps a tool name to an absolute path, e.g. {"tmux": "/usr/bin/tmux"}.
 	Tools    map[string]string `json:"tools,omitempty"`
 	LogLevel string            `json:"logLevel,omitempty"`
@@ -84,9 +84,9 @@ type reviewConfig struct {
 	Effort string `json:"effort,omitempty"`
 }
 
-type memoryConfig struct {
-	Enabled         *bool `json:"enabled,omitempty"`
-	CaptureOnFinish *bool `json:"captureOnFinish,omitempty"`
+type featureFlagsConfig struct {
+	Memory         bool `json:"memory"`
+	NestedMissions bool `json:"nestedMissions"`
 }
 
 type queueConfig struct {
@@ -361,7 +361,10 @@ func applyFile(out *settings, file fileConfig) {
 		out.TUI.Lanes = strings.TrimSpace(*t.Lanes)
 	}
 
-	applyMemoryConfig(out, file.Memory)
+	if file.FeatureFlags != nil {
+		out.Features.Memory = file.FeatureFlags.Memory
+		out.Features.NestedMissions = file.FeatureFlags.NestedMissions
+	}
 	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
 	}
@@ -675,13 +678,13 @@ func writeSampleConfig(w io.Writer, s settings) error {
 			},
 			ModelRefresh: refreshString(s.Agents.ModelRefresh),
 		},
-		Editor:   &editorConfig{Command: s.Editor.Command},
-		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
-		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
-		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
-		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
-		Memory:   &memoryConfig{Enabled: &s.Memory.Enabled, CaptureOnFinish: &s.Memory.CaptureOnFinish},
-		Review:   &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
+		Editor:       &editorConfig{Command: s.Editor.Command},
+		Terminal:     &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
+		Paths:        &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
+		TUI:          &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
+		Queue:        &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
+		FeatureFlags: &featureFlagsConfig{Memory: s.Features.Memory, NestedMissions: s.Features.NestedMissions},
+		Review:       &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
 			SSH:           s.Remote.SSH,
 			Bin:           s.Remote.Bin,
@@ -777,13 +780,4 @@ func refreshString(d time.Duration) string {
 	}
 
 	return d.String()
-}
-
-func applyMemoryConfig(out *settings, m *memoryConfig) {
-	if m != nil && m.Enabled != nil {
-		out.Memory.Enabled = *m.Enabled
-	}
-	if m != nil && m.CaptureOnFinish != nil {
-		out.Memory.CaptureOnFinish = *m.CaptureOnFinish
-	}
 }

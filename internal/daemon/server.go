@@ -194,6 +194,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /v1/missions/{id}/ready", s.handleReady)
 	mux.HandleFunc("POST /v1/missions/{id}/open", s.handleOpenDebrief)
 	mux.HandleFunc("POST /v1/missions/{id}/message", s.handleMessage)
+	mux.HandleFunc("POST /v1/missions/{id}/result", s.handleChildResult)
 	mux.HandleFunc("GET /v1/missions/{id}/diff", s.handleDiff)
 	mux.HandleFunc("GET /v1/missions/{id}/attach", s.handleAttachCommand)
 	mux.HandleFunc("GET /v1/missions/{id}/delete-plan", s.handleDeletePlan)
@@ -812,4 +813,17 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, err)
 	}
+}
+
+func (s *Server) handleChildResult(w http.ResponseWriter, r *http.Request) {
+	var req api.ChildResultRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	ms, err := s.svc.PublishChildResult(mission.MissionID(r.PathValue("id")), req.Text)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ms)
 }

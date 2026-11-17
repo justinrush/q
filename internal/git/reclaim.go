@@ -15,6 +15,12 @@ import (
 // sure" gives the human nothing to be sure about.
 func (p *Provisioner) PlanReclaim(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Plan, error) {
 	plan := mission.Plan{TmuxSession: ms.TmuxSession}
+	if ms.ParentMissionID != "" {
+		if ms.TmuxSession != "" {
+			plan.SessionAlive = p.sessions.HasSession(ctx, ms.TmuxSession)
+		}
+		return plan, nil
+	}
 
 	if ms.TmuxSession != "" {
 		plan.SessionAlive = p.sessions.HasSession(ctx, ms.TmuxSession)
@@ -125,7 +131,10 @@ func (p *Provisioner) Reclaim(
 		}
 	}
 
-	report, err := p.reclaimRepos(ctx, operation, ms, plan, force)
+	var report mission.Report
+	if ms.ParentMissionID == "" {
+		report, err = p.reclaimRepos(ctx, operation, ms, plan, force)
+	}
 	if err != nil {
 		return mission.Report{}, err
 	}

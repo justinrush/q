@@ -383,3 +383,37 @@ func TestProvisionFetchesReposConcurrently(t *testing.T) {
 		})
 	}
 }
+
+func TestChildReclaimPreservesParentWorktree(t *testing.T) {
+	provisioner, _, dirs := newTestProvisioner(t)
+	operation := provisionOperation("/dev/weave")
+	parent := provisionMission()
+	parent.ID = "ms_parent123456"
+	parent.MissionDir = dirs.MissionDir("parent")
+	parent.Work = map[string]mission.RepoWork{"weave": {RepoName: "weave", Created: true, WorktreePath: filepath.Join(parent.MissionDir, "weave"), Branch: "feature"}}
+	if err := os.MkdirAll(parent.Work["weave"].WorktreePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	provisioner.parentLookup = func(id mission.MissionID) (mission.Mission, bool) { return parent, id == parent.ID }
+	child := provisionMission()
+	child.ID = "ms_child123456"
+	child.ParentMissionID = parent.ID
+	child.Slug = "child"
+	prepared, err := provisioner.Prepare(t.Context(), operation, &child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Work["weave"].WorktreePath != parent.Work["weave"].WorktreePath {
+		t.Fatal("child did not borrow parent path")
+	}
+	child.Work = prepared.Work
+	if _, err := provisioner.Reclaim(t.Context(), operation, child, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(parent.Work["weave"].WorktreePath); err != nil {
+		t.Fatalf("parent worktree removed: %v", err)
+	}
+	if _, err := os.Stat(child.MissionDir); !os.IsNotExist(err) {
+		t.Fatalf("child directory remains: %v", err)
+	}
+}

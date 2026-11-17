@@ -44,6 +44,7 @@ type Provisioner struct {
 	sessions     Sessions
 	logger       *slog.Logger
 	branchPrefix string
+	parentLookup func(mission.MissionID) (mission.Mission, bool)
 	now          func() time.Time
 }
 
@@ -86,6 +87,11 @@ func NewProvisioner(dirs paths.Dirs, client *Client, sessions Sessions, opts ...
 	}
 
 	return p
+}
+
+// WithParentLookup resolves the workspace borrowed by a child mission.
+func WithParentLookup(lookup func(mission.MissionID) (mission.Mission, bool)) ProvisionerOption {
+	return func(p *Provisioner) { p.parentLookup = lookup }
 }
 
 // DefaultBranchPrefix derives a branch namespace from the environment, matching
@@ -461,6 +467,31 @@ func (p *Provisioner) Prepare(
 	state, err := p.prepareMissionDir(operation, ms)
 	if err != nil {
 		return nil, err
+	}
+
+	if ms.ParentMissionID != "" {
+		if p.parentLookup == nil {
+			return &Provisioned{provisioner: p, operation: operation}, fmt.Errorf("parent workspace lookup unavailable")
+		}
+		parent, ok := p.parentLookup(ms.ParentMissionID)
+		if !ok || parent.MissionDir == "" {
+			return &Provisioned{provisioner: p, operation: operation}, fmt.Errorf("parent workspace unavailable")
+		}
+		if _, err := os.Stat(parent.MissionDir); err != nil {
+			return &Provisioned{provisioner: p, operation: operation}, fmt.Errorf("parent workspace unavailable: %w", err)
+		}
+		for _, repo := range parent.Work {
+			if repo.Created {
+				if _, err := os.Stat(repo.WorktreePath); err != nil {
+					return &Provisioned{provisioner: p, operation: operation}, fmt.Errorf("parent worktree %s unavailable: %w", repo.RepoName, err)
+				}
+			}
+		}
+		work := make(map[string]mission.RepoWork, len(parent.Work))
+		for name, repo := range parent.Work {
+			work[name] = repo
+		}
+		return &Provisioned{Work: work, provisioner: p, operation: operation}, nil
 	}
 
 	work, created, err := p.provision(ctx, operation, *ms, &state)

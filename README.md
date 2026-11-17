@@ -1352,7 +1352,7 @@ no sign of it; records already saved are kept and the `q memory` commands still
 work. Turn it on in q's config and restart its daemon:
 
 ```json
-{"memory":{"enabled":true}}
+{"featureFlags":{"memory":true,"nestedMissions":false}}
 ```
 
 ```sh
@@ -1417,12 +1417,12 @@ the capture turn. Sending ordinary work to the agent cancels its pending finish.
 A changed run or lease invalidates the old capture token. Retries cannot duplicate
 a batch already saved under the same token.
 
-Capture is on whenever memory is enabled. To keep memory enabled but disable
-automatic capture, set this in q's config and restart its daemon (manual saves
-and queries remain available):
+Memory capture follows the Memory feature switch. Both Memory and Nested missions
+start disabled. Press `F` on the board to toggle them and save; q restarts its
+daemon and reconnects. The equivalent configuration is:
 
 ```json
-{"memory":{"enabled":true,"captureOnFinish":false}}
+{"featureFlags":{"memory":false,"nestedMissions":false}}
 ```
 
 Search requests are appended locally to `memory-queries.jsonl` in the same data
@@ -1444,3 +1444,31 @@ An older peer can still share missions, but must be upgraded to share memory.
 There is no transcript backfill, embedding model, vector service, or external
 memory provider. Start by checking whether the first twenty captured missions
 help later agents recover decisions and avoid repeating discoveries.
+
+## Nested missions
+
+Enable Nested missions with `F` in the TUI or `featureFlags.nestedMissions` in
+`~/.q-config.json` and restart the daemon. Select a launched parent and press
+Shift+N to name a child and write its task brief. The child starts immediately;
+the parent and children can work concurrently in the same worktrees and branches.
+Children have separate agent sessions and a launch-time copy of the parent's
+available history in their own `.q` directory. Their first prompt names the shared
+repository paths and history file, but does not load that history into context.
+
+From an agent or shell, create a child with:
+
+```sh
+q mission child "Update the API" --parent ms_… --prompt "Implement the API change."
+```
+
+`--parent` defaults to `$Q_MISSION_ID` inside a mission. `--draft` creates a
+briefing card without launching. Tool, model, effort, and planning settings may
+be overridden. Children cannot have children of their own.
+
+A child publishes its result with `q mission result --file report.md` (or `--file -`
+for stdin). The report is stored under the parent's `.q/children/` directory and
+marks its card. Select the parent and press `I` to read child reports. Finish or
+delete every open child before cleaning up the parent. A child cleanup removes
+only its own session and artifacts; shared worktrees belong to the parent.
+Children remain on the parent's host while open. Parent migration and takeover
+are deferred until all children are closed.

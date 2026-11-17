@@ -94,7 +94,10 @@ func tuiOptions() (tui.Options, error) {
 	}
 
 	return tui.Options{
-		Horizontal: horizontal,
+		Horizontal:            horizontal,
+		FeatureMemory:         cfg.Features.Memory,
+		FeatureNestedMissions: cfg.Features.NestedMissions,
+		SaveFeatures:          saveFeatureFlags,
 		Repos: git.ScanOptions{
 			Roots:    cfg.Repos.Roots,
 			MaxDepth: cfg.Repos.MaxDepth,

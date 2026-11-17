@@ -432,7 +432,7 @@ With memory left at its default (off), finishing a mission with Shift+L closes i
 straight away, the card never shows a saving indicator, and a new mission's
 `.q` prompt has no "Shared q memory" section.
 
-For a live smoke check, set `{"memory":{"enabled":true}}` on both paired daemons,
+For a live smoke check, set `{"featureFlags":{"memory":true,"nestedMissions":false}}` on both paired daemons,
 then:
 
 1. Finish a clean Claude mission with Shift+L. Observe the saving indicator, the
@@ -476,3 +476,17 @@ Automated tests cover both directions, native/q approval, stale hooks, persisted
 launch epochs, context export, peer session invalidation, accounting, and legacy
 configuration. The existing `Q_CODEX_PLAN_SMOKE=1` test additionally verifies live
 managed-server mode/model controls; it does not replace both interactive flows.
+
+
+### Nested missions and feature switches
+
+With authenticated agents, enable `featureFlags.nestedMissions` using `F` and
+confirm the board reconnects after the daemon restart. Start a child with Shift+N
+under a launched parent. Check that both agents see the same working tree, that
+the child prompt names the parent's history snapshot without inlining it, and
+that `q mission result --file` makes a report visible through `I` on the parent.
+Close the child and confirm the parent's worktrees remain. Try parent cleanup
+while a child is still open; it must refuse, including with force. Disable the
+feature and confirm child controls disappear while existing children remain
+manageable as flat cards. Repeat the toggle with a running agent and verify its
+session continues.

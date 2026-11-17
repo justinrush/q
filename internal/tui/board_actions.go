@@ -17,7 +17,9 @@ type (
 	// messagePromptMsg asks for the dialog that sends text to a live agent.
 	messagePromptMsg struct{ Mission mission.Mission }
 	// newMissionMsg asks for the new-mission form.
-	newMissionMsg struct{}
+	newMissionMsg   struct{}
+	childMissionMsg struct{ Parent mission.Mission }
+	childResultsMsg struct{ Mission mission.Mission }
 	// editMissionMsg asks for the edit form for a mission.
 	editMissionMsg struct{ Mission mission.Mission }
 	// deleteMissionMsg asks to confirm deleting a mission.
@@ -53,6 +55,7 @@ type (
 	// reorderMsg asks to change a mission's position within its lane.
 	reorderMsg struct {
 		Mission mission.Mission
+		Target  mission.Mission
 		Delta   int
 	}
 )
@@ -176,7 +179,16 @@ func (b *Board) moveCardRight() tea.Cmd { return b.moveCard(1) }
 // actually happen.
 func (b *Board) moveCard(delta int) tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
-		target := clamp(b.lane+delta, len(mission.Lanes)-1)
+		lane := b.lane
+		if b.nestedMissions && ms.ParentMissionID != "" {
+			for i, status := range mission.Lanes {
+				if status == ms.Status {
+					lane = i
+					break
+				}
+			}
+		}
+		target := clamp(lane+delta, len(mission.Lanes)-1)
 		to := mission.Lanes[target]
 
 		if to == ms.Status {
@@ -209,19 +221,28 @@ func (b *Board) reorderUp() tea.Cmd { return b.reorder(-1) }
 // reorderDown moves the focused mission later in its lane.
 func (b *Board) reorder(delta int) tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
-		missions := b.missionsIn(b.lane)
-		idx := clamp(b.cursor[b.lane], len(missions)-1)
-
-		target := idx + delta
-		if target < 0 || target >= len(missions) {
-			return nil
+		projected := b.missionsIn(b.lane)
+		var peers []mission.Mission
+		for _, candidate := range projected {
+			if ms.ParentMissionID != "" {
+				if candidate.ParentMissionID == ms.ParentMissionID {
+					peers = append(peers, candidate)
+				}
+			} else if candidate.ParentMissionID == "" {
+				peers = append(peers, candidate)
+			}
 		}
-
-		b.cursor[b.lane] = target
-		b.ensureVisible()
-		b.follow = ms.ID
-
-		return emit(reorderMsg{Mission: ms, Delta: delta})
+		for i, candidate := range peers {
+			if candidate.ID == ms.ID {
+				target := i + delta
+				if target < 0 || target >= len(peers) {
+					return nil
+				}
+				b.follow = ms.ID
+				return emit(reorderMsg{Mission: ms, Target: peers[target], Delta: delta})
+			}
+		}
+		return nil
 	})
 }
 
@@ -232,4 +253,23 @@ func (b *Board) showLog() tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
 		return emit(missionLogMsg{Mission: ms})
 	})
+}
+
+func (b *Board) childMission() tea.Cmd {
+	if !b.nestedMissions {
+		return nil
+	}
+	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		if ms.ParentMissionID != "" || ms.IsReview() || !ms.Launched() || ms.Status.Terminal() {
+			return nil
+		}
+		return emit(childMissionMsg{Parent: ms})
+	})
+}
+
+func (b *Board) childResults() tea.Cmd {
+	if !b.nestedMissions {
+		return nil
+	}
+	return b.withSelected(func(ms mission.Mission) tea.Cmd { return emit(childResultsMsg{Mission: ms}) })
 }

@@ -66,7 +66,7 @@ func (s *Service) captureWorktrees(ctx context.Context) []mission.RepoState {
 	var states []mission.RepoState
 
 	for _, ms := range s.store.Snapshot().Missions {
-		if !ms.Running() {
+		if !ms.Running() || ms.ParentMissionID != "" {
 			continue
 		}
 
@@ -219,7 +219,7 @@ func (s *Service) settleWorktrees(ctx context.Context, mine, theirs []mission.Re
 	changed := false
 
 	for _, ms := range s.store.Snapshot().Missions {
-		if !ms.Running() {
+		if !ms.Running() || ms.ParentMissionID != "" {
 			continue
 		}
 

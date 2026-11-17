@@ -18,7 +18,7 @@ import (
 // no JSON tags: the file format lives in config.go, so a change to either can be
 // made without touching the other.
 type settings struct {
-	Memory   memorySettings
+	Features featureFlagsSettings
 	Repos    reposSettings
 	Git      gitSettings
 	Agents   agentsSettings
@@ -36,19 +36,11 @@ type settings struct {
 	LogLevel string
 }
 
-// memorySettings configures shared q memory.
-//
-// Enabled is the feature switch, off by default: without it agents are not
-// told about memory, nothing is captured when a mission finishes, and the board
-// shows no trace of it. CaptureOnFinish only matters while Enabled is set.
-type memorySettings struct {
-	Enabled         bool
-	CaptureOnFinish bool
+// featureFlagsSettings gates opt-in features.
+type featureFlagsSettings struct {
+	Memory         bool
+	NestedMissions bool
 }
-
-// CaptureEnabled reports whether finishing a mission first asks its agent to
-// save memory.
-func (m memorySettings) CaptureEnabled() bool { return m.Enabled && m.CaptureOnFinish }
 
 // queueSettings configures how the daemon works through queued missions.
 
@@ -257,7 +249,7 @@ func defaultSettings() settings {
 		Terminal: terminalSettings{Mode: defaultTerminalMode()},
 		TUI:      tuiSettings{Mouse: true, Lanes: lanesVertical},
 		Queue:    queueSettings{MaxConcurrent: daemon.DefaultMaxConcurrent},
-		Memory:   memorySettings{CaptureOnFinish: true},
+		Features: featureFlagsSettings{},
 		Remote: remoteSettings{
 			Bin:           remote.DefaultBin,
 			Name:          defaultHostName(),

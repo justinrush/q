@@ -88,7 +88,7 @@ func (s *Service) takeOver(ctx context.Context, snap mission.Snapshot) {
 			return
 		}
 
-		if s.holds(ms) || ms.Pin == snap.PeerID() || !ms.Running() {
+		if familyHasOpenChildren(&snap, ms) || s.holds(ms) || ms.Pin == snap.PeerID() || !ms.Running() {
 			continue
 		}
 
@@ -207,8 +207,9 @@ func atTurnEnd(ms mission.Mission) bool {
 func (s *Service) release(ctx context.Context, ms mission.Mission, to mission.HostID, label string) bool {
 	s.finishMu.Lock()
 	defer s.finishMu.Unlock()
-	current, ok := s.store.Snapshot().Mission(ms.ID)
-	if !ok || !s.holds(current) || current.Status.Terminal() || current.ToolHandoffPending() {
+	snap := s.store.Snapshot()
+	current, ok := snap.Mission(ms.ID)
+	if !ok || familyHasOpenChildren(&snap, current) || !s.holds(current) || current.Status.Terminal() || current.ToolHandoffPending() {
 		return false
 	}
 	ms = current
@@ -286,6 +287,9 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 	ms, ok := snap.Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+	}
+	if familyHasOpenChildren(&snap, ms) {
+		return mission.Mission{}, fmt.Errorf("%w: mission has an open child or borrows a parent workspace", ErrConflict)
 	}
 
 	// Taking a mission here overrides a pin that would send it straight back,

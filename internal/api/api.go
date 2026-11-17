@@ -116,7 +116,8 @@ type CreateMissionRequest struct {
 	// reviewer's instructions itself, at launch. An unset Pin becomes the host
 	// running the reviewed mission, which is the one that has its worktrees and
 	// its agent's transcript.
-	ReviewOf mission.MissionID `json:"reviewOf,omitempty"`
+	ReviewOf        mission.MissionID `json:"reviewOf,omitempty"`
+	ParentMissionID mission.MissionID `json:"parentMissionId,omitempty"`
 	// Queued asks the daemon to start the mission on its own once a slot is
 	// free. Without it a new mission waits in briefing for a human, as before.
 	Queued bool `json:"queued,omitempty"`
@@ -272,8 +273,9 @@ const SyncProtocolCrossTools = 2
 
 // SyncRequest is the primary's half of an exchange.
 type SyncRequest struct {
-	MemorySync bool `json:"memorySync,omitempty"`
-	Protocol   int  `json:"protocol"`
+	NestedMissions bool `json:"nestedMissions,omitempty"`
+	MemorySync     bool `json:"memorySync,omitempty"`
+	Protocol       int  `json:"protocol"`
 	// Version is the sender's q version, reported when the protocols disagree
 	// so the error names what to upgrade.
 	Version string          `json:"version,omitempty"`
@@ -298,10 +300,11 @@ type SyncRequest struct {
 
 // SyncResponse is the secondary's half.
 type SyncResponse struct {
-	MemorySync bool            `json:"memorySync,omitempty"`
-	Protocol   int             `json:"protocol"`
-	Version    string          `json:"version,omitempty"`
-	Payload    mission.Payload `json:"payload"`
+	NestedMissions bool            `json:"nestedMissions,omitempty"`
+	MemorySync     bool            `json:"memorySync,omitempty"`
+	Protocol       int             `json:"protocol"`
+	Version        string          `json:"version,omitempty"`
+	Payload        mission.Payload `json:"payload"`
 	// Results answers each command by id. A command with no result was not
 	// attempted and is retried on the next exchange.
 	Results []CommandResult `json:"results,omitempty"`
@@ -410,4 +413,9 @@ type Forgotten struct {
 	// PeerTold reports that the other host was reached and ended the pairing on
 	// its side too. When false, it still believes in the pairing.
 	PeerTold bool `json:"peerTold,omitempty"`
+}
+
+// ChildResultRequest publishes a child mission's concise report.
+type ChildResultRequest struct {
+	Text string `json:"text"`
 }

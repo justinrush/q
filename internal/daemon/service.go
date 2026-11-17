@@ -33,15 +33,17 @@ var (
 // (a mission starts in briefing, a codex mission cannot use plan mode, an operation with
 // live missions cannot be deleted) are unit-testable without a server or a git tree.
 type Service struct {
-	memory          *memory.Store
-	captureOnFinish bool
-	finishMu        sync.Mutex
-	memoryLink      memoryLink
-	store           *mission.Store
-	hub             *Hub
-	dirs            paths.Dirs
-	logger          *slog.Logger
-	now             func() time.Time
+	memory            *memory.Store
+	captureOnFinish   bool
+	nestedMissions    bool
+	peerNestedSupport atomic.Bool
+	finishMu          sync.Mutex
+	memoryLink        memoryLink
+	store             *mission.Store
+	hub               *Hub
+	dirs              paths.Dirs
+	logger            *slog.Logger
+	now               func() time.Time
 
 	// launcher is nil in tests and in any daemon that has no agent tooling
 	// available, in which case launching is refused rather than attempted.
@@ -317,6 +319,11 @@ func (s *Service) DeleteOperation(id mission.OperationID, force bool) error {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, id)
 		}
 
+		for _, candidate := range snap.MissionsForOperation(id) {
+			if candidate.ParentMissionID != "" && !candidate.Status.Terminal() {
+				return fmt.Errorf("%w: operation has open child missions", ErrConflict)
+			}
+		}
 		active := snap.ActiveMissionsForOperation(id)
 		if len(active) > 0 && !force {
 			return fmt.Errorf("%w: operation %s still has %d unfinished mission(s)", ErrConflict, id, len(active))
@@ -349,6 +356,16 @@ func (s *Service) DeleteOperation(id mission.OperationID, force bool) error {
 // Nothing here launches anything. A created mission is a written brief, and
 // moving it to the active lane is a separate, explicit act.
 func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, error) {
+	if req.ParentMissionID != "" {
+		s.finishMu.Lock()
+		defer s.finishMu.Unlock()
+	}
+	if req.ParentMissionID != "" && !s.nestedMissions {
+		return mission.Mission{}, fmt.Errorf("%w: nested missions are disabled", ErrConflict)
+	}
+	if req.ParentMissionID != "" && s.store.Snapshot().Peer != nil && !s.peerNestedSupport.Load() {
+		return mission.Mission{}, fmt.Errorf("%w: paired q does not advertise nested mission support", ErrConflict)
+	}
 	// A review is named after what it reviews and briefed by q, so it may
 	// arrive with neither.
 	if req.ReviewOf == "" {
@@ -394,6 +411,13 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 		}
 
 		ms.Order = snap.NextOrder(mission.StatusBriefing)
+		if ms.ParentMissionID != "" {
+			for _, sibling := range snap.Missions {
+				if sibling.ParentMissionID == ms.ParentMissionID && sibling.SiblingOrder >= ms.SiblingOrder {
+					ms.SiblingOrder = sibling.SiblingOrder + 1
+				}
+			}
+		}
 		snap.PutMission(ms)
 
 		return nil
@@ -418,6 +442,11 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (mission.Mission, error) {
 	var zero mission.Mission
 
+	if req.ParentMissionID != "" {
+		if err := resolveChild(snap, &req); err != nil {
+			return zero, err
+		}
+	}
 	if req.InheritFrom != "" {
 		parent, ok := snap.Mission(req.InheritFrom)
 		if !ok {
@@ -474,22 +503,23 @@ func resolveCreate(snap *mission.Snapshot, req api.CreateMissionRequest) (missio
 	name := strings.TrimSpace(req.Name)
 
 	return mission.Mission{
-		OperationID:  req.OperationID,
-		Name:         name,
-		Slug:         mission.Slug(name),
-		Tool:         tool,
-		Prompt:       req.Prompt,
-		PlanMode:     req.PlanMode,
-		Model:        req.Model,
-		Effort:       req.Effort,
-		PlanTool:     req.PlanTool,
-		PlanModel:    req.PlanModel,
-		PlanEffort:   req.PlanEffort,
-		ExtraRepos:   normalizeRepos(req.ExtraRepos),
-		BaseBranches: normalizeBaseBranches(req.BaseBranches),
-		ReviewOf:     req.ReviewOf,
-		Queued:       req.Queued,
-		Pin:          pin,
+		OperationID:     req.OperationID,
+		Name:            name,
+		Slug:            mission.Slug(name),
+		Tool:            tool,
+		Prompt:          req.Prompt,
+		PlanMode:        req.PlanMode,
+		Model:           req.Model,
+		Effort:          req.Effort,
+		PlanTool:        req.PlanTool,
+		PlanModel:       req.PlanModel,
+		PlanEffort:      req.PlanEffort,
+		ExtraRepos:      normalizeRepos(req.ExtraRepos),
+		BaseBranches:    normalizeBaseBranches(req.BaseBranches),
+		ReviewOf:        req.ReviewOf,
+		ParentMissionID: req.ParentMissionID,
+		Queued:          req.Queued,
+		Pin:             pin,
 	}, nil
 }
 
@@ -629,6 +659,13 @@ func (s *Service) UpdateMission(id mission.MissionID, req api.UpdateMissionReque
 
 // applyMissionPatch mutates mission according to req, validating as it goes.
 func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.UpdateMissionRequest) error {
+	if ms.ParentMissionID != "" && (req.OperationID != nil || req.ExtraRepos != nil || req.BaseBranches != nil || req.Pin != nil) {
+		return fmt.Errorf("%w: child workspace and host are fixed by its parent", ErrConflict)
+	}
+	if req.OperationID != nil && familyHasOpenChildren(snap, *ms) {
+		return fmt.Errorf("%w: parent with open children cannot change operation", ErrConflict)
+	}
+
 	if req.OperationID != nil {
 		if _, ok := snap.Operation(*req.OperationID); !ok {
 			return fmt.Errorf("%w: operation %s", ErrNotFound, *req.OperationID)
@@ -652,7 +689,19 @@ func applyMissionPatch(snap *mission.Snapshot, ms *mission.Mission, req api.Upda
 	}
 
 	if req.Order != nil {
-		ms.Order = *req.Order
+		if ms.ParentMissionID != "" {
+			previous := ms.SiblingOrder
+			for _, sibling := range snap.Missions {
+				if sibling.ParentMissionID == ms.ParentMissionID && sibling.SiblingOrder == *req.Order && sibling.ID != ms.ID {
+					sibling.SiblingOrder = previous
+					snap.PutMission(sibling)
+					break
+				}
+			}
+			ms.SiblingOrder = *req.Order
+		} else {
+			ms.Order = *req.Order
+		}
 	}
 
 	if err := applyQueuePatch(snap, ms, req); err != nil {
@@ -845,6 +894,9 @@ func (s *Service) setStatus(
 // this only forgets the record.
 func (s *Service) DeleteMission(id mission.MissionID) error {
 	if err := s.store.Mutate("mission.delete", func(snap *mission.Snapshot) error {
+		if err := requireChildrenClosed(snap, id); err != nil {
+			return err
+		}
 		if !snap.DeleteMission(id) {
 			return fmt.Errorf("%w: mission %s", ErrNotFound, id)
 		}
@@ -1018,4 +1070,56 @@ func validatePlanTool(tool, planner mission.Tool, plan bool) error {
 		return fmt.Errorf("%w: cross-tool planning supports only Claude and Codex", ErrInvalid)
 	}
 	return nil
+}
+
+// WithNestedMissions enables creation of child sessions.
+func WithNestedMissions(enabled bool) Option { return func(s *Service) { s.nestedMissions = enabled } }
+
+func resolveChild(snap *mission.Snapshot, req *api.CreateMissionRequest) error {
+	parent, ok := snap.Mission(req.ParentMissionID)
+	if !ok {
+		return fmt.Errorf("%w: parent mission %s", ErrNotFound, req.ParentMissionID)
+	}
+	if parent.ParentMissionID != "" || parent.IsReview() || !parent.Launched() || parent.Status.Terminal() || parent.MissionDir == "" {
+		return fmt.Errorf("%w: parent mission has no available workspace", ErrConflict)
+	}
+	if req.InheritFrom != "" || req.ReviewOf != "" || len(req.ExtraRepos) != 0 || len(req.BaseBranches) != 0 {
+		return fmt.Errorf("%w: children cannot review or override repositories", ErrInvalid)
+	}
+	if req.OperationID != "" && req.OperationID != parent.OperationID {
+		return fmt.Errorf("%w: child operation differs from parent", ErrInvalid)
+	}
+	if req.Pin != "" && req.Pin != string(parent.Lease.Holder) {
+		return fmt.Errorf("%w: child host differs from parent", ErrInvalid)
+	}
+	req.OperationID = parent.OperationID
+	req.ExtraRepos = parent.ExtraRepos
+	req.BaseBranches = parent.BaseBranches
+	req.Pin = string(parent.Lease.Holder)
+	if req.Tool == "" {
+		req.Tool = parent.Tool
+	}
+	if req.Model == "" {
+		req.Model = parent.Model
+	}
+	if req.Effort == "" {
+		req.Effort = parent.Effort
+	}
+	return nil
+}
+
+func requireChildrenClosed(snap *mission.Snapshot, id mission.MissionID) error {
+	for _, child := range snap.Missions {
+		if child.ParentMissionID == id && !child.Status.Terminal() {
+			return fmt.Errorf("%w: finish child mission %s first", ErrConflict, child.ID)
+		}
+	}
+	return nil
+}
+
+func familyHasOpenChildren(snap *mission.Snapshot, ms mission.Mission) bool {
+	if ms.ParentMissionID != "" {
+		return true
+	}
+	return requireChildrenClosed(snap, ms.ID) != nil
 }

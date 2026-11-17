@@ -52,6 +52,10 @@ type Reclaimer interface {
 // lost rather than asking the human to be sure about nothing.
 func (s *Service) PlanDelete(ctx context.Context, id mission.MissionID) (mission.Plan, error) {
 	ms, operation, err := s.missionWithOperation(id)
+	if err == nil {
+		snap := s.store.Snapshot()
+		err = requireChildrenClosed(&snap, id)
+	}
 	if err != nil {
 		return mission.Plan{}, err
 	}
@@ -100,6 +104,10 @@ func (s *Service) ReclaimMission(
 	force bool,
 ) (mission.Report, error) {
 	ms, operation, err := s.missionWithOperation(id)
+	if err == nil {
+		snap := s.store.Snapshot()
+		err = requireChildrenClosed(&snap, id)
+	}
 	if err != nil {
 		return mission.Report{}, err
 	}
