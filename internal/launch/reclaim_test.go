@@ -59,7 +59,7 @@ func TestPlanDiscardsACleanUnusedBranch(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -83,7 +83,7 @@ func TestPlanUsesFrozenReposAfterOperationChanges(t *testing.T) {
 	operation.Repos = []mission.Repo{{Name: "different", Path: "/dev/different"}}
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -101,7 +101,7 @@ func TestPlanKeepsABranchHoldingUnpushedCommits(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "3", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -124,7 +124,7 @@ func TestPlanDiscardsAPushedBranch(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "3", true)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -146,7 +146,7 @@ func TestReclaimRefusesUncommittedWorkWithoutForce(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, " M main.go", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -181,7 +181,7 @@ func TestReclaimKillsTheSessionBeforeRemovingWorktrees(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.Expect(tmuxBin+" has-session -t ="+testSession, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+testSession, "")
 
 	if _, err := launcher.Reclaim(t.Context(), operation, ms, false); err != nil {
 		t.Fatalf("Reclaim: %v", err)
@@ -219,7 +219,7 @@ func TestReclaimRemovesTheMissionDirectory(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	report, err := launcher.Reclaim(t.Context(), operation, ms, false)
 	if err != nil {
@@ -242,7 +242,7 @@ func TestReclaimKeepsTheMissionDirectoryOnFailure(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 	fake.ExpectExit(gitBin+" -C /dev/weave/.git worktree remove "+ms.Work["weave"].WorktreePath,
 		1, "worktree is locked")
 
@@ -267,7 +267,7 @@ func TestReclaimKeepsABranchGitRefusesToDelete(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 	fake.ExpectExit(gitBin+" -C /dev/weave/.git branch -d jarush/add-endpoint", 1, "not fully merged")
 
 	report, err := launcher.Reclaim(t.Context(), operation, ms, false)
@@ -291,7 +291,7 @@ func TestForcedReclaimKeepsABranchWithCommits(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, " M main.go", "2", false)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	report, err := launcher.Reclaim(t.Context(), operation, ms, true)
 	if err != nil {
@@ -317,7 +317,7 @@ func TestPlanTreatsAMissingWorktreeAsDiscardable(t *testing.T) {
 	work.WorktreePath = filepath.Join(ms.MissionDir, "gone")
 	ms.Work["weave"] = work
 
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -335,7 +335,7 @@ func TestPlanReportsAnUninspectableRepo(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	fake.ExpectExit(gitBin+" -C /dev/weave rev-parse --git-common-dir", 128, "not a git repository")
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {
@@ -357,7 +357,7 @@ func TestPlanReportsALiveSession(t *testing.T) {
 	ms, operation := reclaimMission(t)
 
 	expectRepoState(fake, ms, "", "0", false)
-	fake.Expect(tmuxBin+" has-session -t ="+testSession, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+testSession, "")
 
 	plan, err := launcher.PlanReclaim(t.Context(), operation, ms)
 	if err != nil {

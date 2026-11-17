@@ -68,7 +68,7 @@ func TestCrossToolHandoffKeepsPersistedEpoch(t *testing.T) {
 	ms.AgentSessionID = ""
 	ms.HookEpoch = 7
 	ms.ToolHandoff.State = mission.ToolHandoffStarting
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "missing")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "missing")
 	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "implement")
 	if err != nil {
 		t.Fatal(err)

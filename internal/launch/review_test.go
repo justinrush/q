@@ -79,7 +79,7 @@ func TestLaunchReview(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			launcher, fake, _ := newTestLauncher(t)
-			fake.ExpectExit(tmuxBin+" has-session -t ="+reviewSession, 1, "can't find session")
+			fake.ExpectExit(tmuxBin+" -u has-session -t ="+reviewSession, 1, "can't find session")
 
 			source := reviewedMission(t, tc.transcript)
 			withMissions(launcher, source)
@@ -177,7 +177,7 @@ func TestLaunchReviewWithoutItsSubject(t *testing.T) {
 
 func TestRelaunchReviewKeepsItsAccess(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+reviewSession, 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+reviewSession, 1, "can't find session")
 
 	withMissions(launcher, reviewedMission(t, ""))
 
