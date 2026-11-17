@@ -36,8 +36,21 @@ type settings struct {
 	LogLevel string
 }
 
+// memorySettings configures shared q memory.
+//
+// Enabled is the feature switch, off by default: without it agents are not
+// told about memory, nothing is captured when a mission finishes, and the board
+// shows no trace of it. CaptureOnFinish only matters while Enabled is set.
+type memorySettings struct {
+	Enabled         bool
+	CaptureOnFinish bool
+}
+
+// CaptureEnabled reports whether finishing a mission first asks its agent to
+// save memory.
+func (m memorySettings) CaptureEnabled() bool { return m.Enabled && m.CaptureOnFinish }
+
 // queueSettings configures how the daemon works through queued missions.
-type memorySettings struct{ CaptureOnFinish bool }
 
 type queueSettings struct {
 	// MaxConcurrent is how many queued missions run at once on this machine. A

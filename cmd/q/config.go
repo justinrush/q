@@ -85,6 +85,7 @@ type reviewConfig struct {
 }
 
 type memoryConfig struct {
+	Enabled         *bool `json:"enabled,omitempty"`
 	CaptureOnFinish *bool `json:"captureOnFinish,omitempty"`
 }
 
@@ -679,7 +680,7 @@ func writeSampleConfig(w io.Writer, s settings) error {
 		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
 		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
 		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
-		Memory:   &memoryConfig{CaptureOnFinish: &s.Memory.CaptureOnFinish},
+		Memory:   &memoryConfig{Enabled: &s.Memory.Enabled, CaptureOnFinish: &s.Memory.CaptureOnFinish},
 		Review:   &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
 			SSH:           s.Remote.SSH,
@@ -779,6 +780,9 @@ func refreshString(d time.Duration) string {
 }
 
 func applyMemoryConfig(out *settings, m *memoryConfig) {
+	if m != nil && m.Enabled != nil {
+		out.Memory.Enabled = *m.Enabled
+	}
 	if m != nil && m.CaptureOnFinish != nil {
 		out.Memory.CaptureOnFinish = *m.CaptureOnFinish
 	}

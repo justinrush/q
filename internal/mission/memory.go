@@ -29,7 +29,8 @@ type FinishCapture struct {
 }
 
 // MemoryInstructions advertises an optional capability, without injecting
-// historical material or modifying any agent's own memory files.
+// historical material or modifying any agent's own memory files. The launcher
+// appends it to a mission's brief only while shared memory is enabled.
 const MemoryInstructions = `
 ## Shared q memory
 

@@ -52,6 +52,8 @@ type Launcher struct {
 	now          func() time.Time
 	hostSnapshot func() mission.Snapshot
 	openingPoll  time.Duration
+	// memory says whether briefs advertise shared q memory.
+	memory bool
 }
 
 // WithHostSnapshot supplies current state: the machine names for the executor
@@ -67,6 +69,12 @@ type Option func(*Launcher)
 // tool has no agent registered is refused rather than launched.
 func WithAgent(agent mission.Agent) Option {
 	return func(l *Launcher) { l.agents[agent.Tool()] = agent }
+}
+
+// WithMemory makes every brief advertise shared q memory. Without it agents
+// are not told the feature exists.
+func WithMemory(enabled bool) Option {
+	return func(l *Launcher) { l.memory = enabled }
 }
 
 // WithLogger sets where the launcher reports problems it does not fail on.

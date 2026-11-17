@@ -60,7 +60,7 @@ func assembleService(
 	hub := daemon.NewHub()
 
 	opts := []daemon.Option{
-		daemon.WithMemory(memories, s.Memory.CaptureOnFinish),
+		daemon.WithMemory(memories, s.Memory.CaptureEnabled()),
 		daemon.WithLogger(logger),
 		daemon.WithClock(time.Now),
 		daemon.WithHealer(claude.NewRegistry("")),
@@ -107,7 +107,7 @@ func assembleService(
 
 	opts = append(append(opts, daemon.WithBrancher(gitc)), pairing...)
 
-	launchOpts := []launch.Option{launch.WithLogger(logger), launch.WithHostSnapshot(store.Snapshot)}
+	launchOpts := []launch.Option{launch.WithLogger(logger), launch.WithHostSnapshot(store.Snapshot), launch.WithMemory(s.Memory.Enabled)}
 	for _, agent := range agentsFor(s) {
 		launchOpts = append(launchOpts, launch.WithAgent(agent))
 	}
