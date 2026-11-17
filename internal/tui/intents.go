@@ -58,6 +58,8 @@ func (a *App) handleMissionIntent(msg tea.Msg) (tea.Cmd, bool) {
 		return a.handleToggleQueued(m.Mission), true
 	case takeMissionMsg:
 		return a.handleTake(m.Mission), true
+	case takeFreshMsg:
+		return a.confirmTakeFresh(m.Mission), true
 	case sendMissionMsg:
 		return a.handleSend(m.Mission), true
 	case reviewMissionMsg:
@@ -392,6 +394,30 @@ func (a *App) handleTake(ms mission.Mission) tea.Cmd {
 	}
 
 	return a.takeMission(ms)
+}
+
+// confirmTakeFresh asks before starting a mission over, since its agent's
+// conversation is discarded and any agent running for it here is stopped.
+func (a *App) confirmTakeFresh(ms mission.Mission) tea.Cmd {
+	switch {
+	case !ms.Launched():
+		return emit(toastMsg{text: ms.Name + " has not been launched", err: true})
+	case ms.Status.Terminal():
+		return emit(toastMsg{text: ms.Name + " is closed", err: true})
+	}
+
+	body := fmt.Sprintf("Start %q over on this machine?\n\n"+
+		"Its agent's conversation is discarded and a new agent is started in the "+
+		"same worktrees, given the brief. Changes in the worktrees are kept.", ms.Name)
+	if where := a.snapshot.Elsewhere(ms); where != "" {
+		body += "\n\nIt is taken from " + where + " first."
+	} else if ms.TmuxSession != "" {
+		body += "\n\nThe agent running for it here is stopped."
+	}
+
+	a.modal = newConfirm("Take fresh", body, "start fresh", true, a.takeMissionFresh(ms))
+
+	return nil
 }
 
 // handleSend pins a mission to the paired machine, explaining when there is

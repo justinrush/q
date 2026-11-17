@@ -288,8 +288,9 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
 
-	// Taking a mission here overrides a pin that would send it straight back.
-	s.clearOpposingPin(id)
+	// Taking a mission here overrides a pin that would send it straight back,
+	// and on the secondary it is a pin of its own (see keepTaken).
+	s.keepTaken(id)
 
 	if s.holds(ms) {
 		current, _ := s.store.Snapshot().Mission(id)
@@ -310,6 +311,71 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 	}
 
 	return s.seize(id, snap.HostName(ms.Lease.Holder))
+}
+
+// keepTaken makes sure a mission taken here stays here.
+//
+// Any pin naming the other host is undone. On the secondary that is not
+// enough: it hands every mission between turns back to the primary whenever it
+// believes the primary is around — and it believes so for a full window after
+// its own daemon starts, even of a laptop that is asleep. A mission just
+// seized has no agent, which counts as between turns, so it would go straight
+// back on the next tick. The person taking it there is choosing that machine,
+// so the take pins it, exactly as a send from the other side would. Taking it
+// back from the primary undoes the pin.
+//
+// The primary does not pin. It already keeps what it holds, and a pin there
+// would stop the secondary covering for it while it sleeps.
+func (s *Service) keepTaken(id mission.MissionID) {
+	if s.roleOf(s.store.Snapshot()) != mission.RoleSecondary {
+		s.clearOpposingPin(id)
+
+		return
+	}
+
+	if _, err := s.setPin(id, s.self); err != nil {
+		s.warn("pinning a mission taken here", "mission", id, "error", err)
+	}
+}
+
+// TakeFresh takes a mission and starts a new agent for it here, discarding
+// whatever conversation this host remembers.
+//
+// It is for a mission whose conversation cannot be resumed — recorded on the
+// other machine, deleted, or wedged — and a person who would rather start over
+// in the same worktrees than work out why. Any agent this host was running for
+// it is replaced. The new one is given the brief, and told where the mission
+// came from when it came from the other machine.
+func (s *Service) TakeFresh(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
+	ms, ok := s.store.Snapshot().Mission(id)
+	if !ok {
+		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
+	}
+
+	switch {
+	case !ms.Launched():
+		return mission.Mission{}, fmt.Errorf("%w: %s has not been launched, so there is nothing to restart", ErrConflict, ms.Name)
+	case ms.Status.Terminal():
+		return mission.Mission{}, fmt.Errorf("%w: %s is closed", ErrConflict, ms.Name)
+	case ms.ToolHandoffPending():
+		return mission.Mission{}, fmt.Errorf("%w: %s is switching agents; try again when that is done", ErrConflict, ms.Name)
+	}
+
+	taken, err := s.Take(ctx, id)
+	if err != nil {
+		return mission.Mission{}, err
+	}
+
+	s.updateLocal(id, "mission.session.forget", forgetConversation)
+
+	return s.relaunch(ctx, id, s.continuation(taken, ""))
+}
+
+// forgetConversation drops what this host knows of a mission's agent
+// conversation, so the next agent started for it starts fresh.
+func forgetConversation(ms *mission.Mission) {
+	ms.AgentSessionID = ""
+	ms.TranscriptPath = ""
 }
 
 // seize takes a lease without the other host's cooperation.

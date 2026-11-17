@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"sync"
@@ -500,5 +501,102 @@ func TestAnUnconfirmedPrimaryStartsNothingAndSaysSo(t *testing.T) {
 
 	if got, _ := p.primary.Snapshot().Mission(running.ID); got.HasLocalBadge(mission.BadgeUnconfirmed) {
 		t.Error("the mission is still marked unconfirmed after an exchange")
+	}
+}
+
+// A mission taken on the always-on machine stays there. Seizing it leaves it
+// with no agent, which reads as between turns, and the secondary hands such a
+// mission back whenever it believes the primary is around — as it does for a
+// full window after its daemon starts, even of a laptop that is asleep.
+func TestATakeOnTheSecondaryIsNotHandedStraightBack(t *testing.T) {
+	p := newMovablePair(t)
+	ms := runningOn(t, p.primary, "taken on the mini")
+	endTurn(t, p.primary, ms.ID, "Done.")
+
+	exchange(t, p.primary)
+	mirrored(p.secondary, ms.ID)
+
+	// The laptop is asleep, but recently enough that the mini still counts it
+	// as present.
+	p.link.down = true
+
+	taken, err := p.secondary.Take(t.Context(), ms.ID)
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+
+	if taken.Lease.Holder != p.secondary.self || taken.Pin != p.secondary.self {
+		t.Fatalf("holder=%s pin=%q, want it held and pinned here", taken.Lease.Holder, taken.Pin)
+	}
+
+	p.secondary.tendLeases(t.Context())
+
+	if got := holder(p.secondary, ms.ID); got != p.secondary.self {
+		t.Errorf("holder = %s after a tick, want the take to stick", got)
+	}
+
+	// Taking it back from the laptop undoes the pin, and it stays there.
+	p.link.down = false
+	exchange(t, p.primary)
+
+	back, err := p.primary.Take(t.Context(), ms.ID)
+	if err != nil {
+		t.Fatalf("Take back: %v", err)
+	}
+
+	if back.Lease.Holder != p.primary.self || back.Pin != "" {
+		t.Errorf("holder=%s pin=%q, want it back on the laptop and unpinned", back.Lease.Holder, back.Pin)
+	}
+}
+
+// A fresh take forgets the conversation this host remembers and starts a new
+// agent for the mission, which is the way out when the old one cannot resume.
+func TestTakeFreshStartsANewAgentWithoutTheOldConversation(t *testing.T) {
+	p := newMovablePair(t)
+	ms := runningOn(t, p.primary, "stuck")
+	endTurn(t, p.primary, ms.ID, "Planned.")
+
+	exchange(t, p.primary)
+	mirrored(p.secondary, ms.ID)
+	p.secondary.updateLocal(ms.ID, "test.session", func(stored *mission.Mission) {
+		stored.AgentSessionID = "lost-session"
+		stored.TranscriptPath = "/nowhere/lost-session.jsonl"
+	})
+
+	p.link.down = true
+
+	got, err := p.secondary.TakeFresh(t.Context(), ms.ID)
+	if err != nil {
+		t.Fatalf("TakeFresh: %v", err)
+	}
+
+	if got.Lease.Holder != p.secondary.self || got.Pin != p.secondary.self {
+		t.Errorf("holder=%s pin=%q, want it held and pinned here", got.Lease.Holder, got.Pin)
+	}
+
+	if got.AgentSessionID != "" || got.TranscriptPath != "" {
+		t.Errorf("session %q transcript %q, want the old conversation forgotten", got.AgentSessionID, got.TranscriptPath)
+	}
+
+	if len(p.onSecondary.relaunched) != 1 {
+		t.Fatalf("relaunched %d times, want one new agent", len(p.onSecondary.relaunched))
+	}
+
+	if msg := p.onSecondary.relaunched[0]; !strings.Contains(msg, "Planned.") {
+		t.Errorf("relaunch message %q should carry on from where the other machine left off", msg)
+	}
+
+	if got.Status != mission.StatusActive {
+		t.Errorf("status = %s, want active", got.Status)
+	}
+}
+
+// Only a launched mission has anything to start over.
+func TestTakeFreshRefusesAnUnlaunchedMission(t *testing.T) {
+	p := newMovablePair(t)
+	ms := briefOn(t, p.secondary, "briefed")
+
+	if _, err := p.secondary.TakeFresh(t.Context(), ms.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("err = %v, want a conflict", err)
 	}
 }

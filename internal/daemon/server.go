@@ -257,7 +257,18 @@ func (s *Server) handleMessage(w http.ResponseWriter, r *http.Request) {
 
 // handleTake brings a mission the paired q is running to this host.
 func (s *Server) handleTake(w http.ResponseWriter, r *http.Request) {
-	ms, err := s.svc.Take(r.Context(), mission.MissionID(r.PathValue("id")))
+	var req api.TakeMissionRequest
+	if r.ContentLength != 0 && !decode(w, r, &req) {
+		return
+	}
+
+	id := mission.MissionID(r.PathValue("id"))
+	take := s.svc.Take
+	if req.Fresh {
+		take = s.svc.TakeFresh
+	}
+
+	ms, err := take(r.Context(), id)
 	if err != nil {
 		writeServiceError(w, err)
 

@@ -427,6 +427,7 @@ func TestEveryBoardBindingHasAHandler(t *testing.T) {
 		{"TogglePlan", board.TogglePlan},
 		{"Queue", board.Queue},
 		{"Take", board.Take},
+		{"TakeFresh", board.TakeFresh},
 		{"ToggleDone", board.ToggleDone},
 		{"Status", board.Status},
 		{"Filter", board.Filter},

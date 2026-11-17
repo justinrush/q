@@ -1,6 +1,8 @@
 package launch
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -267,6 +269,59 @@ func TestRelaunchWithoutASessionIDStartsFresh(t *testing.T) {
 
 	if script := readArtifact(t, got, "launch.sh"); strings.Contains(script, "resume") {
 		t.Errorf("nothing to resume, so it should start fresh:\n%s", script)
+	}
+}
+
+// A conversation recorded on another machine, or since deleted, cannot be
+// resumed: the agent would exit at once, every time. It starts fresh instead.
+func TestRelaunchStartsFreshWhenTheConversationIsNotHere(t *testing.T) {
+	for _, tool := range []mission.Tool{mission.ToolClaude, mission.ToolCodex} {
+		t.Run(string(tool), func(t *testing.T) {
+			launcher, fake, _ := newTestLauncher(t)
+			fake.Default = runner.Result{Stdout: []byte("%77")}
+			fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+			ms := launchedMission(t, t.TempDir())
+			ms.Tool = tool
+			ms.AgentSessionID = "elsewhere-session"
+			ms.TranscriptPath = filepath.Join(t.TempDir(), "elsewhere-session.jsonl")
+
+			got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "")
+			if err != nil {
+				t.Fatalf("Relaunch: %v", err)
+			}
+
+			if got.AgentSessionID == "elsewhere-session" || got.TranscriptPath != "" {
+				t.Errorf("session %q transcript %q, want the missing conversation dropped", got.AgentSessionID, got.TranscriptPath)
+			}
+
+			script := readArtifact(t, got, "launch.sh")
+			if strings.Contains(script, "elsewhere-session") || strings.Contains(script, "resume") {
+				t.Errorf("nothing here to resume, so it should start fresh:\n%s", script)
+			}
+		})
+	}
+}
+
+// A conversation that is on this disk is resumed as before.
+func TestRelaunchResumesAConversationThatIsHere(t *testing.T) {
+	launcher, fake, _ := newTestLauncher(t)
+	fake.Default = runner.Result{Stdout: []byte("%77")}
+	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+
+	ms := launchedMission(t, t.TempDir())
+	ms.TranscriptPath = filepath.Join(t.TempDir(), "here.jsonl")
+	if err := os.WriteFile(ms.TranscriptPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "")
+	if err != nil {
+		t.Fatalf("Relaunch: %v", err)
+	}
+
+	if script := readArtifact(t, got, "launch.sh"); !strings.Contains(script, "--resume") {
+		t.Errorf("the conversation is here, so it should be resumed:\n%s", script)
 	}
 }
 

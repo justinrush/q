@@ -448,12 +448,14 @@ func (c *Client) AttachCommand(ctx context.Context, id mission.MissionID) (Attac
 	return get[AttachCommand](ctx, c, "/v1/missions/"+string(id)+"/attach")
 }
 
-// TakeMission brings a mission the paired q is running to this host.
+// TakeMission brings a mission the paired q is running to this host. With
+// Fresh, it also starts a new agent for it here rather than resuming the old
+// conversation.
 //
 // It can take as long as an exchange does, since the other host is asked to
 // stop its agent and its final state is fetched before this returns.
-func (c *Client) TakeMission(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
-	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/take", struct{}{}, refreshTimeout)
+func (c *Client) TakeMission(ctx context.Context, id mission.MissionID, req TakeMissionRequest) (mission.Mission, error) {
+	return sendWithin[mission.Mission](ctx, c, http.MethodPost, "/v1/missions/"+string(id)+"/take", req, refreshTimeout)
 }
 
 // SendMission pins a mission to the paired machine and moves it there, now if

@@ -485,12 +485,25 @@ func (a *App) setQueued(ms mission.Mission, queued bool) tea.Cmd {
 // takeMission asks the daemon to bring a mission to this machine.
 func (a *App) takeMission(ms mission.Mission) tea.Cmd {
 	return func() tea.Msg {
-		taken, err := a.client.TakeMission(a.ctx(), ms.ID)
+		taken, err := a.client.TakeMission(a.ctx(), ms.ID, api.TakeMissionRequest{})
 		if err != nil {
 			return toastMsg{text: err.Error(), err: true}
 		}
 
 		return toastMsg{text: taken.Name + ": now runs here"}
+	}
+}
+
+// takeMissionFresh asks the daemon to bring a mission here and start a new
+// agent for it.
+func (a *App) takeMissionFresh(ms mission.Mission) tea.Cmd {
+	return func() tea.Msg {
+		taken, err := a.client.TakeMission(a.ctx(), ms.ID, api.TakeMissionRequest{Fresh: true})
+		if err != nil {
+			return toastMsg{text: err.Error(), err: true}
+		}
+
+		return toastMsg{text: taken.Name + ": started fresh here"}
 	}
 }
 

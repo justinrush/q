@@ -676,6 +676,11 @@ func (s *Service) commitRelaunch(relaunched mission.Mission) (mission.Mission, e
 		stored.TmuxSession = relaunched.TmuxSession
 		stored.AgentPaneID = relaunched.AgentPaneID
 		if relaunched.AgentSessionID != "" || stored.HookEpoch != relaunched.HookEpoch {
+			// A new conversation's log is learned from its first hook. The old
+			// one's path would otherwise outlive it and describe the wrong session.
+			if stored.AgentSessionID != relaunched.AgentSessionID {
+				stored.TranscriptPath = relaunched.TranscriptPath
+			}
 			stored.AgentSessionID = relaunched.AgentSessionID
 		}
 		stored.HookEpoch = relaunched.HookEpoch
