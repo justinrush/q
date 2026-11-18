@@ -94,7 +94,7 @@ func (g *Ghostty) Describe(spec Spec) string { return g.spec(spec).String() }
 func (g *Ghostty) spec(spec Spec) runner.Spec {
 	return runner.Spec{
 		Name: g.scriptBin,
-		Args: []string{"-e", openScript, "--", spec.Dir, strings.Join(spec.Argv, " ")},
+		Args: []string{"-e", openScript, "--", spec.Dir, ShellJoin(spec.Argv)},
 	}
 }
 
@@ -151,7 +151,7 @@ func (c *Command) Describe(spec Spec) string { return c.spec(spec).String() }
 func (c *Command) spec(spec Spec) runner.Spec {
 	var out []string
 
-	joined := strings.Join(spec.Argv, " ")
+	joined := ShellJoin(spec.Argv)
 
 	for _, part := range c.template {
 		switch part {
@@ -179,14 +179,14 @@ func NewManual() Manual { return Manual{} }
 
 // Open always fails with [ErrNoTerminal], naming the command to run.
 func (Manual) Open(_ context.Context, spec Spec) error {
-	return fmt.Errorf("%w; run this yourself: %s", ErrNoTerminal, strings.Join(spec.Argv, " "))
+	return fmt.Errorf("%w; run this yourself: %s", ErrNoTerminal, ShellJoin(spec.Argv))
 }
 
 // Raise is a no-op.
 func (Manual) Raise(context.Context) error { return nil }
 
 // Describe renders the command the user would run.
-func (Manual) Describe(spec Spec) string { return strings.Join(spec.Argv, " ") }
+func (Manual) Describe(spec Spec) string { return ShellJoin(spec.Argv) }
 
 // errNoCommand reports a spec with nothing to run.
 var errNoCommand = errors.New("terminal: no command to run")

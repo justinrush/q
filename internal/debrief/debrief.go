@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/justinrush/q/internal/git"
 	"github.com/justinrush/q/internal/mission"
@@ -291,7 +290,7 @@ func (o *Opener) attach(ctx context.Context, ms mission.Mission, mode api.Mode, 
 	// Opening no window is a configured choice, not a failure. The panes are
 	// arranged either way, so the useful thing to return is how to reach them.
 	if errors.Is(err, terminal.ErrNoTerminal) {
-		result.AttachCommand = strings.Join(argv, " ")
+		result.AttachCommand = terminal.ShellJoin(argv)
 
 		return nil
 	}
