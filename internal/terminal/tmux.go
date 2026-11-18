@@ -16,6 +16,13 @@
 // user's config lets tmux-sensible flip pane-base-index to 1, so a computed
 // "session:0.1" may not be the pane intended. Every creation call therefore asks
 // for the pane id back.
+//
+// Every client is started with -u. Without it tmux decides from the client's
+// LC_ALL, LC_CTYPE, or LANG whether to emit UTF-8, and when none names UTF-8 it
+// replaces every non-printable byte in command output with "_". That includes
+// the tabs q puts between format fields, so a daemon started from a shell whose
+// LANG is plain "en_US" reads every pane as unparseable. The locale a daemon
+// inherits is an accident of where it was started, so q does not let it decide.
 package terminal
 
 import (
@@ -85,9 +92,13 @@ func (t Target) String() string {
 // Empty reports whether the target names nothing.
 func (t Target) Empty() bool { return t.value == "" }
 
+// utf8Flag makes a tmux client emit UTF-8 whatever its locale says. See the
+// package documentation for why every invocation needs it.
+const utf8Flag = "-u"
+
 // exec runs tmux with the given arguments.
 func (t *Tmux) exec(ctx context.Context, args ...string) (runner.Result, error) {
-	return t.run.Run(ctx, runner.Spec{Name: t.bin, Args: args})
+	return t.run.Run(ctx, runner.Spec{Name: t.bin, Args: append([]string{utf8Flag}, args...)})
 }
 
 // HasSession reports whether a session exists.
@@ -253,9 +264,11 @@ func (t *Tmux) ListPanes(ctx context.Context, target Target) ([]PaneInfo, error)
 	var panes []PaneInfo
 
 	for _, line := range res.Lines() {
-		fields := strings.Split(line, "\t")
+		// A line that does not split is output q does not understand, not a
+		// pane that is absent. Skipping it would report a live agent as gone.
+		fields := strings.SplitN(line, "\t", 4)
 		if len(fields) < 4 {
-			continue
+			return nil, fmt.Errorf("listing panes of %s: unexpected output %q", target, line)
 		}
 
 		panes = append(panes, PaneInfo{
@@ -367,7 +380,7 @@ func (t *Tmux) KillSession(ctx context.Context, session string) error {
 // AttachArgs returns the argv for attaching to a session, for handing to a
 // terminal emulator. detachOthers corresponds to `attach -d`.
 func (t *Tmux) AttachArgs(session string, detachOthers bool) []string {
-	args := []string{t.bin, "attach-session"}
+	args := []string{t.bin, utf8Flag, "attach-session"}
 	if detachOthers {
 		args = append(args, "-d")
 	}

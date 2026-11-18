@@ -210,7 +210,7 @@ func TestSplitWindowUsesModernSizeFlag(t *testing.T) {
 func TestListPanesParsesFields(t *testing.T) {
 	tmux, fake := newTestTmux()
 	fake.Expect(
-		tmuxBin+" list-panes -s -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
+		tmuxBin+" -u list-panes -s -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
 		"%13\t0\tclaude\t/missions/t\n%14\t1\tzsh\t/missions/t/weave",
 	)
 
@@ -234,6 +234,65 @@ func TestListPanesParsesFields(t *testing.T) {
 	}
 }
 
+// A tmux client whose locale does not name UTF-8 replaces every tab in format
+// output with "_". Read as "no panes", that marked every live agent on a daemon
+// started from a plain LANG=en_US shell as gone. It must be an error instead,
+// which the reconciler treats as not knowing.
+func TestListPanesRejectsOutputItCannotSplit(t *testing.T) {
+	tmux, fake := newTestTmux()
+	fake.Expect(
+		tmuxBin+" -u list-panes -s -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
+		"%13_0_claude_/missions/t",
+	)
+
+	panes, err := tmux.ListPanes(t.Context(), Session("q-mission"))
+	if err == nil {
+		t.Fatalf("ListPanes = %+v, want an error for unsplittable output", panes)
+	}
+}
+
+// A path is the last field and may itself contain a tab.
+func TestListPanesKeepsTabsInThePath(t *testing.T) {
+	tmux, fake := newTestTmux()
+	fake.Expect(
+		tmuxBin+" -u list-panes -s -t =q-mission -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}",
+		"%13\t0\tclaude\t/missions/odd\tname",
+	)
+
+	panes, err := tmux.ListPanes(t.Context(), Session("q-mission"))
+	if err != nil {
+		t.Fatalf("ListPanes: %v", err)
+	}
+
+	if len(panes) != 1 || panes[0].Dir != "/missions/odd\tname" {
+		t.Errorf("panes = %+v", panes)
+	}
+}
+
+// Whether tmux emits UTF-8, and so whether the tabs between format fields
+// survive, must not depend on the locale the daemon inherited.
+func TestEveryCommandForcesUTF8(t *testing.T) {
+	tmux, fake := newTestTmux()
+	ctx := t.Context()
+
+	_ = tmux.HasSession(ctx, "q-foo")
+	_, _ = tmux.ListPanes(ctx, Session("q-foo"))
+	_, _ = tmux.ListWindowNames(ctx, "q-foo")
+	_, _ = tmux.ListSessionNames(ctx)
+	_, _ = tmux.HasClients(ctx, "q-foo")
+	_ = tmux.KillSession(ctx, "q-foo")
+
+	for _, call := range fake.Calls() {
+		if len(call.Args) == 0 || call.Args[0] != "-u" {
+			t.Errorf("tmux invoked without -u: %q", call.String())
+		}
+	}
+
+	if argv := tmux.AttachArgs("q-foo", false); len(argv) < 2 || argv[1] != "-u" {
+		t.Errorf("AttachArgs = %q, want -u before the subcommand", argv)
+	}
+}
+
 // A session target has to list every window. tmux otherwise answers with the
 // session's current window alone, and a pane in another window reads as closed.
 func TestListPanesScope(t *testing.T) {
@@ -247,12 +306,12 @@ func TestListPanesScope(t *testing.T) {
 		{
 			name:   "session covers every window",
 			target: Session("q-mission"),
-			argv:   tmuxBin + " list-panes -s -t =q-mission" + format,
+			argv:   tmuxBin + " -u list-panes -s -t =q-mission" + format,
 		},
 		{
 			name:   "window stays within itself",
 			target: Window("q-mission", "agent"),
-			argv:   tmuxBin + " list-panes -t =q-mission:agent" + format,
+			argv:   tmuxBin + " -u list-panes -t =q-mission:agent" + format,
 		},
 	}
 
@@ -275,8 +334,8 @@ func TestListPanesScope(t *testing.T) {
 
 func TestHasSession(t *testing.T) {
 	tmux, fake := newTestTmux()
-	fake.Expect(tmuxBin+" has-session -t =q-live", "")
-	fake.ExpectExit(tmuxBin+" has-session -t =q-gone", 1, "can't find session")
+	fake.Expect(tmuxBin+" -u has-session -t =q-live", "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t =q-gone", 1, "can't find session")
 
 	if !tmux.HasSession(t.Context(), "q-live") {
 		t.Error("HasSession should be true for a live session")
@@ -290,7 +349,7 @@ func TestHasSession(t *testing.T) {
 // No tmux server running is not an error; there are simply no sessions.
 func TestListSessionNamesToleratesNoServer(t *testing.T) {
 	tmux, fake := newTestTmux()
-	fake.ExpectExit(tmuxBin+" list-sessions -F #{session_name}", 1, "no server running")
+	fake.ExpectExit(tmuxBin+" -u list-sessions -F #{session_name}", 1, "no server running")
 
 	got, err := tmux.ListSessionNames(t.Context())
 	if err != nil {
@@ -304,7 +363,7 @@ func TestListSessionNamesToleratesNoServer(t *testing.T) {
 
 func TestKillSessionToleratesMissingSession(t *testing.T) {
 	tmux, fake := newTestTmux()
-	fake.ExpectExit(tmuxBin+" kill-session -t =q-gone", 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u kill-session -t =q-gone", 1, "can't find session")
 
 	if err := tmux.KillSession(t.Context(), "q-gone"); err != nil {
 		t.Errorf("KillSession: %v", err)
@@ -315,12 +374,12 @@ func TestAttachArgs(t *testing.T) {
 	tmux, _ := newTestTmux()
 
 	got := strings.Join(tmux.AttachArgs("q-mission", false), " ")
-	if got != tmuxBin+" attach-session -t =q-mission" {
+	if got != tmuxBin+" -u attach-session -t =q-mission" {
 		t.Errorf("AttachArgs = %q", got)
 	}
 
 	got = strings.Join(tmux.AttachArgs("q-mission", true), " ")
-	if got != tmuxBin+" attach-session -d -t =q-mission" {
+	if got != tmuxBin+" -u attach-session -d -t =q-mission" {
 		t.Errorf("AttachArgs with detach = %q", got)
 	}
 }

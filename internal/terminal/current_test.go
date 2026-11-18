@@ -12,7 +12,7 @@ func TestCurrentCommandUsesExactSessionAndConfiguredBinary(t *testing.T) {
 	for _, steal := range []bool{false, true} {
 		// Shell metacharacters must remain literal in the target argument.
 		cmd := CurrentCommand(t.Context(), "/custom path/tmux", "q-test; echo bad", steal)
-		want := []string{"/custom path/tmux", "attach-session"}
+		want := []string{"/custom path/tmux", "-u", "attach-session"}
 		if steal {
 			want = append(want, "-d")
 		}

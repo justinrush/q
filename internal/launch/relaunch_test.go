@@ -53,7 +53,7 @@ func panesReply(paneID, command string, dead bool) string {
 }
 
 // listPanesArgv is the argv the launcher uses to inspect a session's panes.
-var listPanesArgv = tmuxBin + " list-panes -s -t =" + testSession +
+var listPanesArgv = tmuxBin + " -u list-panes -s -t =" + testSession +
 	" -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
 
 // This is the most dangerous path in q. If the agent has exited and its pane
@@ -178,7 +178,7 @@ func TestRelaunchResumesTheSession(t *testing.T) {
 	}
 
 	// The old session is gone, so nothing needs killing before the new one starts.
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "can't find session")
 	fake.Default = runner.Result{Stdout: []byte("%77")}
 
 	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "keep going")
@@ -218,7 +218,7 @@ func TestRelaunchResumesTheSession(t *testing.T) {
 func TestRelaunchKillsAStaleSession(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.Expect(tmuxBin+" has-session -t ="+testSession, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+testSession, "")
 
 	if _, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), launchedMission(t, t.TempDir()), ""); err != nil {
 		t.Fatalf("Relaunch: %v", err)
@@ -234,7 +234,7 @@ func TestRelaunchKillsAStaleSession(t *testing.T) {
 func TestRelaunchWithoutAMessageStillSendsAPrompt(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), launchedMission(t, t.TempDir()), "")
 	if err != nil {
@@ -256,7 +256,7 @@ func TestRelaunchWithoutAMessageStillSendsAPrompt(t *testing.T) {
 func TestRelaunchWithoutASessionIDStartsFresh(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 	ms.Tool = mission.ToolCodex
@@ -279,7 +279,7 @@ func TestRelaunchStartsFreshWhenTheConversationIsNotHere(t *testing.T) {
 		t.Run(string(tool), func(t *testing.T) {
 			launcher, fake, _ := newTestLauncher(t)
 			fake.Default = runner.Result{Stdout: []byte("%77")}
-			fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+			fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 			ms := launchedMission(t, t.TempDir())
 			ms.Tool = tool
@@ -307,7 +307,7 @@ func TestRelaunchStartsFreshWhenTheConversationIsNotHere(t *testing.T) {
 func TestRelaunchResumesAConversationThatIsHere(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 	ms.TranscriptPath = filepath.Join(t.TempDir(), "here.jsonl")
@@ -382,7 +382,7 @@ func TestPaneRunsAgent(t *testing.T) {
 func TestRelaunchWithNoSessionGivesAFreshAgentTheBrief(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 	ms.AgentSessionID = ""
@@ -417,7 +417,7 @@ func TestRelaunchWithNoSessionGivesAFreshAgentTheBrief(t *testing.T) {
 // Stop ends the agent and nothing else: the worktrees are the mirror now.
 func TestStopKillsOnlyALiveSession(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 
@@ -429,7 +429,7 @@ func TestStopKillsOnlyALiveSession(t *testing.T) {
 		t.Errorf("there was no session to kill:\n%s", fake.Transcript())
 	}
 
-	fake.Expect(tmuxBin+" has-session -t ="+testSession, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+testSession, "")
 
 	if err := launcher.Stop(t.Context(), ms); err != nil {
 		t.Fatalf("Stop: %v", err)
@@ -444,7 +444,7 @@ func TestStopKillsOnlyALiveSession(t *testing.T) {
 func TestViewRunsQInTheAgentWindow(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%88")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 
@@ -478,7 +478,7 @@ func TestViewRunsQInTheAgentWindow(t *testing.T) {
 func TestRelaunchOfAPlanContinuedInPlaceIsAnOrdinaryResume(t *testing.T) {
 	launcher, fake, _ := newTestLauncher(t)
 	fake.Default = runner.Result{Stdout: []byte("%77")}
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
 
 	ms := launchedMission(t, t.TempDir())
 	ms.Tool = mission.ToolCodex

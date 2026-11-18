@@ -102,7 +102,7 @@ func expectTouched(fake *runner.Fake, ms mission.Mission, repo, status, count st
 }
 
 // listPanesArgv is the argv used to inspect the session's panes.
-var listPanesArgv = tmuxBin + " list-panes -s -t =" + session +
+var listPanesArgv = tmuxBin + " -u list-panes -s -t =" + session +
 	" -F #{pane_id}\t#{pane_dead}\t#{pane_current_command}\t#{pane_current_path}"
 
 // An untouched repo gets no pane. That is the entire point of the check: a debrief
@@ -114,9 +114,9 @@ func TestOpenAddsPanesOnlyForTouchedRepos(t *testing.T) {
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
 
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	result, updated, err := opener.Open(t.Context(), ms, api.ModeAttach)
@@ -150,9 +150,9 @@ func TestOpenLaunchesTheEditorByAbsolutePath(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	if _, _, err := opener.Open(t.Context(), ms, api.ModeAttach); err != nil {
@@ -203,10 +203,10 @@ func TestOpenIsIdempotent(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	// Both the agent and the existing debrief pane are alive.
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t\n%21\t0\tq-test-editor\t/missions/t/weave")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModeAttach)
 	if err != nil {
@@ -234,10 +234,10 @@ func TestOpenRecreatesAClosedPane(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	// The recorded debrief pane is no longer listed.
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%30")}
 
 	result, updated, err := opener.Open(t.Context(), ms, api.ModeAttach)
@@ -261,7 +261,7 @@ func TestOpenReportsAMissingSessionRatherThanRelaunching(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.ExpectExit(tmuxBin+" has-session -t ="+session, 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+session, 1, "can't find session")
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModeAttach)
 	if err != nil {
@@ -289,9 +289,9 @@ func TestOpenAddsAClientWhenAlreadyAttached(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", "", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "/dev/ttys004")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "/dev/ttys004")
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModeAttach)
 	if err != nil {
@@ -323,9 +323,9 @@ func TestOpenStealDetachesOtherClients(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", "", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "/dev/ttys004")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "/dev/ttys004")
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModeSteal)
 	if err != nil {
@@ -374,9 +374,9 @@ func TestOpenCreatesANewTerminalWhenInsideTmux(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", "", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModeAttach)
 	if err != nil {
@@ -405,9 +405,9 @@ func TestOpenPrepareDoesNotAttach(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M x", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModePrepare)
@@ -486,9 +486,9 @@ func TestOpenFocusesTheAgentPane(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M x", "0")
 	expectTouched(fake, ms, "azure-tf", "", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	if _, _, err := opener.Open(t.Context(), ms, api.ModePrepare); err != nil {
@@ -531,9 +531,9 @@ func TestOpenReflowsAfterEachAddedPane(t *testing.T) {
 		expectTouched(fake, ms, name, " M main.go", "0")
 	}
 
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
-	fake.Expect(tmuxBin+" list-clients -t ="+session+" -F #{client_tty}", "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	result, _, err := opener.Open(t.Context(), ms, api.ModePrepare)
@@ -565,12 +565,12 @@ func TestOpenReturnsPanesCreatedBeforeSplitFailure(t *testing.T) {
 
 	expectTouched(fake, ms, "weave", " M main.go", "0")
 	expectTouched(fake, ms, "azure-tf", " M main.go", "0")
-	fake.Expect(tmuxBin+" has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
 	fake.Expect(listPanesArgv, "%13\t0\tclaude\t/missions/t")
 	fake.Default = runner.Result{Stdout: []byte("%21")}
 
 	editor := editorPath(t)
-	failedSplit := tmuxBin + " split-window -d -t =" + session + ":agent -c " +
+	failedSplit := tmuxBin + " -u split-window -d -t =" + session + ":agent -c " +
 		ms.Work["weave"].WorktreePath + " -P -F #{pane_id} " + editor + " +Neotree"
 	fake.ExpectError(failedSplit, errors.New("no space for new pane"))
 

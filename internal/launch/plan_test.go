@@ -58,7 +58,7 @@ func TestRelaunchFollowsThePlanPhase(t *testing.T) {
 			ms.Model, ms.Effort = "opus", "low"
 			tc.mut(&ms)
 
-			fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
+			fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "can't find session")
 
 			got, err := launcher.Relaunch(t.Context(), testOperation("/dev/weave"), ms, "keep going")
 			if err != nil {
@@ -99,9 +99,9 @@ func TestPlanningCodexOpeningIsResubmittedUntilTaken(t *testing.T) {
 
 	opening, _ := agent.(mission.Opener).Opening(mission.Invocation{PlanMode: true})
 
-	const capture = tmuxBin + " capture-pane -p -t %13"
+	const capture = tmuxBin + " -u capture-pane -p -t %13"
 
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "can't find session")
 	// The composer is up and holds the opening, which is how codex shows it
 	// both when the paste has just landed and once it has turned it away.
 	fake.Expect(capture, "■ '/plan' is disabled while a task is in progress.\n\n› "+opening+"\n")
@@ -181,8 +181,8 @@ func TestPlanningCodexIsOpenedOnceReady(t *testing.T) {
 			ms.Tool = mission.ToolCodex
 			ms.PlanMode = tc.planMode
 
-			fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
-			fake.Expect(tmuxBin+" capture-pane -p -t %13", tc.pane)
+			fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "can't find session")
+			fake.Expect(tmuxBin+" -u capture-pane -p -t %13", tc.pane)
 			fake.Expect(listPanesArgv, panesReply("%13", "codex", false))
 			fake.Default = runner.Result{Stdout: []byte("%13")}
 
