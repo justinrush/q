@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 
@@ -33,6 +34,10 @@ func (p *Provisioner) Mirror(
 	ms mission.Mission,
 	starts map[string]string,
 ) (mission.Mission, error) {
+	if ms.ParentMissionID != "" {
+		return p.mirrorChild(operation, ms)
+	}
+
 	repos, err := mission.MissionRepos(operation, ms)
 	if err != nil {
 		return ms, err
@@ -75,6 +80,40 @@ func (p *Provisioner) Mirror(
 	}
 
 	return ms, errors.Join(failures...)
+}
+
+// mirrorChild lays out this host's side of a child mission the peer runs.
+//
+// A child has no worktrees of its own: it works in its parent's, so there are
+// no snapshots of it to wait for. What it needs here is what a launch would
+// give it: a session directory of its own, and the parent's worktrees as this
+// host has them, which is the parent's mirror. The directory is the child's
+// alone so that reclaiming the child, which removes it, never touches the
+// parent's.
+func (p *Provisioner) mirrorChild(operation mission.Operation, ms mission.Mission) (mission.Mission, error) {
+	if p.parentLookup == nil {
+		return ms, fmt.Errorf("parent workspace lookup unavailable")
+	}
+
+	parent, ok := p.parentLookup(ms.ParentMissionID)
+	if !ok || parent.MissionDir == "" {
+		return ms, fmt.Errorf("parent mission %s has not been mirrored here yet", ms.ParentMissionID)
+	}
+
+	if ms.MissionDir == "" {
+		if _, err := p.prepareMissionDir(operation, &ms); err != nil {
+			return ms, err
+		}
+	}
+
+	ms.Work = make(map[string]mission.RepoWork, len(parent.Work))
+	maps.Copy(ms.Work, parent.Work)
+
+	if err := writeProvisionState(ms.MissionDir, provisionState{MissionID: ms.ID, Work: ms.Work}); err != nil {
+		return ms, err
+	}
+
+	return ms, nil
 }
 
 // withWork returns work with one entry set, allocating the map if needed.
