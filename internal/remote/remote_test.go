@@ -190,16 +190,20 @@ func TestPeerPassesUnreachableThrough(t *testing.T) {
 func TestAttachArgvAsksForATerminalAndRunsQOnThePeer(t *testing.T) {
 	cmd := Command{Argv: []string{sshBin, "mini.local"}, ControlDir: "/state"}
 
-	got := strings.Join(cmd.AttachArgv("ms_aabbccddeeff"), " ")
-	want := sshBin + " -o BatchMode=yes -o ConnectTimeout=5" +
+	const prefix = sshBin + " -o BatchMode=yes -o ConnectTimeout=5" +
 		" -o ControlMaster=auto -o ControlPath=/state/ssh-%C -o ControlPersist=10m" +
-		" -t mini.local ~/.local/bin/q attach ms_aabbccddeeff"
+		" -t mini.local ~/.local/bin/q attach "
 
-	if got != want {
+	if got, want := strings.Join(cmd.AttachArgv("ms_aabbccddeeff", false), " "), prefix+"ms_aabbccddeeff"; got != want {
 		t.Errorf("AttachArgv:\n got %s\nwant %s", got, want)
 	}
 
-	if (Command{}).AttachArgv("ms_aabbccddeeff") != nil {
+	// Stealing happens on the peer, whose tmux holds the other clients.
+	if got, want := strings.Join(cmd.AttachArgv("ms_aabbccddeeff", true), " "), prefix+"--steal ms_aabbccddeeff"; got != want {
+		t.Errorf("AttachArgv steal:\n got %s\nwant %s", got, want)
+	}
+
+	if (Command{}).AttachArgv("ms_aabbccddeeff", false) != nil {
 		t.Error("an unconfigured command produced something to run")
 	}
 }

@@ -57,3 +57,22 @@ func TestForegroundOpenMissingSessionOffersRelaunch(t *testing.T) {
 		t.Fatal("missing session should offer relaunch without executing tmux")
 	}
 }
+
+// A mission running on the paired machine is attached over its remote command,
+// never by switching this machine's tmux client to a session of the same name.
+func TestForegroundOpenOfARemoteMissionRunsTheRemoteCommand(t *testing.T) {
+	a := New(nil, Options{AttachBin: "tmux"})
+	cmd := a.handleDebriefOpened(debriefOpenedMsg{
+		Mission: mission.Mission{Name: "remote"},
+		Result: api.Result{Session: "q-remote", Remote: &api.AttachCommand{
+			Argv: []string{"ssh", "-t", "mini", "q", "attach", "ms_1"}, Host: "mini",
+		}},
+		Attach: true,
+	})
+	if cmd == nil {
+		t.Fatal("expected a command that attaches to the remote session")
+	}
+	if a.modal != nil {
+		t.Fatal("a live remote session should not offer a relaunch")
+	}
+}

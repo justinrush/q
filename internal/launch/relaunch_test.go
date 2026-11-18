@@ -440,39 +440,6 @@ func TestStopKillsOnlyALiveSession(t *testing.T) {
 	}
 }
 
-// The viewer pane runs q, not ssh, so it survives the connection it carries.
-func TestViewRunsQInTheAgentWindow(t *testing.T) {
-	launcher, fake, _ := newTestLauncher(t)
-	fake.Default = runner.Result{Stdout: []byte("%88")}
-	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "")
-
-	ms := launchedMission(t, t.TempDir())
-
-	got, err := launcher.View(t.Context(), testOperation("/dev/weave"), ms)
-	if err != nil {
-		t.Fatalf("View: %v", err)
-	}
-
-	if got.TmuxSession != testSession || got.AgentPaneID != "%88" {
-		t.Errorf("session %q pane %q, want the mission's own session name", got.TmuxSession, got.AgentPaneID)
-	}
-
-	transcript := fake.Transcript()
-	if !strings.Contains(transcript, " view "+string(ms.ID)) || !strings.Contains(transcript, "-n agent") {
-		t.Errorf("the agent window should run `q view`:\n%s", transcript)
-	}
-
-	if strings.Contains(transcript, "pane-border-format") {
-		t.Errorf("remote view must display the executing session's banner without adding a local executor: %s", transcript)
-	}
-
-	ms.MissionDir = ""
-
-	if _, err := launcher.View(t.Context(), testOperation("/dev/weave"), ms); err == nil {
-		t.Error("a mission with no worktrees here has nothing to view beside")
-	}
-}
-
 // A Codex plan approved on unchanged settings continued in place, so reviving
 // it later is an ordinary resume, not a q-controlled implementation handoff.
 func TestRelaunchOfAPlanContinuedInPlaceIsAnOrdinaryResume(t *testing.T) {

@@ -15,7 +15,9 @@ import (
 )
 
 func buildAttachSubcommand() *cobra.Command {
-	return &cobra.Command{
+	var steal bool
+
+	cmd := &cobra.Command{
 		Use:   "attach <mission-id>",
 		Short: "Attach this terminal to a mission's agent session",
 		Long: "Attach to the tmux session a mission's agent is running in, and nothing " +
@@ -52,21 +54,25 @@ func buildAttachSubcommand() *cobra.Command {
 				return err
 			}
 
-			return attachSession(cmd, tmux, session)
+			return attachSession(cmd, tmux, session, steal)
 		},
 	}
+
+	cmd.Flags().BoolVar(&steal, "steal", false, "Detach the session's other clients first")
+
+	return cmd
 }
 
 // attachSession attaches this terminal to a tmux session and waits for it to
 // detach.
 //
 // It always attaches, and never switches an existing client the way `q open`
-// does inside tmux. The terminal it runs in belongs to the other machine: it is
-// a pane there, reached over ssh, and whatever TMUX names is that machine's
+// does inside tmux. The terminal it runs in belongs to the other machine: a
+// window or pane there, reached over ssh, and whatever TMUX names is that machine's
 // server, not this one's. The variable is dropped for the same reason, since
 // tmux refuses to attach when it believes it is already inside itself.
-func attachSession(cmd *cobra.Command, tmux, session string) error {
-	argv := terminal.NewTmux(tmux, nil).AttachArgs(session, false)
+func attachSession(cmd *cobra.Command, tmux, session string, steal bool) error {
+	argv := terminal.NewTmux(tmux, nil).AttachArgs(session, steal)
 
 	// The binary is this machine's own tmux, resolved from configuration, and
 	// the session name comes from this machine's daemon.

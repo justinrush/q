@@ -577,8 +577,8 @@ func (l *Launcher) applySessionOptions(ctx context.Context, ms *mission.Mission)
 	}
 }
 
-// Only the executing session gets a banner. A remote view displays that session's
-// border over ssh, so adding one locally would name the wrong executor.
+// The agent's session gets a banner naming the host it runs on, which is what
+// a person attached from the paired machine over ssh sees at the top.
 func (l *Launcher) applyExecutorBanner(ctx context.Context, ms mission.Mission) {
 	window := terminal.Window(ms.TmuxSession, agentWindow)
 	// A pane border survives agents clearing or redrawing their terminal,

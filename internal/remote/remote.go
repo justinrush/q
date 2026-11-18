@@ -122,7 +122,8 @@ func (c Command) shellArgv() []string {
 //
 // ssh is told to allocate a terminal, since the agent's session is a
 // full-screen program. A command that is not ssh is trusted to do so itself.
-func (c Command) AttachArgv(id mission.MissionID) []string {
+// steal detaches the session's other clients on the peer first.
+func (c Command) AttachArgv(id mission.MissionID, steal bool) []string {
 	if len(c.Argv) == 0 {
 		return nil
 	}
@@ -133,7 +134,12 @@ func (c Command) AttachArgv(id mission.MissionID) []string {
 		argv = append(argv, c.Argv[1:]...)
 	}
 
-	return append(slices.Clone(argv), c.bin(), "attach", string(id))
+	out := append(slices.Clone(argv), c.bin(), "attach")
+	if steal {
+		out = append(out, "--steal")
+	}
+
+	return append(out, string(id))
 }
 
 // bin returns the peer's q binary.
@@ -333,17 +339,27 @@ func (p *Peer) Ready(ctx context.Context, id mission.MissionID) (api.Readiness, 
 	return call[api.Readiness](ctx, p, http.MethodGet, "/v1/missions/"+string(id)+"/ready", nil)
 }
 
+// OpenDebrief asks the peer to arrange a mission's debrief session in its own
+// tmux, on its own worktrees, without attaching anything.
+//
+// The peer runs the agent, so its session is the one a person debriefing
+// should be in: every pane they add there is on the machine the agent can see.
+func (p *Peer) OpenDebrief(ctx context.Context, id mission.MissionID) (api.Result, error) {
+	return call[api.Result](ctx, p, http.MethodPost, "/v1/missions/"+string(id)+"/open",
+		api.OpenDebriefRequest{Mode: api.DebriefPrepare})
+}
+
 // AttachArgv returns the command that attaches a terminal to a mission's agent
 // on the peer, or nil when the transport cannot carry one.
-func (p *Peer) AttachArgv(id mission.MissionID) []string {
+func (p *Peer) AttachArgv(id mission.MissionID, steal bool) []string {
 	carrier, ok := p.transport.(interface {
-		AttachArgv(id mission.MissionID) []string
+		AttachArgv(id mission.MissionID, steal bool) []string
 	})
 	if !ok {
 		return nil
 	}
 
-	return carrier.AttachArgv(id)
+	return carrier.AttachArgv(id, steal)
 }
 
 // call sends one request and decodes the answer, turning a refusal from the

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -609,6 +610,25 @@ func (a *App) attachSessionCmd(session string, steal bool) tea.Cmd {
 			return toastMsg{text: "attaching to mission: " + err.Error(), err: true}
 		}
 		return toastMsg{text: "returned from " + session}
+	})
+}
+
+// attachRemoteCmd releases Bubble Tea's terminal to the command that attaches
+// to a mission's session on the paired machine, and restores the board when
+// it detaches. Inside tmux it runs nested, since the session belongs to
+// another machine's tmux server and there is no client here to switch.
+func (a *App) attachRemoteCmd(target api.AttachCommand, steal bool) tea.Cmd {
+	argv := target.ArgvFor(steal)
+
+	// The argv comes from this machine's daemon, which built it from the
+	// configured remote command. It is passed literally, never through a shell.
+	cmd := exec.CommandContext(a.ctx(), argv[0], argv[1:]...) // #nosec G204
+
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
+			return toastMsg{text: "attaching to the agent on " + target.Host + ": " + err.Error(), err: true}
+		}
+		return toastMsg{text: "returned from " + target.Host}
 	})
 }
 

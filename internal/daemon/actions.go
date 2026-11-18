@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/justinrush/q/internal/api"
+	"os"
 	"strings"
 	"time"
 
@@ -17,6 +18,9 @@ import (
 type Debriefer interface {
 	Open(ctx context.Context, ms mission.Mission, mode api.Mode) (api.Result, mission.Mission, error)
 	Touched(ctx context.Context, ms mission.Mission) ([]api.Touched, error)
+	// OpenWindow opens a terminal window running spec, or returns
+	// terminal.ErrNoTerminal when q is configured not to open windows.
+	OpenWindow(ctx context.Context, spec terminal.Spec) error
 }
 
 // Messenger delivers text to a live agent session and revives dead ones.
@@ -25,9 +29,6 @@ type Messenger interface {
 	Relaunch(ctx context.Context, operation mission.Operation, ms mission.Mission, message string) (mission.Mission, error)
 	// Stop ends a mission's agent session without touching its worktrees.
 	Stop(ctx context.Context, ms mission.Mission) error
-	// View starts a session on this host that shows an agent running on
-	// another, by running the given command where the agent would be.
-	View(ctx context.Context, operation mission.Operation, ms mission.Mission) (mission.Mission, error)
 }
 
 // WithMessenger attaches the component that talks to a live agent session.
@@ -223,9 +224,7 @@ func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode ap
 	}
 
 	if ms.Running() && !s.holds(ms) {
-		if ms, err = s.ensureViewer(ctx, ms); err != nil {
-			return api.Result{}, err
-		}
+		return s.openOnPeer(ctx, ms, mode)
 	}
 
 	result, updated, err := s.debriefer.Open(ctx, ms, mode)
@@ -243,56 +242,75 @@ func (s *Service) OpenDebrief(ctx context.Context, id mission.MissionID, mode ap
 	return result, nil
 }
 
-// ensureViewer makes sure this host has a session to open for a mission the
-// paired q is running, starting one if it does not.
+// openOnPeer opens the debrief of a mission the paired q is running, on the
+// paired machine.
 //
-// A debrief is a tmux session with the agent in one pane and editors beside
-// it. This host has the code, mirrored, but not the agent. So the session it
-// opens runs, where the agent would be, the command that attaches to the
-// agent on the other machine.
-func (s *Service) ensureViewer(ctx context.Context, ms mission.Mission) (mission.Mission, error) {
-	snap := s.store.Snapshot()
-	host := snap.HostName(ms.Lease.Holder)
+// The agent, its worktrees, and its session are all there, so that is where
+// the debrief belongs. The peer arranges its own editor panes on its own
+// worktrees, and this host only connects a terminal to that session. Nothing
+// is opened in this machine's tmux: a pane split there would be on the
+// mirror, where files the mirror does not carry, like a review's feedback,
+// would never reach the agent.
+func (s *Service) openOnPeer(ctx context.Context, ms mission.Mission, mode api.Mode) (api.Result, error) {
+	host := s.store.Snapshot().HostName(ms.Lease.Holder)
 
-	if s.remote == nil || s.messenger == nil {
-		return ms, fmt.Errorf("%w: %s is running on %s; open it from there", ErrConflict, ms.Name, host)
+	if s.remote == nil {
+		return api.Result{}, fmt.Errorf("%w: %s is running on %s; open it from there", ErrConflict, ms.Name, host)
 	}
 
-	if ms.MissionDir == "" {
-		return ms, fmt.Errorf(
-			"%w: %s is running on %s and has not been mirrored here yet; try again in a moment",
-			ErrConflict, ms.Name, host)
+	attach := api.AttachCommand{
+		Argv:      s.remote.AttachArgv(ms.ID, false),
+		StealArgv: s.remote.AttachArgv(ms.ID, true),
+		Host:      host,
+	}
+	if len(attach.Argv) == 0 {
+		return api.Result{}, fmt.Errorf("%w: there is no way to attach to an agent on %s", ErrConflict, host)
 	}
 
-	if s.sessionAlive(ctx, ms) {
-		return ms, nil
-	}
-
-	operation, _ := snap.Operation(ms.OperationID)
-
-	if len(s.remote.AttachArgv(ms.ID)) == 0 {
-		return ms, fmt.Errorf("%w: there is no way to attach to an agent on %s", ErrConflict, host)
-	}
-
-	viewing, err := s.messenger.View(ctx, operation, ms)
+	result, err := s.remote.OpenDebrief(ctx, ms.ID)
 	if err != nil {
-		return ms, err
+		return api.Result{}, fmt.Errorf("opening %s on %s: %w", ms.Name, host, err)
 	}
 
-	s.updateLocal(ms.ID, "mission.viewer", func(stored *mission.Mission) {
-		stored.TmuxSession = viewing.TmuxSession
-		stored.AgentPaneID = viewing.AgentPaneID
-	})
+	result.Remote = &attach
+	result.Attached = false
+	result.AttachCommand = ""
 
-	return viewing, nil
+	if result.NeedsRelaunch || mode == api.ModePrepare {
+		return result, nil
+	}
+
+	// Raising needs a window this host opened and remembers; there is none for
+	// a session on another machine, so raising opens one like attaching does.
+	argv := attach.ArgvFor(mode == api.ModeSteal)
+
+	// The window's directory is only where its shell starts; the mirror, or
+	// home before there is one, since the session it shows is elsewhere.
+	dir := ms.MissionDir
+	if dir == "" {
+		dir, _ = os.UserHomeDir()
+	}
+
+	err = s.debriefer.OpenWindow(ctx, terminal.Spec{Dir: dir, Argv: argv})
+
+	switch {
+	case errors.Is(err, terminal.ErrNoTerminal):
+		result.AttachCommand = strings.Join(argv, " ")
+	case err != nil:
+		return result, err
+	default:
+		result.Attached = true
+	}
+
+	return result, nil
 }
 
 // AttachCommand returns the command that attaches a terminal to a mission's
 // agent on the paired host.
 //
-// It is asked for each time rather than baked into the viewer session, because
-// the answer changes: the mission may have come back to this host, or been
-// closed, since the session was opened.
+// It answers from the mission's lease as it stands, so a caller asking after
+// the mission came back to this host, or was closed, is told so rather than
+// handed a command for a session that is no longer there.
 func (s *Service) AttachCommand(id mission.MissionID) (api.AttachCommand, error) {
 	snap := s.store.Snapshot()
 
@@ -313,7 +331,7 @@ func (s *Service) AttachCommand(id mission.MissionID) (api.AttachCommand, error)
 		return api.AttachCommand{}, fmt.Errorf("%w: %s is running on %s; open it from there", ErrConflict, ms.Name, host)
 	}
 
-	argv := s.remote.AttachArgv(id)
+	argv := s.remote.AttachArgv(id, false)
 	if len(argv) == 0 {
 		return api.AttachCommand{}, fmt.Errorf("%w: there is no way to attach to an agent on %s", ErrConflict, host)
 	}

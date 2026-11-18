@@ -11,6 +11,7 @@ import (
 
 	"github.com/justinrush/q/internal/api"
 	"github.com/justinrush/q/internal/mission"
+	"github.com/justinrush/q/internal/terminal"
 )
 
 type fakeReclaimer struct {
@@ -35,6 +36,8 @@ func (r partialDebriefer) Open(
 
 	return api.Result{PanesAdded: 1}, ms, r.err
 }
+
+func (partialDebriefer) OpenWindow(context.Context, terminal.Spec) error { return nil }
 
 func (partialDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
 	return nil, nil
@@ -136,6 +139,8 @@ func (r *recordingDebriefer) Open(
 
 	return api.Result{PanesAdded: 1}, ms, nil
 }
+
+func (*recordingDebriefer) OpenWindow(context.Context, terminal.Spec) error { return nil }
 
 func (*recordingDebriefer) Touched(context.Context, mission.Mission) ([]api.Touched, error) {
 	return nil, nil

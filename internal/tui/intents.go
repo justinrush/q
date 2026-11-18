@@ -595,6 +595,10 @@ func (a *App) handleDebriefOpened(msg debriefOpenedMsg) tea.Cmd {
 		return nil
 	}
 
+	if msg.Attach && msg.Result.Remote != nil {
+		return a.attachRemoteCmd(*msg.Result.Remote, msg.Steal)
+	}
+
 	if msg.Attach {
 		return a.attachSessionCmd(msg.Result.Session, msg.Steal)
 	}
