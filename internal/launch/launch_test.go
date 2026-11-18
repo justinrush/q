@@ -75,7 +75,7 @@ func seedGitResponses(fake *runner.Fake, repoPath, commonDir string) {
 
 	// The target session must not already exist, or the launcher refuses rather
 	// than adopting someone else's session.
-	fake.ExpectExit(tmuxBin+" has-session -t ="+testSession, 1, "can't find session")
+	fake.ExpectExit(tmuxBin+" -u has-session -t ="+testSession, 1, "can't find session")
 }
 
 func seedRepoGitResponses(fake *runner.Fake, repoPath, commonDir string) {
