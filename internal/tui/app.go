@@ -504,19 +504,19 @@ func (a *App) View() string {
 	if a.width == 0 {
 		return "starting…"
 	}
-
-	body := a.board.View()
-	if a.active == tabOperations {
-		body = a.operations.View()
-	}
-
-	screen := lipgloss.JoinVertical(lipgloss.Left, a.header(), body)
-
-	// A modal replaces the screen rather than overlaying it, because lipgloss has no
-	// true compositing and a half-overlaid board is harder to read than a clean dialog.
+	// The modal replaces the screen, so skip rendering the hidden board.
 	if a.modal != nil {
 		return a.modal.View(a.width, a.height)
 	}
+
+	var body string
+	if a.active == tabOperations {
+		body = a.operations.View()
+	} else {
+		body = a.board.View()
+	}
+
+	screen := lipgloss.JoinVertical(lipgloss.Left, a.header(), body)
 
 	return lipgloss.JoinVertical(lipgloss.Left, screen, a.footer())
 }

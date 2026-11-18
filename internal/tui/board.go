@@ -40,6 +40,11 @@ type Board struct {
 	laneScroll int
 	// filter limits the board to one operation, empty for all.
 	filter mission.OperationID
+	// Lane lists are stable between snapshots, filter changes, and feature toggles.
+	laneCache   [][]mission.Mission
+	cacheValid  []bool
+	cacheFilter mission.OperationID
+	cacheNested bool
 	// follow is a mission the selection should jump to once the next snapshot arrives.
 	//
 	// A moved card lands at the end of its new lane, which is rarely the index the
@@ -163,6 +168,7 @@ func (b *Board) layout() Layout {
 // SetSnapshot replaces the board's data and re-bounds the selection.
 func (b *Board) SetSnapshot(snap mission.Snapshot) {
 	b.snapshot = snap
+	b.cacheValid = nil
 	b.clampSelection()
 	b.applyFollow()
 }
@@ -432,6 +438,22 @@ func (b *Board) missionsIn(lane int) []mission.Mission {
 	if lane < 0 || lane >= len(mission.Lanes) {
 		return nil
 	}
+	if b.cacheValid == nil || b.cacheFilter != b.filter || b.cacheNested != b.nestedMissions {
+		b.laneCache = make([][]mission.Mission, len(mission.Lanes))
+		b.cacheValid = make([]bool, len(mission.Lanes))
+		b.cacheFilter = b.filter
+		b.cacheNested = b.nestedMissions
+	}
+	if b.cacheValid[lane] {
+		return b.laneCache[lane]
+	}
+	missions := b.buildMissionsIn(lane)
+	b.laneCache[lane] = missions
+	b.cacheValid[lane] = true
+	return missions
+}
+
+func (b *Board) buildMissionsIn(lane int) []mission.Mission {
 
 	missions := b.snapshot.MissionsInLane(mission.Lanes[lane])
 
