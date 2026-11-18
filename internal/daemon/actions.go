@@ -132,7 +132,8 @@ func (s *Service) ReclaimMission(
 	return report, nil
 }
 
-// FinishMission reclaims a mission's live resources and retains its card in done.
+// FinishMission reclaims a mission's live resources. Top-level missions retain
+// their cards; nested missions are removed once their resources are gone.
 //
 // The mission is filed only after every resource was reclaimed. Its launch fields are
 // cleared in the same state mutation as the lane change, so a finished card cannot look
@@ -159,6 +160,11 @@ func (s *Service) FinishMission(
 	ms, err = s.setStatus(id, mission.StatusClosed, clearFinishedResources)
 	if err != nil {
 		return mission.Mission{}, report, err
+	}
+	if ms.ParentMissionID != "" {
+		if err := s.DeleteMission(id); err != nil {
+			return mission.Mission{}, report, err
+		}
 	}
 
 	return ms, report, nil
