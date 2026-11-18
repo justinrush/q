@@ -219,7 +219,13 @@ func (s *Service) settleWorktrees(ctx context.Context, mine, theirs []mission.Re
 	changed := false
 
 	for _, ms := range s.store.Snapshot().Missions {
-		if !ms.Running() || ms.ParentMissionID != "" {
+		if !ms.Running() {
+			continue
+		}
+
+		if ms.ParentMissionID != "" {
+			s.mirrorChild(ctx, ms)
+
 			continue
 		}
 
@@ -296,6 +302,63 @@ func (s *Service) provisionMirror(
 		s.warn("mirroring a mission the paired q runs", "mission", ms.ID, "error", err)
 	}
 
+	return s.recordMirror(ms, provisioned, err)
+}
+
+// mirrorChild gives this host what it needs to open a child mission the peer
+// runs: a session directory, and the parent's worktrees as mirrored here.
+//
+// A child borrows its parent's worktrees rather than having its own, so it is
+// never snapshotted and the ordinary mirror, which waits for a snapshot, would
+// never create it. Without this a child the peer runs could not be opened here
+// at all. It waits for the parent's mirror, and follows it: when the parent
+// gains a worktree here, so does the child.
+func (s *Service) mirrorChild(ctx context.Context, ms mission.Mission) {
+	if s.holds(ms) {
+		return
+	}
+
+	snap := s.store.Snapshot()
+
+	parent, ok := snap.Mission(ms.ParentMissionID)
+	if !ok || parent.MissionDir == "" {
+		return
+	}
+
+	if ms.MissionDir != "" && sameWorktrees(ms.Work, parent.Work) {
+		return
+	}
+
+	operation, _ := snap.Operation(ms.OperationID)
+
+	provisioned, err := s.worktrees.Provision(ctx, operation, ms, nil)
+	if err != nil {
+		s.warn("mirroring a child mission the paired q runs", "mission", ms.ID, "error", err)
+	}
+
+	s.recordMirror(ms, provisioned, err)
+}
+
+// sameWorktrees reports whether two missions' records point at the same
+// worktrees on this host.
+func sameWorktrees(a, b map[string]mission.RepoWork) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for name, work := range a {
+		other, ok := b[name]
+		if !ok || work.WorktreePath != other.WorktreePath || work.Created != other.Created || work.Branch != other.Branch {
+			return false
+		}
+	}
+
+	return true
+}
+
+// recordMirror stores what mirroring created for a mission on this host, and
+// returns the mission as now stored.
+func (s *Service) recordMirror(ms mission.Mission, provisioned mission.Mission, err error) mission.Mission {
 	s.updateLocal(ms.ID, "mission.mirrored", func(stored *mission.Mission) {
 		stored.MissionDir = provisioned.MissionDir
 

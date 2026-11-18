@@ -120,7 +120,8 @@ func newHost(t *testing.T, root, name, origin string) *host {
 	t.Cleanup(hub.Close)
 
 	client := git.New(bin, runner.OS{})
-	workspace := git.NewProvisioner(dirs, client, noTmux{}, git.WithBranchPrefix(name))
+	workspace := git.NewProvisioner(dirs, client, noTmux{}, git.WithBranchPrefix(name),
+		git.WithParentLookup(func(id mission.MissionID) (mission.Mission, bool) { return store.Snapshot().Mission(id) }))
 
 	svc := NewService(store, hub, dirs,
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
@@ -324,6 +325,54 @@ func TestTheMirrorFollowsAsTheAgentKeepsWorking(t *testing.T) {
 
 	if got, want := gitIn(t, mirror, "log", "-1", "--format=%s"), "settle on the second attempt"; got != want {
 		t.Errorf("mirror tip = %q, want %q", got, want)
+	}
+}
+
+// A child works in its parent's worktrees and is never snapshotted itself, so
+// waiting for its snapshot, as an ordinary mirror does, would wait forever and
+// leave it impossible to open here. It is mirrored as it was launched: a
+// session directory of its own, and the parent's worktrees as this host has
+// them.
+func TestAChildThePeerRunsIsMirroredOnItsParentsWorktrees(t *testing.T) {
+	laptop, mini := realPair(t)
+	parent := mini.launch("parent")
+
+	exchange(t, laptop.svc)
+
+	parentMirror := laptop.worktree(parent.ID)
+	if parentMirror == "" {
+		t.Fatalf("the parent was not mirrored: %+v", laptop.mission(parent.ID))
+	}
+
+	mini.svc.apply(WithNestedMissions(true))
+	mini.svc.peerNestedSupport.Store(true)
+
+	child, err := mini.svc.CreateMission(api.CreateMissionRequest{ParentMissionID: parent.ID, Name: "child", Prompt: "help"})
+	if err != nil {
+		t.Fatalf("CreateMission: %v", err)
+	}
+
+	if _, err := mini.svc.Start(t.Context(), child.ID); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	exchange(t, laptop.svc)
+
+	mirrored := laptop.mission(child.ID)
+	if mirrored.MissionDir == "" {
+		t.Fatalf("the child has no directory here: %+v", mirrored)
+	}
+
+	if mirrored.MissionDir == laptop.mission(parent.ID).MissionDir {
+		t.Error("the child shares its parent's directory; reclaiming the child would remove the parent's mirror")
+	}
+
+	if got := laptop.worktree(child.ID); got != parentMirror {
+		t.Errorf("child worktree = %q, want the parent's mirror %q", got, parentMirror)
+	}
+
+	if mirrored.Lease.Holder != mini.svc.self {
+		t.Error("mirroring a child must not take it")
 	}
 }
 
