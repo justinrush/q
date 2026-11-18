@@ -1397,6 +1397,8 @@ for a successful save and a subsequent idle observation before reclaiming the
 session and worktrees. A normal end-of-turn event alone is not an acknowledgment.
 The command returns while capture is pending, and the card shows its progress.
 Unlaunched missions finish immediately.
+Finishing a nested mission also removes its card and its own session directory;
+the parent workspace and any child report saved there remain available.
 
 A busy agent is allowed to finish its current turn before the prompt is sent.
 Unavailable agents, agents still in planning mode, failed delivery, and captures

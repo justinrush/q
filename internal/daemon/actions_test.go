@@ -266,6 +266,42 @@ func TestFinishMissionReclaimsResourcesAndRetainsCard(t *testing.T) {
 	}
 }
 
+func TestFinishNestedMissionRemovesCardAfterReclaim(t *testing.T) {
+	svc := newTestService(t)
+	parent := launchedServiceMission(t, svc)
+	child, err := svc.CreateMission(api.CreateMissionRequest{OperationID: parent.OperationID, Name: "child", Prompt: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = svc.store.Mutate("test.child", func(snap *mission.Snapshot) error {
+		child.ParentMissionID = parent.ID
+		started := time.Now()
+		child.StartedAt = &started
+		child.MissionDir = "/missions/child"
+		snap.PutMission(child)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reclaimer := &fakeReclaimer{}
+	svc.apply(WithReclaimer(reclaimer))
+
+	finished, err := svc.Dispatch(t.Context(), child.ID, api.SetStatusRequest{To: mission.StatusClosed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != mission.StatusClosed || reclaimer.calls != 1 {
+		t.Fatalf("finished = %+v, reclaim calls = %d", finished, reclaimer.calls)
+	}
+	if _, ok := svc.Snapshot().Mission(child.ID); ok {
+		t.Fatal("finished child card remains")
+	}
+	if _, ok := svc.Snapshot().Mission(parent.ID); !ok {
+		t.Fatal("parent card was removed")
+	}
+}
+
 func TestFinishMissionDoesNotFileFailedReclaim(t *testing.T) {
 	svc := newTestService(t)
 	ms := launchedServiceMission(t, svc)
