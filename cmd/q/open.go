@@ -141,7 +141,7 @@ func renderOpenResult(out io.Writer, result api.Result) error {
 		rep.line("  %s", result.AttachCommand)
 	case result.Remote != nil:
 		rep.line("attach   run this to join the session on %s:", result.Remote.Host)
-		rep.line("  %s", strings.Join(result.Remote.Argv, " "))
+		rep.line("  %s", terminal.ShellJoin(result.Remote.Argv))
 	default:
 		rep.line("attach   not attached")
 	}

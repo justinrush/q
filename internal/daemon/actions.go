@@ -295,7 +295,7 @@ func (s *Service) openOnPeer(ctx context.Context, ms mission.Mission, mode api.M
 
 	switch {
 	case errors.Is(err, terminal.ErrNoTerminal):
-		result.AttachCommand = strings.Join(argv, " ")
+		result.AttachCommand = terminal.ShellJoin(argv)
 	case err != nil:
 		return result, err
 	default:
