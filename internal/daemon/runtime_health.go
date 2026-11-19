@@ -11,7 +11,7 @@ func (s *Service) markRuntimeUnavailable(observed mission.Mission, cause error) 
 		if !ok || ms.Status.Terminal() || !s.holds(ms) ||
 			ms.HookEpoch != observed.HookEpoch || !ms.UpdatedAt.Equal(observed.UpdatedAt) ||
 			ms.HasBadge(mission.BadgeRuntimeUnavailable) {
-			return nil
+			return mission.ErrUnchanged
 		}
 		ms.Badges = ms.WithBadge(mission.BadgeRuntimeUnavailable, "")
 		ms.UpdatedAt = s.now()

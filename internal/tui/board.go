@@ -32,6 +32,10 @@ type Board struct {
 	scroll []int
 	// doneExpanded shows the done column at full width.
 	doneExpanded bool
+	// folded holds the parents whose children are hidden under them. It lives on
+	// the board rather than in the daemon's state, like doneExpanded: it is a
+	// view preference, not a fact about the missions.
+	folded map[mission.MissionID]bool
 	// horizontal draws lanes as rows with cards running across them, which fits a
 	// narrow window better than five columns do.
 	horizontal bool
@@ -94,6 +98,7 @@ var boardActions = map[string]boardAction{
 	"K":      (*Board).reorderUp,
 	"J":      (*Board).reorderDown,
 	"z":      (*Board).toggleDone,
+	"Z":      (*Board).toggleFold,
 	"esc":    (*Board).clearFilter,
 	"enter":  (*Board).openDebrief,
 	"ctrl+o": (*Board).openDebrief,
@@ -420,7 +425,7 @@ func (b *Board) FullHelp() [][]key.Binding {
 		for i := range groups {
 			filtered := groups[i][:0]
 			for _, binding := range groups[i] {
-				if binding.Help().Key != "N" && binding.Help().Key != "I" {
+				if k := binding.Help().Key; k != "N" && k != "I" && k != "Z" {
 					filtered = append(filtered, binding)
 				}
 			}
@@ -464,6 +469,9 @@ func (b *Board) buildMissionsIn(lane int) []mission.Mission {
 				continue
 			}
 			grouped = append(grouped, parent)
+			if b.folded[parent.ID] {
+				continue
+			}
 			var children []mission.Mission
 			for _, child := range b.snapshot.Missions {
 				if child.ParentMissionID == parent.ID {
@@ -611,6 +619,52 @@ func (b *Board) toggleDone() tea.Cmd {
 	b.doneExpanded = !b.doneExpanded
 
 	return nil
+}
+
+// toggleFold hides or shows the children under the selected family's parent.
+// On a child it folds the family it belongs to and lands on the parent, so the
+// cursor never points at a card that has just disappeared.
+func (b *Board) toggleFold() tea.Cmd {
+	if !b.nestedMissions {
+		return nil
+	}
+	ms, ok := b.Selected()
+	if !ok {
+		return nil
+	}
+	parent := ms.ID
+	if ms.ParentMissionID != "" {
+		if _, ok := b.snapshot.Mission(ms.ParentMissionID); !ok {
+			return nil // an orphan has no family on screen to fold
+		}
+		parent = ms.ParentMissionID
+	} else if b.childCount(parent) == 0 {
+		return nil
+	}
+	if b.folded == nil {
+		b.folded = map[mission.MissionID]bool{}
+	}
+	if b.folded[parent] {
+		delete(b.folded, parent)
+	} else {
+		b.folded[parent] = true
+	}
+	b.cacheValid = nil
+	b.follow = parent
+	b.applyFollow()
+	b.clampSelection()
+	return nil
+}
+
+// childCount is how many missions name id as their parent.
+func (b *Board) childCount(id mission.MissionID) int {
+	n := 0
+	for _, ms := range b.snapshot.Missions {
+		if ms.ParentMissionID == id {
+			n++
+		}
+	}
+	return n
 }
 
 func (b *Board) clearFilter() tea.Cmd {
@@ -785,6 +839,11 @@ func (b *Board) renderMissionCard(ms mission.Mission, width int, selected bool) 
 		return renderCard(copy, b.operation(ms), b.hostOf(ms), width, selected)
 	}
 	if ms.ParentMissionID == "" {
+		if b.folded[ms.ID] {
+			if n := b.childCount(ms.ID); n > 0 {
+				ms.Name = fmt.Sprintf("%s ▸%d", ms.Name, n)
+			}
+		}
 		return renderCard(ms, b.operation(ms), b.hostOf(ms), width, selected)
 	}
 	copy := ms

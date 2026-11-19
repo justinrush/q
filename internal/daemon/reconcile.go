@@ -382,7 +382,7 @@ func (s *Service) persistReconciled(before, ms mission.Mission) {
 	err := s.store.Mutate("mission.reconcile", func(snap *mission.Snapshot) error {
 		stored, ok := snap.Mission(ms.ID)
 		if !ok || !stored.UpdatedAt.Equal(before.UpdatedAt) || !sameReconciled(stored, before) {
-			return nil
+			return mission.ErrUnchanged
 		}
 
 		// The snapshot still matches. Carry over only fields reconciliation owns.

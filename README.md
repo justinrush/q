@@ -1478,7 +1478,9 @@ be overridden. Children cannot have children of their own.
 
 A child publishes its result with `q mission result --file report.md` (or `--file -`
 for stdin). The report is stored under the parent's `.q/children/` directory and
-marks its card. Select the parent and press `I` to read child reports. Finish or
+marks its card. Select the parent and press `I` to read child reports. Press `Z`
+on a parent or any of its children to fold the children under the parent card,
+which then shows how many it holds (`▸3`); press `Z` again to unfold. Finish or
 delete every open child before cleaning up the parent. A child cleanup removes
 only its own session and artifacts; shared worktrees belong to the parent.
 Children remain on the parent's host while open. Parent migration and takeover

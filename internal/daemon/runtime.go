@@ -109,12 +109,12 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		ms, ok := snap.Mission(id)
 		if !ok || ms.Status.Terminal() || !s.holds(ms) ||
 			reading.HookEpoch != 0 && reading.HookEpoch != ms.HookEpoch {
-			return nil
+			return mission.ErrUnchanged
 		}
 
 		if ms.AgentSessionID != "" && ms.AgentSessionID != reading.SessionID &&
 			ms.AgentSessionID != reading.PreviousSessionID {
-			return nil
+			return mission.ErrUnchanged
 		}
 
 		before := ms
@@ -134,8 +134,11 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		keepPlanFailure(&ms)
 		switchModel = !before.PlanApproved && ms.PlanApproved && (ms.SplitsPlan() || codexHandoff(ms)) && !ms.RunningTool().PlanSwitchesItself()
 
+		// The poll reads every live mission each second, and an idle one reads
+		// the same every time. Saying so keeps the store from rewriting the
+		// whole state file several times a second to record nothing.
 		if sameRuntimeState(before, ms) && before.Finish == ms.Finish {
-			return nil
+			return mission.ErrUnchanged
 		}
 
 		if ms.Status != before.Status {

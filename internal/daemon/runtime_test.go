@@ -434,3 +434,33 @@ func TestBusyReadingPreservesPendingPlanWithoutPlanEvidence(t *testing.T) {
 		t.Fatalf("state: %+v", ms)
 	}
 }
+
+// TestSteadyRuntimeReadingWritesNothing guards the poll's cost. Every live
+// mission is read each second, and an idle one reads the same every time;
+// persisting each of those rewrote the whole state file several times a second.
+func TestSteadyRuntimeReadingWritesNothing(t *testing.T) {
+	tests := map[string]fakeRuntime{
+		"idle agent":         {found: true, reading: waitingReading(mission.ActivityIdle)},
+		"runtime still down": {err: errors.New("connection unavailable")},
+	}
+
+	for name, runtime := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			seedCodexMission(t, svc, mission.StatusActive, "")
+			svc.apply(WithRuntime(mission.ToolCodex, runtime))
+
+			// The first poll moves the card; every later one should find it settled.
+			svc.pollRuntimes(t.Context())
+			settled := svc.Snapshot().UpdatedAt
+
+			for range 3 {
+				svc.pollRuntimes(t.Context())
+			}
+
+			if got := svc.Snapshot().UpdatedAt; !got.Equal(settled) {
+				t.Errorf("state rewritten by unchanged readings: UpdatedAt %v, want %v", got, settled)
+			}
+		})
+	}
+}
