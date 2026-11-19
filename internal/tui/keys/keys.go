@@ -75,6 +75,7 @@ type Board struct {
 	Send       key.Binding
 	Review     key.Binding
 	ToggleDone key.Binding
+	Fold       key.Binding
 	Status     key.Binding
 	Filter     key.Binding
 	Clear      key.Binding
@@ -111,6 +112,7 @@ func NewBoard() Board {
 		Send:       key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "send to the paired machine")),
 		Review:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "review with another agent")),
 		ToggleDone: key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "expand closed")),
+		Fold:       key.NewBinding(key.WithKeys("Z"), key.WithHelp("Z", "fold/unfold children")),
 		Status:     key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "move to lane…")),
 		Filter:     key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter by operation")),
 		Clear:      key.NewBinding(key.WithKeys("esc")),
@@ -147,7 +149,7 @@ func (b Board) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{b.Left, b.Right, b.Up, b.Down, b.Lane, b.First},
 		{b.MoveLeft, b.ReorderUp, b.Open, b.Log, b.Message},
-		{b.New, b.Child, b.Results, b.Edit, b.Delete, b.TogglePlan, b.Queue},
+		{b.New, b.Child, b.Results, b.Fold, b.Edit, b.Delete, b.TogglePlan, b.Queue},
 		{b.Status, b.ToggleDone, b.Filter, b.Take, b.TakeFresh, b.Send, b.Review},
 		{b.Orientation},
 	}

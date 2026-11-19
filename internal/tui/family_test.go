@@ -59,3 +59,51 @@ func TestChildReorderTargetsSiblingAcrossStatuses(t *testing.T) {
 		t.Fatalf("reorder: %#v", cmd())
 	}
 }
+
+func TestFoldHidesChildrenUnderParent(t *testing.T) {
+	parent := testMission("ms_parent", "parent", "op_1", mission.StatusActive)
+	first := testMission("ms_first", "first", "op_1", mission.StatusDebrief)
+	first.ParentMissionID = parent.ID
+	second := testMission("ms_second", "second", "op_1", mission.StatusAwaiting)
+	second.ParentMissionID = parent.ID
+	second.SiblingOrder = 1
+	board := boardWith([]mission.Operation{testOperation("op_1", "API", 0)}, []mission.Mission{parent, first, second})
+	board.SetSize(200, 40)
+	board.nestedMissions = true
+	board.lane = 1
+	board.cursor[1] = 2 // on the second child
+
+	board.toggleFold()
+	got := board.missionsIn(1)
+	if len(got) != 1 || got[0].ID != parent.ID {
+		t.Fatalf("folded lane: %+v", got)
+	}
+	if sel, _ := board.Selected(); sel.ID != parent.ID {
+		t.Fatalf("selection after fold: %s", sel.ID)
+	}
+	if view := board.View(); !strings.Contains(view, "▸2") || strings.Contains(view, "└─") {
+		t.Fatal("folded parent should show its child count and hide the children")
+	}
+
+	// Folding survives a fresh snapshot.
+	board.SetSnapshot(board.snapshot)
+	if len(board.missionsIn(1)) != 1 {
+		t.Fatal("fold lost on snapshot")
+	}
+
+	board.toggleFold()
+	if len(board.missionsIn(1)) != 3 {
+		t.Fatal("unfold did not restore children")
+	}
+}
+
+func TestFoldIgnoresChildlessMission(t *testing.T) {
+	solo := testMission("ms_solo", "solo", "op_1", mission.StatusActive)
+	board := boardWith([]mission.Operation{testOperation("op_1", "API", 0)}, []mission.Mission{solo})
+	board.nestedMissions = true
+	board.lane = 1
+	board.toggleFold()
+	if len(board.folded) != 0 {
+		t.Fatal("folded a mission with no children")
+	}
+}
