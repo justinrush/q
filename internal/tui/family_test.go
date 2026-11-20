@@ -2,8 +2,10 @@ package tui
 
 import (
 	"github.com/justinrush/q/internal/mission"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFamilyProjectionFollowsToggleAndParentLane(t *testing.T) {
@@ -105,5 +107,35 @@ func TestFoldIgnoresChildlessMission(t *testing.T) {
 	board.toggleFold()
 	if len(board.folded) != 0 {
 		t.Fatal("folded a mission with no children")
+	}
+}
+
+// Lanes an agent has run in show the card whose turn ended most recently first,
+// whatever order they were filed in. Briefing keeps its hand-set order, since
+// that is the order the scheduler launches in.
+func TestRunLanesSortByLastTurnNewestFirst(t *testing.T) {
+	base := time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
+	older := testMission("ms_older", "older", "op_1", mission.StatusDebrief)
+	older.Order, older.LastTurnAt = 0, base
+	newer := testMission("ms_newer", "newer", "op_1", mission.StatusDebrief)
+	newer.Order, newer.LastTurnAt = 1, base.Add(time.Hour)
+	first := testMission("ms_first", "first", "op_1", mission.StatusBriefing)
+	first.Order, first.CreatedAt = 0, base
+	second := testMission("ms_second", "second", "op_1", mission.StatusBriefing)
+	second.Order, second.CreatedAt = 1, base.Add(time.Hour)
+	board := boardWith([]mission.Operation{testOperation("op_1", "API", 0)}, []mission.Mission{older, newer, first, second})
+
+	debrief := board.missionsIn(slices.Index(mission.Lanes, mission.StatusDebrief))
+	if len(debrief) != 2 || debrief[0].ID != newer.ID || debrief[1].ID != older.ID {
+		t.Errorf("debrief lane = %v, want newer then older", debrief)
+	}
+	briefing := board.missionsIn(slices.Index(mission.Lanes, mission.StatusBriefing))
+	if len(briefing) != 2 || briefing[0].ID != first.ID || briefing[1].ID != second.ID {
+		t.Errorf("briefing lane = %v, want first then second", briefing)
+	}
+
+	board.lane = slices.Index(mission.Lanes, mission.StatusDebrief)
+	if msg, ok := board.reorder(1)().(toastMsg); !ok || !msg.err {
+		t.Errorf("reorder in a sorted lane = %#v, want an error toast", msg)
 	}
 }

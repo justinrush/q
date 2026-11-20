@@ -749,6 +749,11 @@ fails saying so. Base branches are fixed once a mission launches, like its repos
 
 `briefing → active → awaiting orders → debrief → closed`
 
+Within a lane, cards are ordered by when the agent last finished a turn, newest first;
+a mission that has not finished one yet sorts by when it started. *Briefing* is the
+exception: it keeps the order you give it, because that is the order queued missions
+launch in, so reordering a card only works there (and among a parent's children).
+
 Three moves do more than bookkeeping. Moving an unlaunched mission **into active**
 launches the agent. Moving **into active** from awaiting or debrief resumes it, delivering
 whatever you type as its next message and restarting the agent first if its session has

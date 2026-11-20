@@ -67,12 +67,15 @@ func DefaultPricing() Pricing {
 	return Pricing{Models: map[string]ModelPrice{
 		// OpenAI standard, short-context API rates, verified 2026-10-05.
 		// Astra and GPT-6.1 Sol rechecked 2026-10-19; rates unchanged.
+		// GPT-6.2 Astra and Sol added 2026-11-19.
 		// https://developers.openai.com/api/docs/pricing
 		"gpt-5-codex":   {Input: 1.25, Output: 10, CacheRead: 0.125},
 		"gpt-5.1-codex": {Input: 1.25, Output: 10, CacheRead: 0.125},
 		"gpt-5.3-codex": {Input: 1.75, Output: 14, CacheRead: 0.175},
 		"gpt-5.4":       {Input: 2.5, Output: 15, CacheRead: 0.25},
 		"gpt-5.5":       {Input: 5, Output: 30, CacheRead: 0.5},
+		"gpt-6.2-astra": {Input: 8, Output: 40, CacheRead: 0.4},
+		"gpt-6.2-sol":   {Input: 2, Output: 10, CacheRead: 0.1},
 		"gpt-6-astra":   {Input: 10, Output: 50, CacheRead: 1},
 		"gpt-6.1-sol":   {Input: 2, Output: 10, CacheRead: 0.1},
 		"gpt-6-sol":     {Input: 2, Output: 10, CacheRead: 0.2},
