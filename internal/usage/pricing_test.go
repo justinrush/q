@@ -177,6 +177,8 @@ func TestDefaultPricingCoversTheModelsQRuns(t *testing.T) {
 	// The models a mission actually runs under today. A release that drops one
 	// of these would start reporting every card's cost as a floor.
 	for _, model := range []string{
+		"gpt-6.2-astra",
+		"gpt-6.2-sol",
 		"gpt-6.1-sol",
 		"gpt-5.5",
 		"gpt-5.6-sol",
@@ -223,6 +225,8 @@ func TestCurrentModelCacheRates(t *testing.T) {
 	}{
 		{"gpt-6.1-sol", 14.6},
 		{"gpt-6.1-sol-2026-09-29", 14.6},
+		{"gpt-6.2-astra", 58.4},
+		{"gpt-6.2-sol", 14.6},
 		{"gpt-5.5", 41.75},
 		{"claude-opus-5-5", 29.2},
 		{"claude-sonnet-5-5", 14.7},
@@ -239,7 +243,7 @@ func TestCurrentModelCacheRates(t *testing.T) {
 			}
 		})
 	}
-	for _, model := range []string{"gpt-reserve", "codex-auto-review", "gpt-6.1-sol-pro", "claude-opus-5-5-unknown"} {
+	for _, model := range []string{"gpt-reserve", "codex-auto-review", "gpt-6.1-sol-pro", "gpt-6.2-astra-pro", "claude-opus-5-5-unknown"} {
 		if _, ok := pricing.Price(model); ok {
 			t.Errorf("unexpected rate for %q", model)
 		}
