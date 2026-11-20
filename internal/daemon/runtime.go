@@ -146,6 +146,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 			ms.StatusChangedAt = now
 		}
 
+		ms.StampTurn(before, now)
 		ms.LastEventAt = now
 		ms.UpdatedAt = now
 		updated = ms

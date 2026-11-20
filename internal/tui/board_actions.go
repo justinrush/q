@@ -221,6 +221,9 @@ func (b *Board) reorderUp() tea.Cmd { return b.reorder(-1) }
 // reorderDown moves the focused mission later in its lane.
 func (b *Board) reorder(delta int) tea.Cmd {
 	return b.withSelected(func(ms mission.Mission) tea.Cmd {
+		if sortsByTurn(b.lane) && ms.ParentMissionID == "" {
+			return emit(toastMsg{text: "this lane is sorted by last turn, newest first", err: true})
+		}
 		projected := b.missionsIn(b.lane)
 		var peers []mission.Mission
 		for _, candidate := range projected {

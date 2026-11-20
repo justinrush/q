@@ -461,6 +461,9 @@ func (b *Board) missionsIn(lane int) []mission.Mission {
 func (b *Board) buildMissionsIn(lane int) []mission.Mission {
 
 	missions := b.snapshot.MissionsInLane(mission.Lanes[lane])
+	if sortsByTurn(lane) {
+		mission.SortByTurnRecency(missions)
+	}
 
 	if b.nestedMissions {
 		var grouped []mission.Mission
@@ -504,6 +507,13 @@ func (b *Board) buildMissionsIn(lane int) []mission.Mission {
 	}
 
 	return filtered
+}
+
+// sortsByTurn reports whether a lane shows its cards newest turn first. Briefing
+// keeps its hand-set order instead, because that order is the queue the
+// scheduler launches from.
+func sortsByTurn(lane int) bool {
+	return mission.Lanes[lane] != mission.StatusBriefing
 }
 
 // Selected returns the focused mission.

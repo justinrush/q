@@ -98,6 +98,7 @@ func Reduce(ms Mission, ev HookEvent, now time.Time) Reduction {
 
 	proposed := apply(&ms, ev, now)
 	ms.TurnEnded = turnEnded(before.TurnEnded, ev.Event, proposed)
+	ms.StampTurn(before, now)
 
 	// Every transition that resolves a block clears WaitingFor, so the blocked
 	// agent is forgotten with it rather than being cleared at each site.

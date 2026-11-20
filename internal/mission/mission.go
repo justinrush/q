@@ -245,6 +245,10 @@ type Mission struct {
 	// prompt in the middle of a tool call. Moving a mission between hosts is safe
 	// in the first case and loses the turn in the second.
 	TurnEnded bool `json:"turnEnded,omitempty" q:"run"`
+	// LastTurnAt is when the agent last finished a turn: the moment TurnEnded
+	// last went from false to true. The board sorts lanes by it so the card
+	// that most recently has something to show sits at the top.
+	LastTurnAt time.Time `json:"lastTurnAt,omitzero" q:"run"`
 	// UsageByHost is what the mission has consumed on each host that has run it.
 	// Usage is their sum, and is what a card shows.
 	//
