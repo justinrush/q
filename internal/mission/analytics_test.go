@@ -29,8 +29,11 @@ func TestAnalyticsRetentionAndClone(t *testing.T) {
 	if !r.Deleted || r.OperationName != "Operation" || r.Usage().USD != 2 {
 		t.Fatalf("lost deleted history: %+v", r)
 	}
+	// Copies share records, which are changed only through their Clone.
 	cloned := s.Clone()
-	delete(cloned.Analytics["mission-a"].Contributions, "host-a")
+	edited := cloned.Analytics["mission-a"].Clone()
+	delete(edited.Contributions, "host-a")
+	cloned.Analytics["mission-a"] = edited
 	if s.Analytics["mission-a"].Usage().USD != 2 {
 		t.Fatal("clone aliases history")
 	}

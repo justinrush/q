@@ -116,6 +116,8 @@ func buildDaemonRunSubcommand() *cobra.Command {
 
 			defer stop()
 
+			servePprof(cmd.Context(), logger)
+
 			err = daemon.Run(cmd.Context(), daemon.RunConfig{
 				Dirs:    dirs,
 				Version: version,

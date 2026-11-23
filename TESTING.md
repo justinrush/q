@@ -85,6 +85,48 @@ refused unless the pane is alive and running an agent.
 commits, uncommitted changes, a missing worktree, and a checkout that can no longer be
 inspected.
 
+## Benchmarks
+
+Benchmarks cover what q does over and over: the daemon's 1s runtime poll and 15s
+reconcile, a hook, a store write, the board's reads, the TUI taking a stream
+frame and redrawing, and metering a growing transcript.
+
+```sh
+go test -run '^$' -bench . -benchmem ./internal/mission ./internal/daemon ./internal/tui ./internal/usage ./cmd/q
+```
+
+Each runs against boards built by `internal/mission/missiontest`: `small`, and
+`work`, which has the shape of a heavily used machine's real state (22 live
+missions, 224 closed, about 6 MB, most of it Codex per-response usage records
+and handoff conversations). To run against a real machine's state instead,
+point `Q_BENCH_STATE` at a directory holding its `state.json` and
+`state-closed.json`. The files are copied before use, so the originals are
+never written, and the `real` cases are skipped when it is unset:
+
+```sh
+Q_BENCH_STATE=~/q-work-sample/.local/share/q go test -run '^$' -bench . -benchmem ./internal/daemon
+```
+
+To compare a change, run with `-count 6` before and after and compare with
+[benchstat](https://pkg.go.dev/golang.org/x/perf/cmd/benchstat):
+
+```sh
+go test -run '^$' -bench . -benchmem -count 6 ./internal/daemon > old.txt
+# make the change
+go test -run '^$' -bench . -benchmem -count 6 ./internal/daemon > new.txt
+benchstat old.txt new.txt
+```
+
+Two things the Go benchmarks cannot see are measured on the machine itself:
+
+- `scripts/bench-exec.sh [q] [runs]` times whole `q` processes: `--version`, a
+  hook (against an empty state directory, so it spools), and `daemon status`.
+  That is where an endpoint scanner inspecting each new process shows up.
+- `Q_PPROF=127.0.0.1:6061 q daemon restart` makes the daemon serve Go's
+  profiler on that loopback address, so it can be profiled under its real load:
+  `go tool pprof -top 'http://127.0.0.1:6061/debug/pprof/profile?seconds=30'`.
+  It is off unless set and refuses a non-loopback address.
+
 ## What a human has to test
 
 Some behavior only exists when a real agent is running. None of it is covered above.

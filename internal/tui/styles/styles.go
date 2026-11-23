@@ -5,7 +5,10 @@
 // investigation it belongs to.
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+)
 
 // Palette is the set of operation colors, indexed by an operation's ColorIdx.
 //
@@ -138,10 +141,8 @@ func Truncate(s string, width int) string {
 		return "…"
 	}
 
-	runes := []rune(s)
-	for len(runes) > 0 && lipgloss.Width(string(runes))+1 > width {
-		runes = runes[:len(runes)-1]
-	}
-
-	return string(runes) + "…"
+	// One pass, where dropping a rune at a time and measuring what was left
+	// was quadratic in the length: a card cuts several lines on every redraw,
+	// and an agent's last message can run to thousands of characters.
+	return ansi.Truncate(s, width, "…")
 }

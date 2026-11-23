@@ -60,7 +60,7 @@ func (s *Service) SaveMemory(ctx context.Context, req api.SaveMemoryRequest) ([]
 		return nil, err
 	}
 	if ms.IsReview() {
-		if parent, ok := s.store.Snapshot().Mission(ms.ReviewOf); ok {
+		if parent, ok := s.store.Mission(ms.ReviewOf); ok {
 			repos, err = mission.MissionRepos(op, parent)
 			if err != nil {
 				return nil, err
@@ -316,7 +316,7 @@ type memoryQueryEvent struct {
 func (s *Service) recordMemoryQuery(q memory.Query, results int) error {
 	event := memoryQueryEvent{At: s.now().UTC(), Tool: "unknown", Keywords: q.Keywords, Repo: q.Repo, SourceMission: q.Mission, Operation: q.Operation, Kind: q.Kind, Limit: q.Limit, Results: results}
 	if q.CallerMission != "" {
-		if ms, ok := s.store.Snapshot().Mission(mission.MissionID(q.CallerMission)); ok {
+		if ms, ok := s.store.Mission(mission.MissionID(q.CallerMission)); ok {
 			event.Mission = string(ms.ID)
 			event.Tool = string(ms.Tool)
 		}

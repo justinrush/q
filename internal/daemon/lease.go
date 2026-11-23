@@ -297,7 +297,7 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 	s.keepTaken(id)
 
 	if s.holds(ms) {
-		current, _ := s.store.Snapshot().Mission(id)
+		current, _ := s.store.Mission(id)
 
 		return current, nil
 	}
@@ -308,7 +308,7 @@ func (s *Service) Take(ctx context.Context, id mission.MissionID) (mission.Missi
 				s.warn("exchanging state after taking a mission", "mission", id, "error", err)
 			}
 
-			if taken, ok := s.store.Snapshot().Mission(id); ok && s.holds(taken) {
+			if taken, ok := s.store.Mission(id); ok && s.holds(taken) {
 				return taken, nil
 			}
 		}
@@ -351,7 +351,7 @@ func (s *Service) keepTaken(id mission.MissionID) {
 // it is replaced. The new one is given the brief, and told where the mission
 // came from when it came from the other machine.
 func (s *Service) TakeFresh(ctx context.Context, id mission.MissionID) (mission.Mission, error) {
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
@@ -440,7 +440,7 @@ func (s *Service) Release(ctx context.Context, id mission.MissionID) (mission.Mi
 		return mission.Mission{}, fmt.Errorf("%w: %s could not be released", ErrConflict, ms.Name)
 	}
 
-	released, _ := s.store.Snapshot().Mission(id)
+	released, _ := s.store.Mission(id)
 
 	return released, nil
 }

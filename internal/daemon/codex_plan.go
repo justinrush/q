@@ -73,7 +73,7 @@ func (s *Service) failCodexPlan(ms mission.Mission, cause error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	// Record failure first: late Stop/UserPromptSubmit events must not unpause it.
-	current, exists := s.store.Snapshot().Mission(ms.ID)
+	current, exists := s.store.Mission(ms.ID)
 	if !exists || current.HookEpoch != ms.HookEpoch || current.AgentSessionID != ms.AgentSessionID {
 		return fmt.Errorf("%w: Codex session changed during handoff", ErrConflict)
 	}
@@ -133,7 +133,7 @@ func freshPlanEvidence(ms mission.Mission) bool {
 // It repairs missed approval hooks and survives a restart between approval and
 // the first verified implementation turn.
 func (s *Service) reconcileCodexPlan(id mission.MissionID) {
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if !ok || !codexHandoff(ms) || !ms.Running() || !s.holds(ms) || ms.PlanFailed() {
 		return
 	}
@@ -213,7 +213,7 @@ func (s *Service) runCodexHandoff(ctx context.Context, ms mission.Mission) (miss
 	}
 	relaunched, launchErr := s.relaunch(ctx, ms.ID, "") // ControlledTurn suppresses a positional prompt.
 	if launchErr != nil {
-		current, _ := s.store.Snapshot().Mission(ms.ID)
+		current, _ := s.store.Mission(ms.ID)
 		if current.ID != "" {
 			ms = current
 		}
@@ -264,7 +264,7 @@ func (s *Service) verifyCodexHandoff(ctx context.Context, ms mission.Mission) (m
 		reading, found, readErr := s.runtimes[mission.ToolCodex].Read(ctx, ms)
 		if readErr == nil && found {
 			s.applyRuntimeReading(ms.ID, reading)
-			ms, _ = s.store.Snapshot().Mission(ms.ID)
+			ms, _ = s.store.Mission(ms.ID)
 			if freshPlanEvidence(ms) {
 				if !settingsMatch(ms) {
 					return fail(settingsMismatch(ms))

@@ -77,8 +77,8 @@ func (s *Service) PublishChildResult(id mission.MissionID, report string) (missi
 	if err != nil {
 		return child, err
 	}
-	child, _ = s.store.Snapshot().Mission(id)
-	parent, _ = s.store.Snapshot().Mission(child.ParentMissionID)
+	child, _ = s.store.Mission(id)
+	parent, _ = s.store.Mission(child.ParentMissionID)
 	s.announce(child)
 	s.announce(parent)
 	return child, nil

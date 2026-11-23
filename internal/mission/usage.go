@@ -57,6 +57,10 @@ type UsageSlice struct {
 // and a pricing table. It is not a bill: a session running under a subscription
 // is not charged per token at all, and the table can lag a price change. The
 // number is for comparing missions against each other.
+//
+// A Usage is a value: its maps and slices are never modified once it is stored,
+// so copies of a mission or an analytics record share them. Code that wants to
+// change one edits a [Usage.Clone] or builds a new one, as [Usage.Plus] does.
 type Usage struct {
 	Breakdown []UsageSlice           `json:"breakdown,omitempty"`
 	PerModel  map[string]ModelTokens `json:"perModel,omitempty"`

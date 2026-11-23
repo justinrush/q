@@ -426,7 +426,7 @@ func (s *Service) CreateMission(req api.CreateMissionRequest) (mission.Mission, 
 		return mission.Mission{}, err
 	}
 
-	stored, _ := s.store.Snapshot().Mission(id)
+	stored, _ := s.store.Mission(id)
 	s.announce(stored)
 
 	return stored, nil

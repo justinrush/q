@@ -133,7 +133,7 @@ func (s *Service) Send(ctx context.Context, id mission.MissionID) (mission.Missi
 
 	s.tendSend(ctx, pinned)
 
-	current, _ := s.store.Snapshot().Mission(id)
+	current, _ := s.store.Mission(id)
 
 	return current, nil
 }
@@ -344,7 +344,7 @@ func (s *Service) adoptSent(ctx context.Context, snap mission.Snapshot) {
 // clearOpposingPin removes a pin that names the other host, so a mission taken
 // here is not sent straight back.
 func (s *Service) clearOpposingPin(id mission.MissionID) {
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if !ok || !s.pinnedElsewhere(ms) {
 		return
 	}

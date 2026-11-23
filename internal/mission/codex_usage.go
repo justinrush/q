@@ -2,6 +2,7 @@ package mission
 
 import (
 	"maps"
+	"reflect"
 	"time"
 )
 
@@ -25,9 +26,15 @@ type CodexResponse struct {
 
 // CodexUsage maps local rollout paths to their measured responses. A nil entry
 // remembers a discovered path that has not yet been measured.
+//
+// A checkpoint is never modified once it is on a mission: whoever changes one
+// builds a new one and assigns it ([CodexUsage.Clone], then edit). Snapshot
+// copies rely on that and share the checkpoint rather than copying it, because
+// a long Codex mission's runs to thousands of responses and the snapshot is
+// copied several times a second.
 type CodexUsage map[string]map[string]CodexResponse
 
-// Clone isolates the checkpoint from concurrent store readers.
+// Clone returns a copy that may be modified.
 func (u CodexUsage) Clone() CodexUsage {
 	if u == nil {
 		return nil
@@ -41,6 +48,12 @@ func (u CodexUsage) Clone() CodexUsage {
 
 // Equal compares checkpoints without depending on map iteration order.
 func (u CodexUsage) Equal(other CodexUsage) bool {
+	// Snapshot copies share a checkpoint, so the commonest comparison is of a
+	// checkpoint with itself.
+	if len(u) == len(other) && reflect.ValueOf(u).UnsafePointer() == reflect.ValueOf(other).UnsafePointer() {
+		return true
+	}
+
 	return maps.EqualFunc(u, other, maps.Equal[map[string]CodexResponse, map[string]CodexResponse])
 }
 
