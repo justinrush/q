@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/justinrush/q/internal/mission"
-	"slices"
 	"sync"
 )
 
@@ -72,6 +71,12 @@ func (h *Hub) drop(id int) {
 // waited on, because this runs on the path that applies hook events and stalling
 // it would let one wedged client freeze the whole board.
 func (h *Hub) Broadcast(event string, payload any) {
+	// Encoding a mission is most of the cost of a broadcast, and with no board
+	// open, which is most of the time, nobody would read it.
+	if h.Subscribers() == 0 {
+		return
+	}
+
 	frame, err := encodeFrame(event, payload)
 	if err != nil {
 		return
@@ -130,24 +135,42 @@ func encodeFrame(event string, payload any) ([]byte, error) {
 	return frame, nil
 }
 
+// boardPayload is what a client is sent of the board: by the stream, and in
+// every JSON reply.
+//
 // Conversation artifacts travel in durable state and peer exchange, not on
 // every board refresh. Large tool outputs must not exhaust the SSE frame limit.
+//
+// The Codex usage checkpoint stays home too. It is one record per response the
+// agent ever made, which on a long Codex mission runs to megabytes, and only
+// the daemon's meter reads it: a client is shown Usage, its sum.
 func boardPayload(payload any) any {
-	strip := func(m mission.Mission) mission.Mission {
-		m.ToolHandoff.Plan = ""
-		m.ToolHandoff.Conversation = ""
-		return m
-	}
 	switch value := payload.(type) {
 	case mission.Mission:
-		return strip(value)
+		return clientMission(value)
+	case []mission.Mission:
+		return clientMissions(value)
 	case mission.Snapshot:
-		value.Missions = slices.Clone(value.Missions)
-		for i, m := range value.Missions {
-			value.Missions[i] = strip(m)
-		}
+		value.Missions = clientMissions(value.Missions)
 		return value
 	default:
 		return payload
 	}
+}
+
+func clientMission(m mission.Mission) mission.Mission {
+	m.ToolHandoff.Plan = ""
+	m.ToolHandoff.Conversation = ""
+	m.CodexUsage = nil
+
+	return m
+}
+
+func clientMissions(missions []mission.Mission) []mission.Mission {
+	out := make([]mission.Mission, len(missions))
+	for i, m := range missions {
+		out[i] = clientMission(m)
+	}
+
+	return out
 }

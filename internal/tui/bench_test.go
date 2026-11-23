@@ -36,6 +36,7 @@ func wire(snap mission.Snapshot) mission.Snapshot {
 	for i := range snap.Missions {
 		snap.Missions[i].ToolHandoff.Plan = ""
 		snap.Missions[i].ToolHandoff.Conversation = ""
+		snap.Missions[i].CodexUsage = nil
 	}
 
 	return snap
