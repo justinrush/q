@@ -1,16 +1,36 @@
 package mission
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/justinrush/q/internal/paths"
 )
+
+const (
+	// defaultFlushDelay bounds how long a deferred mutation stays only in
+	// memory. Everything deferred is re-derived from the agents' runtimes after
+	// a restart, so losing at most this much of it costs nothing lasting.
+	defaultFlushDelay = 5 * time.Second
+
+	// maxEventsLog is the size at which the event log is rotated.
+	maxEventsLog = 16 << 20
+)
+
+// quietLabels are mutations too frequent and too short-lived to be worth an
+// event-log line. The state they produce is still persisted.
+var quietLabels = map[string]bool{
+	"mission.runtime_status":      true,
+	"mission.reconcile":           true,
+	"mission.runtime_unavailable": true,
+}
 
 // Store owns q's persisted state.
 //
@@ -19,11 +39,48 @@ import (
 // the CLI, the hook bridge, and the reconciler arrives through the daemon's HTTP
 // API and is serialized here, so the multi-writer coordination an embedded
 // database would provide has nothing to coordinate.
+//
+// The state is kept in two files. Closed missions, which are most of the bytes
+// and almost never change, live in ClosedStateFile and are rewritten only when
+// that set changes; everything else lives in StateFile. Each write is a whole
+// file replaced atomically, with the predecessor kept as a hard-linked backup
+// so keeping it costs no write.
 type Store struct {
 	mu   sync.RWMutex
 	dirs paths.Dirs
 	snap Snapshot
 	now  func() time.Time
+
+	// enc is snap encoded, so a mutation that changes nothing is recognized
+	// without writing.
+	enc encoded
+	// diskClosed is what ClosedStateFile holds, and diskClosedIDs the missions
+	// in it.
+	diskClosed    []byte
+	diskClosedIDs map[MissionID]bool
+
+	// dirty says snap is ahead of the disk, waiting on a deferred flush.
+	dirty        bool
+	flushPending bool
+	flushDelay   time.Duration
+	flushErr     error
+	closed       bool
+
+	events     *os.File
+	eventsSize int64
+}
+
+// encoded is a snapshot as its two files hold it.
+type encoded struct {
+	hot    []byte
+	closed []byte
+}
+
+// closedState is the content of ClosedStateFile.
+type closedState struct {
+	SchemaVersion int                           `json:"schemaVersion"`
+	Missions      []Mission                     `json:"missions"`
+	Analytics     map[MissionID]AnalyticsRecord `json:"analytics,omitempty"`
 }
 
 // StoreOption configures a Store.
@@ -34,9 +91,14 @@ func WithStoreClock(now func() time.Time) StoreOption {
 	return func(s *Store) { s.now = now }
 }
 
+// WithFlushDelay replaces how long a deferred mutation waits to be written.
+func WithFlushDelay(d time.Duration) StoreOption {
+	return func(s *Store) { s.flushDelay = d }
+}
+
 // Open loads the state file, creating an empty one if absent.
 func Open(dirs paths.Dirs, opts ...StoreOption) (*Store, error) {
-	s := &Store{dirs: dirs, now: time.Now}
+	s := &Store{dirs: dirs, now: time.Now, flushDelay: defaultFlushDelay}
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -45,12 +107,24 @@ func Open(dirs paths.Dirs, opts ...StoreOption) (*Store, error) {
 		return nil, err
 	}
 
-	snap, err := load(dirs)
+	snap, diskClosed, err := load(dirs)
+	if err != nil {
+		return nil, err
+	}
+
+	enc, err := encode(snap)
 	if err != nil {
 		return nil, err
 	}
 
 	s.snap = snap
+	s.enc = enc
+	s.diskClosed = diskClosed
+	s.diskClosedIDs = closedIDs(snap)
+
+	if diskClosed == nil {
+		s.diskClosedIDs = nil
+	}
 
 	if err := s.ensureIdentity(); err != nil {
 		return nil, err
@@ -86,11 +160,17 @@ func (s *Store) ensureIdentity() error {
 	snap.SchemaVersion = SchemaVersion
 	snap.UpdatedAt = s.now()
 
-	if err := s.persist(snap); err != nil {
+	enc, err := encode(snap)
+	if err != nil {
+		return err
+	}
+
+	if err := s.persist(snap, enc); err != nil {
 		return err
 	}
 
 	s.snap = snap
+	s.enc = enc
 
 	return nil
 }
@@ -142,8 +222,23 @@ func (s *Store) Snapshot() Snapshot {
 // is left exactly as it was, so a validation failure part-way through a
 // multi-step change cannot leave half of it applied. label describes the change
 // for the event log.
+//
+// A mutation that leaves the state exactly as it was writes nothing.
 func (s *Store) Mutate(label string, fn func(*Snapshot) error) error {
-	return s.mutate(label, fn, true)
+	return s.mutate(label, plain(fn), true, false)
+}
+
+// MutateDeferred is Mutate for frequent changes that a restart can afford to
+// lose: what an agent's runtime reports each second, say, which the next poll
+// after a restart reports again.
+//
+// The change is visible to Snapshot at once, but reaches the disk with the
+// next synchronous mutation or within the flush delay, whichever is first, so
+// a burst of them costs one write. fn returns urgent when this particular
+// change must not wait, such as a new agent session id a restart would
+// otherwise fail to recognize.
+func (s *Store) MutateDeferred(label string, fn func(*Snapshot) (urgent bool, err error)) error {
+	return s.mutate(label, fn, true, true)
 }
 
 // Apply is Mutate for state that arrived already decided: a peer's merged
@@ -155,7 +250,12 @@ func (s *Store) Mutate(label string, fn func(*Snapshot) error) error {
 // its edit a second time and send it straight back as a newer one, which the
 // peer would count again.
 func (s *Store) Apply(label string, fn func(*Snapshot) error) error {
-	return s.mutate(label, fn, false)
+	return s.mutate(label, plain(fn), false, false)
+}
+
+// plain adapts a mutation function that is never urgent.
+func plain(fn func(*Snapshot) error) func(*Snapshot) (bool, error) {
+	return func(snap *Snapshot) (bool, error) { return true, fn(snap) }
 }
 
 // ErrUnchanged is returned by a mutation function to say it found nothing to
@@ -167,13 +267,15 @@ func (s *Store) Apply(label string, fn func(*Snapshot) error) error {
 // thousand times to record that nothing happened.
 var ErrUnchanged = errors.New("unchanged")
 
-// mutate is the single write path behind Mutate and Apply.
-func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) error {
+// mutate is the single write path behind Mutate, MutateDeferred and Apply.
+func (s *Store) mutate(label string, fn func(*Snapshot) (bool, error), stamped, deferrable bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	next := s.snap.Clone()
-	if err := fn(&next); err != nil {
+
+	urgent, err := fn(&next)
+	if err != nil {
 		if errors.Is(err, ErrUnchanged) {
 			return nil
 		}
@@ -181,51 +283,345 @@ func (s *Store) mutate(label string, fn func(*Snapshot) error, stamped bool) err
 		return err
 	}
 
+	now := s.now()
+
 	next.SchemaVersion = SchemaVersion
-	next.UpdatedAt = s.now()
+	// Held at its old value until the change is known to be real, so that an
+	// unchanged snapshot encodes to exactly what it did before.
+	next.UpdatedAt = s.snap.UpdatedAt
 
 	// A mutation may not rewrite who this host is.
 	next.Self.ID = s.snap.Self.ID
 
 	if stamped {
-		stamp(s.snap, &next, next.UpdatedAt)
+		stamp(s.snap, &next, now)
 	}
 
 	next.captureAnalytics(s.snap)
 
-	if err := s.persist(next); err != nil {
+	hot, closed := split(next)
+
+	enc, err := encodeParts(hot, closed)
+	if err != nil {
 		return err
 	}
 
-	s.snap = next
+	if bytes.Equal(enc.hot, s.enc.hot) && bytes.Equal(enc.closed, s.enc.closed) {
+		return nil
+	}
 
-	s.appendEvent(label, next.UpdatedAt)
+	next.UpdatedAt = now
+	hot.UpdatedAt = now
+
+	if enc.hot, err = marshalState(hot); err != nil {
+		return err
+	}
+
+	if deferrable && !urgent && !s.closed {
+		s.snap = next
+		s.enc = enc
+		s.dirty = true
+		s.scheduleFlush()
+	} else {
+		if err := s.persist(next, enc); err != nil {
+			return err
+		}
+
+		s.snap = next
+		s.enc = enc
+		s.dirty = false
+	}
+
+	s.appendEvent(label, now)
 
 	return nil
 }
 
-// persist writes the snapshot durably, keeping the previous version as a backup.
-func (s *Store) persist(snap Snapshot) error {
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding state: %w", err)
+// scheduleFlush arranges for a deferred mutation to reach the disk.
+func (s *Store) scheduleFlush() {
+	if s.flushPending {
+		return
 	}
 
-	data = append(data, '\n')
+	s.flushPending = true
 
-	// Keep the outgoing file as the backup before replacing it, so a snapshot
-	// that somehow encodes badly still leaves a recoverable predecessor.
-	if err := copyFile(s.dirs.StateFile(), s.dirs.BackupFile()); err != nil {
+	time.AfterFunc(s.flushDelay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+
+		s.flushPending = false
+
+		if err := s.flushLocked(); err != nil {
+			// Try again later; Flush reports the failure to whoever asks.
+			s.scheduleFlush()
+		}
+	})
+}
+
+// Flush writes any deferred mutation now.
+func (s *Store) Flush() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.flushLocked()
+}
+
+func (s *Store) flushLocked() error {
+	if !s.dirty {
+		return nil
+	}
+
+	if err := s.persist(s.snap, s.enc); err != nil {
+		s.flushErr = err
+
 		return err
 	}
 
-	return writeAtomic(s.dirs.StateFile(), data)
+	s.dirty = false
+	s.flushErr = nil
+
+	return nil
 }
 
-// appendEvent records an accepted mutation. A failure here is logged into the
-// file itself on the next successful write and never fails the mutation: the
-// event log is an audit aid, not the source of truth.
+// Close writes any deferred mutation and releases the event log. Mutations
+// after Close are written synchronously.
+func (s *Store) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.closed = true
+	err := s.flushLocked()
+
+	if s.events != nil {
+		_ = s.events.Close()
+		s.events = nil
+	}
+
+	return err
+}
+
+// persist writes the snapshot durably, keeping each file's previous version as
+// a backup.
+//
+// The closed-mission file is written only when its content changed, and is
+// written so that no mission is ever absent from both files: missions newly
+// closed reach it before they leave the main file, and missions reopened stay
+// in it until the main file holds them. Where both hold a mission, the main
+// file's copy wins on load.
+func (s *Store) persist(snap Snapshot, enc encoded) error {
+	if bytes.Equal(enc.closed, s.diskClosed) {
+		return writeWithBackup(s.dirs.StateFile(), s.dirs.BackupFile(), enc.hot)
+	}
+
+	ids := closedIDs(snap)
+
+	var reopened []Mission
+
+	for _, ms := range snap.Missions {
+		if !ms.Status.Terminal() && s.diskClosedIDs[ms.ID] {
+			reopened = append(reopened, ms)
+		}
+	}
+
+	if len(reopened) > 0 {
+		_, closed := split(snap)
+		closed.Missions = append(closed.Missions, reopened...)
+
+		interim, err := json.Marshal(closed)
+		if err != nil {
+			return fmt.Errorf("encoding closed missions: %w", err)
+		}
+
+		if err := writeWithBackup(s.dirs.ClosedStateFile(), s.dirs.ClosedBackupFile(), interim); err != nil {
+			return err
+		}
+	} else if err := writeWithBackup(s.dirs.ClosedStateFile(), s.dirs.ClosedBackupFile(), enc.closed); err != nil {
+		return err
+	}
+
+	if err := writeWithBackup(s.dirs.StateFile(), s.dirs.BackupFile(), enc.hot); err != nil {
+		return err
+	}
+
+	if len(reopened) > 0 {
+		if err := writeAtomic(s.dirs.ClosedStateFile(), enc.closed); err != nil {
+			return err
+		}
+	}
+
+	s.diskClosed = enc.closed
+	s.diskClosedIDs = ids
+
+	return nil
+}
+
+// split divides a snapshot into what each file holds: closed missions and
+// their analytics in one, everything else in the other.
+func split(snap Snapshot) (Snapshot, closedState) {
+	hot := snap
+	hot.Missions = make([]Mission, 0, len(snap.Missions))
+	closed := closedState{SchemaVersion: snap.SchemaVersion}
+	live := map[MissionID]bool{}
+
+	for _, ms := range snap.Missions {
+		if ms.Status.Terminal() {
+			closed.Missions = append(closed.Missions, ms)
+
+			continue
+		}
+
+		hot.Missions = append(hot.Missions, ms)
+		live[ms.ID] = true
+	}
+
+	if snap.Analytics != nil {
+		hot.Analytics = map[MissionID]AnalyticsRecord{}
+
+		for id, rec := range snap.Analytics {
+			if live[id] {
+				hot.Analytics[id] = rec
+
+				continue
+			}
+
+			if closed.Analytics == nil {
+				closed.Analytics = map[MissionID]AnalyticsRecord{}
+			}
+
+			closed.Analytics[id] = rec
+		}
+	}
+
+	return hot, closed
+}
+
+// merge reassembles a snapshot from its two files. The main file's copy of a
+// mission wins over the closed file's.
+func merge(hot Snapshot, closed closedState) Snapshot {
+	if len(closed.Missions) == 0 && len(closed.Analytics) == 0 {
+		return hot
+	}
+
+	seen := make(map[MissionID]bool, len(hot.Missions))
+	for _, ms := range hot.Missions {
+		seen[ms.ID] = true
+	}
+
+	for _, ms := range closed.Missions {
+		if !seen[ms.ID] {
+			hot.Missions = append(hot.Missions, ms)
+		}
+	}
+
+	// Missions are kept in the order they were created.
+	sort.SliceStable(hot.Missions, func(i, j int) bool {
+		return hot.Missions[i].CreatedAt.Before(hot.Missions[j].CreatedAt)
+	})
+
+	if len(closed.Analytics) > 0 {
+		analytics := make(map[MissionID]AnalyticsRecord, len(closed.Analytics)+len(hot.Analytics))
+		for id, rec := range closed.Analytics {
+			analytics[id] = rec
+		}
+
+		for id, rec := range hot.Analytics {
+			analytics[id] = rec
+		}
+
+		hot.Analytics = analytics
+	}
+
+	return hot
+}
+
+// closedIDs lists the closed missions in a snapshot.
+func closedIDs(snap Snapshot) map[MissionID]bool {
+	ids := map[MissionID]bool{}
+
+	for _, ms := range snap.Missions {
+		if ms.Status.Terminal() {
+			ids[ms.ID] = true
+		}
+	}
+
+	return ids
+}
+
+// encode renders a snapshot as its two files.
+func encode(snap Snapshot) (encoded, error) {
+	hot, closed := split(snap)
+
+	return encodeParts(hot, closed)
+}
+
+func encodeParts(hot Snapshot, closed closedState) (encoded, error) {
+	hotData, err := marshalState(hot)
+	if err != nil {
+		return encoded{}, err
+	}
+
+	closedData, err := json.Marshal(closed)
+	if err != nil {
+		return encoded{}, fmt.Errorf("encoding closed missions: %w", err)
+	}
+
+	return encoded{hot: hotData, closed: append(closedData, '\n')}, nil
+}
+
+// marshalState encodes the main state file. It is compact: indentation added a
+// third to every write for a file people rarely read.
+func marshalState(snap Snapshot) ([]byte, error) {
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return nil, fmt.Errorf("encoding state: %w", err)
+	}
+
+	return append(data, '\n'), nil
+}
+
+// writeWithBackup replaces path with data, first keeping the current file as
+// backup.
+//
+// The backup is a hard link to the outgoing file rather than a copy, so keeping
+// it writes nothing: the atomic replacement below gives path a new inode and
+// leaves the old one to the backup. path itself is never absent.
+func writeWithBackup(path, backup string, data []byte) error {
+	if err := linkBackup(path, backup); err != nil {
+		return err
+	}
+
+	return writeAtomic(path, data)
+}
+
+// linkBackup points backup at path's current content, treating a missing
+// source as success so the first ever write has nothing to back up.
+func linkBackup(path, backup string) error {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+
+	if err := os.Remove(backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing %s: %w", backup, err)
+	}
+
+	if err := os.Link(path, backup); err == nil {
+		return nil
+	}
+
+	// A filesystem without hard links still gets a backup, at the old cost.
+	return copyFile(path, backup)
+}
+
+// appendEvent records an accepted mutation. A failure here never fails the
+// mutation: the event log is an audit aid, not the source of truth.
+//
+// The file stays open between events and is rotated once it grows past
+// maxEventsLog, keeping one predecessor.
 func (s *Store) appendEvent(label string, at time.Time) {
+	if quietLabels[label] {
+		return
+	}
+
 	entry, err := json.Marshal(struct {
 		At    time.Time `json:"at"`
 		Label string    `json:"label"`
@@ -234,56 +630,139 @@ func (s *Store) appendEvent(label string, at time.Time) {
 		return
 	}
 
-	f, err := os.OpenFile(s.dirs.EventsFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.FileMode)
-	if err != nil {
+	if s.events == nil && !s.openEvents() {
 		return
 	}
-	defer func() { _ = f.Close() }()
 
-	_, _ = f.Write(append(entry, '\n'))
+	if s.eventsSize >= maxEventsLog {
+		_ = s.events.Close()
+		s.events = nil
+
+		if err := os.Rename(s.dirs.EventsFile(), s.dirs.EventsArchiveFile()); err != nil {
+			return
+		}
+
+		if !s.openEvents() {
+			return
+		}
+	}
+
+	n, _ := s.events.Write(append(entry, '\n'))
+	s.eventsSize += int64(n)
 }
 
-// load reads the state file, falling back to the backup when the primary is
-// unreadable or corrupt.
-func load(dirs paths.Dirs) (Snapshot, error) {
-	snap, err := readSnapshot(dirs.StateFile())
+// openEvents opens the event log for appending.
+func (s *Store) openEvents() bool {
+	f, err := os.OpenFile(s.dirs.EventsFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, paths.FileMode)
+	if err != nil {
+		return false
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+
+		return false
+	}
+
+	s.events = f
+	s.eventsSize = info.Size()
+
+	return true
+}
+
+// load reads both state files, each falling back to its backup when it is
+// unreadable or corrupt. It also returns the closed file's bytes as read, nil
+// when it was absent or came from the backup.
+func load(dirs paths.Dirs) (Snapshot, []byte, error) {
+	hot, err := loadFile(dirs.StateFile(), dirs.BackupFile(), readSnapshot)
+	if err != nil {
+		return Snapshot{}, nil, err
+	}
+
+	closed, err := loadFile(dirs.ClosedStateFile(), dirs.ClosedBackupFile(), readClosed)
+	if err != nil {
+		return Snapshot{}, nil, err
+	}
+
+	var diskClosed []byte
+	if closed.fromPrimary {
+		diskClosed = closed.raw
+	}
+
+	return migrate(merge(hot.value, closed.value)), diskClosed, nil
+}
+
+// loaded is one file's decoded content.
+type loaded[T any] struct {
+	value       T
+	raw         []byte
+	fromPrimary bool
+}
+
+// loadFile reads path, falling back to backup when path is missing, empty or
+// corrupt. With neither present it returns the zero value.
+func loadFile[T any](path, backup string, read func(string) (T, []byte, error)) (loaded[T], error) {
+	value, raw, err := read(path)
 	if err == nil {
-		return migrate(snap), nil
+		return loaded[T]{value: value, raw: raw, fromPrimary: true}, nil
 	}
 
-	if errors.Is(err, os.ErrNotExist) {
-		return Snapshot{SchemaVersion: SchemaVersion}, nil
+	primaryMissing := errors.Is(err, os.ErrNotExist)
+
+	value, _, backupErr := read(backup)
+	if backupErr == nil {
+		return loaded[T]{value: value}, nil
 	}
 
-	backup, backupErr := readSnapshot(dirs.BackupFile())
-	if backupErr != nil {
-		// Report the original failure, not the backup's: the primary file is
-		// what the user needs to look at. Never silently start from empty here,
-		// which would discard recoverable state.
-		return Snapshot{}, fmt.Errorf("reading %s: %w (backup also unusable: %v)",
-			dirs.StateFile(), err, backupErr)
+	if primaryMissing && errors.Is(backupErr, os.ErrNotExist) {
+		return loaded[T]{}, nil
 	}
 
-	return migrate(backup), nil
+	if primaryMissing {
+		err = backupErr
+	}
+
+	// Report the original failure, not the backup's: the primary file is what
+	// the user needs to look at. Never silently start from empty here, which
+	// would discard recoverable state.
+	return loaded[T]{}, fmt.Errorf("reading %s: %w (backup also unusable: %v)", path, err, backupErr)
 }
 
-// readSnapshot decodes one state file.
-func readSnapshot(path string) (Snapshot, error) {
+// readSnapshot decodes the main state file.
+func readSnapshot(path string) (Snapshot, []byte, error) {
+	var snap Snapshot
+
+	data, err := readJSON(path, &snap)
+
+	return snap, data, err
+}
+
+// readClosed decodes the closed-mission file.
+func readClosed(path string) (closedState, []byte, error) {
+	var closed closedState
+
+	data, err := readJSON(path, &closed)
+
+	return closed, data, err
+}
+
+// readJSON decodes one state file into v, returning its bytes.
+func readJSON(path string, v any) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Snapshot{}, err
+		return nil, err
 	}
 
 	if len(data) == 0 {
-		return Snapshot{}, errors.New("file is empty")
+		return nil, errors.New("file is empty")
 	}
 
-	var snap Snapshot
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return Snapshot{}, fmt.Errorf("decoding JSON: %w", err)
+	if err := json.Unmarshal(data, v); err != nil {
+		return nil, fmt.Errorf("decoding JSON: %w", err)
 	}
 
-	return snap, nil
+	return data, nil
 }
 
 // migrate brings an older snapshot up to the current schema.
