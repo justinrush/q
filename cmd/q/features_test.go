@@ -12,7 +12,7 @@ func TestWriteFeatureFlagsPreservesOtherConfig(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`{"repos":{"roots":["/dev"]},"memory":{"enabled":true,"captureOnFinish":false},"featureFlags":{"memory":true}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFeatureFlags(path, false, true); err != nil {
+	if err := writeFeatureFlags(path, featureFlagsConfig{NestedMissions: true, DebriefPanes: true}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(path)
@@ -36,7 +36,7 @@ func TestWriteFeatureFlagsPreservesOtherConfig(t *testing.T) {
 	if err := json.Unmarshal(root["featureFlags"], &flags); err != nil {
 		t.Fatal(err)
 	}
-	if flags.Memory || !flags.NestedMissions {
+	if flags.Memory || !flags.NestedMissions || !flags.DebriefPanes {
 		t.Fatalf("flags: %+v", flags)
 	}
 }

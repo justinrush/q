@@ -8,19 +8,27 @@ import (
 	"path/filepath"
 
 	"github.com/justinrush/q/internal/paths"
+	"github.com/justinrush/q/internal/tui"
 	"github.com/spf13/cobra"
 )
 
 // saveFeatureFlags edits only the feature flag section of the active config.
-func saveFeatureFlags(ctx context.Context, memory, nested bool) error {
+func saveFeatureFlags(ctx context.Context, features tui.Features) error {
 	path := configPath()
 	if path == "" {
 		return fmt.Errorf("no configuration path is available")
 	}
-	if err := writeFeatureFlags(path, memory, nested); err != nil {
+	flags := featureFlagsConfig{
+		Memory:         features.Memory,
+		NestedMissions: features.NestedMissions,
+		DebriefPanes:   features.DebriefPanes,
+	}
+	if err := writeFeatureFlags(path, flags); err != nil {
 		return err
 	}
-	cfg.Features.Memory, cfg.Features.NestedMissions = memory, nested
+	cfg.Features.Memory = features.Memory
+	cfg.Features.NestedMissions = features.NestedMissions
+	cfg.Features.DebriefPanes = features.DebriefPanes
 	command := &cobra.Command{}
 	command.SetContext(ctx)
 	if err := restartDaemon(command); err != nil {
@@ -29,7 +37,7 @@ func saveFeatureFlags(ctx context.Context, memory, nested bool) error {
 	return nil
 }
 
-func writeFeatureFlags(path string, memory, nested bool) error {
+func writeFeatureFlags(path string, flags featureFlagsConfig) error {
 	root := map[string]json.RawMessage{}
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -40,11 +48,11 @@ func writeFeatureFlags(path string, memory, nested bool) error {
 			return err
 		}
 	}
-	flags, err := json.Marshal(featureFlagsConfig{Memory: memory, NestedMissions: nested})
+	encoded, err := json.Marshal(flags)
 	if err != nil {
 		return err
 	}
-	root["featureFlags"] = flags
+	root["featureFlags"] = encoded
 	delete(root, "memory")
 	data, err = json.MarshalIndent(root, "", "  ")
 	if err != nil {

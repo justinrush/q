@@ -40,6 +40,10 @@ type settings struct {
 type featureFlagsSettings struct {
 	Memory         bool
 	NestedMissions bool
+	// DebriefPanes splits an editor pane beside the agent for each repo a
+	// mission changed when its debrief is opened. Off by default, since each
+	// pane is a long-lived editor process.
+	DebriefPanes bool
 }
 
 // queueSettings configures how the daemon works through queued missions.
