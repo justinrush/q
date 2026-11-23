@@ -1,8 +1,9 @@
 // Package debrief opens a mission for human debrief.
 //
 // A debrief session is the mission's own tmux session, not a new one: the agent is still
-// sitting in it, so opening a debrief means attaching to the live conversation and
-// adding an editor pane for each repo the mission actually changed.
+// sitting in it, so opening a debrief means attaching to the live conversation. With
+// editor panes enabled it also adds an editor pane for each repo the mission actually
+// changed.
 package debrief
 
 import (
@@ -33,6 +34,7 @@ type Opener struct {
 	term   terminal.Opener
 	logger *slog.Logger
 	editor []string
+	panes  bool
 }
 
 // Option configures an Opener.
@@ -43,6 +45,13 @@ type Option func(*Opener)
 // path argument is needed.
 func WithEditor(argv []string) Option {
 	return func(o *Opener) { o.editor = argv }
+}
+
+// WithEditorPanes turns on the editor pane split beside the agent for each
+// changed repo. It is off by default: each pane is a long-lived editor process,
+// and a debrief without them is still the live conversation with the agent.
+func WithEditorPanes(enabled bool) Option {
+	return func(o *Opener) { o.panes = enabled }
 }
 
 // WithLogger sets where the opener reports problems it does not fail on.
@@ -163,7 +172,8 @@ func (o *Opener) touchedRepos(ctx context.Context, ms mission.Mission) ([]api.To
 }
 
 // arrangePanes adds an editor pane for each touched repo that does not already have
-// one, returning how many were created.
+// one, returning how many were created. It does nothing unless editor panes are
+// enabled.
 //
 // Idempotence is by recorded pane id cross-checked against the panes tmux actually
 // reports, so a pane the user closed is recreated while an existing one is left alone.
@@ -172,7 +182,7 @@ func (o *Opener) arrangePanes(
 	ms mission.Mission,
 	touched []api.Touched,
 ) (int, mission.Mission, error) {
-	if len(touched) == 0 {
+	if !o.panes || len(touched) == 0 {
 		return 0, ms, nil
 	}
 

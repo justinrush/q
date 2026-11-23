@@ -23,8 +23,8 @@ func buildOpenSubcommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "open <mission-id>",
 		Short: "Open a mission's debrief session",
-		Long: "Attach to a mission's live agent session and add an editor pane for each repo " +
-			"it changed.\n\n" +
+		Long: "Attach to a mission's live agent session. With featureFlags.debriefPanes on, " +
+			"also add an editor pane for each repo it changed.\n\n" +
 			"The session is the one the agent is already running in, so this joins the " +
 			"live conversation rather than starting anything. Repos with no changes get " +
 			"no pane.",

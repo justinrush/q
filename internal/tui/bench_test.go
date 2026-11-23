@@ -45,7 +45,7 @@ func wire(snap mission.Snapshot) mission.Snapshot {
 func benchApp(b *testing.B, snap mission.Snapshot, nested bool) *App {
 	b.Helper()
 
-	app := New(nil, Options{FeatureNestedMissions: nested})
+	app := New(nil, Options{Features: Features{NestedMissions: nested}})
 	app.Update(tea.WindowSizeMsg{Width: 200, Height: 50})
 	app.applySnapshot(wire(snap))
 

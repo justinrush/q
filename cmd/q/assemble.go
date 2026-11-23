@@ -138,6 +138,7 @@ func assembleService(
 		daemon.WithDebriefer(debrief.New(gitc, tmux, window,
 			debrief.WithLogger(logger),
 			debrief.WithEditor(s.Editor.Command),
+			debrief.WithEditorPanes(s.Features.DebriefPanes),
 		)),
 	)
 

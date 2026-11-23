@@ -54,6 +54,7 @@ func newTestOpener(t *testing.T) (*Opener, *runner.Fake) {
 		terminal.NewGhostty("/usr/bin/osascript", fake),
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 		WithEditor([]string{testEditor, "+Neotree"}),
+		WithEditorPanes(true),
 	), fake
 }
 
@@ -138,6 +139,40 @@ func TestOpenAddsPanesOnlyForTouchedRepos(t *testing.T) {
 
 	if updated.Work["azure-tf"].DebriefPaneID != "" {
 		t.Error("an untouched repo should get no pane")
+	}
+}
+
+// Editor panes are opt-in. Without them a debrief still reports what changed
+// and attaches to the agent, but splits nothing.
+func TestOpenAddsNoPanesByDefault(t *testing.T) {
+	opener, fake := newTestOpener(t)
+	opener.panes = false
+	ms := debriefMission(t)
+
+	expectTouched(fake, ms, "weave", " M main.go", "0")
+	expectTouched(fake, ms, "azure-tf", "", "0")
+
+	fake.Expect(tmuxBin+" -u has-session -t ="+session, "")
+	fake.Expect(tmuxBin+" -u list-clients -t ="+session+" -F #{client_tty}", "")
+
+	result, updated, err := opener.Open(t.Context(), ms, api.ModeAttach)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	if len(result.Touched) != 1 || result.PanesAdded != 0 || !result.Attached {
+		t.Fatalf("result = %+v, want weave touched, no panes, attached", result)
+	}
+
+	if updated.Work["weave"].DebriefPaneID != "" {
+		t.Errorf("a pane was recorded: %+v", updated.Work["weave"])
+	}
+
+	for _, argv := range fake.Argv() {
+		if strings.Contains(argv, "split-window") || strings.Contains(argv, "list-panes") ||
+			strings.Contains(argv, "select-layout") {
+			t.Errorf("unexpected pane command: %s", argv)
+		}
 	}
 }
 

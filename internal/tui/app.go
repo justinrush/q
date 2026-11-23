@@ -50,9 +50,8 @@ const (
 // cmd/q resolves these and hands them over, which is what keeps the TUI
 // testable without a home directory.
 type Options struct {
-	FeatureMemory         bool
-	FeatureNestedMissions bool
-	SaveFeatures          func(context.Context, bool, bool) error
+	Features     Features
+	SaveFeatures func(context.Context, Features) error
 	// AttachBin enables foreground attachment using this tmux executable.
 	AttachBin string
 	// Repos bounds the checkout search behind the repo picker.
@@ -140,7 +139,7 @@ type toast struct {
 func New(c *api.Client, opts Options) *App {
 	board := NewBoard()
 	board.SetHorizontal(opts.Horizontal)
-	board.nestedMissions = opts.FeatureNestedMissions
+	board.nestedMissions = opts.Features.NestedMissions
 
 	return &App{
 		client:      c,
@@ -241,8 +240,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, emit(toastMsg{text: message, err: true})
 		}
-		a.opts.FeatureMemory, a.opts.FeatureNestedMissions = m.memory, m.nested
-		a.board.nestedMissions = m.nested
+		a.opts.Features = m.features
+		a.board.nestedMissions = m.features.NestedMissions
 		return a, tea.Batch(a.fetchSnapshot(), a.startStream(), emit(toastMsg{text: "Features saved"}))
 	case modalDismissed:
 		return a, nil
@@ -346,7 +345,7 @@ func (a *App) handleGlobalKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case key.Matches(msg, a.keys.Quit):
 		return tea.Quit, true
 	case key.Matches(msg, a.keys.Features):
-		a.modal = newFeaturesModal(a.opts.FeatureMemory, a.opts.FeatureNestedMissions, a.opts.SaveFeatures, a.ctx())
+		a.modal = newFeaturesModal(a.opts.Features, a.opts.SaveFeatures, a.ctx())
 		return nil, true
 	case key.Matches(msg, a.keys.Help):
 		a.modal = newHelp(a.helpBody())

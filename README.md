@@ -105,7 +105,7 @@ Press `?` for the full keymap. The essentials:
 | `a` (Operations) | add an operation: a summary plus the repos it spans, named by fragment |
 | `n` (Board) | new mission, optionally with a model, effort, and additional repos; `ctrl+g` sets base branches, `ctrl+s` saves, `ctrl+r` launches |
 | `H` / `L` | move a card between lanes. Out of briefing launches the agent |
-| `enter` | open a debrief: attaches to the live agent and opens an editor per changed repo |
+| `enter` | open a debrief: attaches to the live agent (and, with `featureFlags.debriefPanes`, opens an editor pane per changed repo) |
 | `l` | open the selected card’s full launch error; scroll with `j`/`k` or Page Up/Down, `c` copies the full log, `t` queues a troubleshooting mission with the source brief and diagnostics, close with `esc` |
 | `←` / `→` | focus the previous/next lane |
 | `m` | send a message to a running agent |
@@ -306,7 +306,7 @@ machine, so it stays there when the laptop comes back, and its card is marked
   moves after.
 
 Opening a mission that runs on the other machine (`enter`, or `q open`) opens it
-there. That machine arranges the editor panes in the agent's own tmux session,
+there. That machine arranges any editor panes in the agent's own tmux session,
 on its own worktrees, and the laptop connects a terminal to that session over
 ssh. Every pane you split is on the machine the agent can see, so files the
 mirror does not carry, such as a review's ignored `.review/feedback.json`, are
@@ -542,7 +542,7 @@ settings without writing anything.
 | `agents.modelRefresh` | how often to re-ask each agent what it offers. Defaults to `6h` |
 | `agents.codex.configDir` | where codex keeps its configuration. q writes only its own profile there |
 | `agents.codex.profile` | the codex profile name q writes and selects |
-| `editor.command` | argv opened on each changed worktree in a debrief. Defaults to `$VISUAL`, `$EDITOR`, then `vi` |
+| `editor.command` | argv opened on each changed worktree in a debrief when `featureFlags.debriefPanes` is on. Defaults to `$VISUAL`, `$EDITOR`, then `vi` |
 | `terminal.mode` | `ghostty`, `current`, `command`, or `none` — see below |
 | `terminal.command` | the argv template for `command` mode |
 | `paths.dataDir` | overrides where state and mission worktrees live |
@@ -566,7 +566,18 @@ settings without writing anything.
 
 ### Terminal modes
 
-Opening a debrief joins the mission's existing tmux session:
+Opening a debrief joins the mission's existing tmux session. It does not split
+any extra panes unless `featureFlags.debriefPanes` is on, in which case q adds an
+`editor.command` pane beside the agent for each repo the mission changed. That
+flag is off by default because each pane is a long-lived editor process; toggle
+it with `F` on the board or in `~/.q-config.json`:
+
+```json
+{"featureFlags":{"debriefPanes":true}}
+```
+
+`terminal.mode` decides where the session is attached; `current` and `none`
+never open a new window:
 
 - **`current`** (the default on Linux and over SSH) attaches in the terminal running q.
   Inside tmux, Enter switches your client to the mission session; q keeps running in its
@@ -589,7 +600,7 @@ Opening a debrief joins the mission's existing tmux session:
   `["alacritty", "--working-directory", "{dir}", "-e", "{argv}"]`,
   `["gnome-terminal", "--working-directory={dir}", "--", "{argv}"]`.
 
-- **`none`** opens nothing. q arranges the panes and tells you the
+- **`none`** opens nothing. q arranges any panes and tells you the
   `tmux attach-session` line to run yourself.
 
 For a persistent remote board, start `tmux new-session -A -s q-board`, then run q.
@@ -1433,12 +1444,12 @@ the capture turn. Sending ordinary work to the agent cancels its pending finish.
 A changed run or lease invalidates the old capture token. Retries cannot duplicate
 a batch already saved under the same token.
 
-Memory capture follows the Memory feature switch. Both Memory and Nested missions
-start disabled. Press `F` on the board to toggle them and save; q restarts its
+Memory capture follows the Memory feature switch. Memory, Nested missions, and
+Debrief editor panes all start disabled. Press `F` on the board to toggle them and save; q restarts its
 daemon and reconnects. The equivalent configuration is:
 
 ```json
-{"featureFlags":{"memory":false,"nestedMissions":false}}
+{"featureFlags":{"memory":false,"nestedMissions":false,"debriefPanes":false}}
 ```
 
 Search requests are appended locally to `memory-queries.jsonl` in the same data

@@ -87,6 +87,7 @@ type reviewConfig struct {
 type featureFlagsConfig struct {
 	Memory         bool `json:"memory"`
 	NestedMissions bool `json:"nestedMissions"`
+	DebriefPanes   bool `json:"debriefPanes"`
 }
 
 type queueConfig struct {
@@ -364,6 +365,7 @@ func applyFile(out *settings, file fileConfig) {
 	if file.FeatureFlags != nil {
 		out.Features.Memory = file.FeatureFlags.Memory
 		out.Features.NestedMissions = file.FeatureFlags.NestedMissions
+		out.Features.DebriefPanes = file.FeatureFlags.DebriefPanes
 	}
 	if q := file.Queue; q != nil && q.MaxConcurrent > 0 {
 		out.Queue.MaxConcurrent = q.MaxConcurrent
@@ -678,13 +680,17 @@ func writeSampleConfig(w io.Writer, s settings) error {
 			},
 			ModelRefresh: refreshString(s.Agents.ModelRefresh),
 		},
-		Editor:       &editorConfig{Command: s.Editor.Command},
-		Terminal:     &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
-		Paths:        &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
-		TUI:          &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
-		Queue:        &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
-		FeatureFlags: &featureFlagsConfig{Memory: s.Features.Memory, NestedMissions: s.Features.NestedMissions},
-		Review:       &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
+		Editor:   &editorConfig{Command: s.Editor.Command},
+		Terminal: &terminalConfig{Mode: s.Terminal.Mode, Command: s.Terminal.Command},
+		Paths:    &pathsConfig{Data: s.Paths.Data, State: s.Paths.State},
+		TUI:      &tuiConfig{Mouse: &s.TUI.Mouse, Lanes: &s.TUI.Lanes},
+		Queue:    &queueConfig{MaxConcurrent: s.Queue.MaxConcurrent},
+		FeatureFlags: &featureFlagsConfig{
+			Memory:         s.Features.Memory,
+			NestedMissions: s.Features.NestedMissions,
+			DebriefPanes:   s.Features.DebriefPanes,
+		},
+		Review: &reviewConfig{Tool: s.Review.Tool, Model: s.Review.Model, Effort: s.Review.Effort},
 		Remote: &remoteConfig{
 			SSH:           s.Remote.SSH,
 			Bin:           s.Remote.Bin,
