@@ -14,7 +14,12 @@ import (
 // Auto-start tuning.
 const (
 	// startupTimeout bounds how long we wait for a spawned daemon to answer.
-	startupTimeout = 5 * time.Second
+	//
+	// The wait ends as soon as the daemon answers, so the bound only matters
+	// for a slow start: a large state, a backlog of spooled hooks, or a
+	// scanner reading every file the daemon opens. Giving up early there
+	// reports a daemon that is in fact coming up as one that failed.
+	startupTimeout = 30 * time.Second
 	// pollInterval is how often we retry the health check while waiting.
 	pollInterval = 50 * time.Millisecond
 )

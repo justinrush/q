@@ -3,6 +3,7 @@ package mission
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -377,5 +378,47 @@ func TestEventLogRotates(t *testing.T) {
 
 	if got := string(readFile(t, dirs.EventsFile())); !strings.Contains(got, "seed") || len(got) > 200 {
 		t.Errorf("new log = %q, want just the latest event", got)
+	}
+}
+
+// BenchmarkMutateLargeBoard measures one mutation on a board with many
+// finished missions. The store compares every mission on every mutation, so
+// this is what each hook and runtime reading costs as history accumulates.
+func BenchmarkMutateLargeBoard(b *testing.B) {
+	dirs := paths.Dirs{Data: b.TempDir(), State: b.TempDir()}
+
+	store, err := Open(dirs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	if err := store.Mutate("seed", func(s *Snapshot) error {
+		s.PutOperation(sampleOperation("Operation"))
+
+		for i := range 1500 {
+			m := ms(fmt.Sprintf("ms_%012d", i), StatusClosed, i)
+			m.Prompt = strings.Repeat("brief ", 200)
+			s.PutMission(m)
+		}
+
+		s.PutMission(ms("ms_live00000000", StatusActive, 0))
+
+		return nil
+	}); err != nil {
+		b.Fatal(err)
+	}
+
+	b.ResetTimer()
+
+	for i := range b.N {
+		if err := store.MutateDeferred("bench", func(s *Snapshot) (bool, error) {
+			m, _ := s.Mission("ms_live00000000")
+			m.WaitingFor = fmt.Sprint(i)
+			s.PutMission(m)
+
+			return false, nil
+		}); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
