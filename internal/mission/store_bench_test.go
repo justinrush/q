@@ -23,13 +23,16 @@ func eachStore(b *testing.B, run func(b *testing.B, store *mission.Store, live m
 	for _, board := range boards {
 		b.Run(board.name, func(b *testing.B) {
 			store, _ := missiontest.Store(b, missiontest.Board(board.shape))
+			b.ResetTimer()
 			run(b, store, missiontest.LiveID(0))
 		})
 	}
 
 	b.Run("real", func(b *testing.B) {
 		store, _ := missiontest.RealStore(b)
-		run(b, store, firstLive(b, store.Snapshot()))
+		live := firstLive(b, store.Snapshot())
+		b.ResetTimer()
+		run(b, store, live)
 	})
 }
 

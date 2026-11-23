@@ -31,13 +31,17 @@ func eachService(b *testing.B, run func(b *testing.B, svc *Service), opts ...Opt
 	for _, board := range benchBoards {
 		b.Run(board.name, func(b *testing.B) {
 			store, dirs := missiontest.Store(b, missiontest.Board(board.shape))
-			run(b, benchService(b, store, dirs, opts...))
+			svc := benchService(b, store, dirs, opts...)
+			b.ResetTimer()
+			run(b, svc)
 		})
 	}
 
 	b.Run("real", func(b *testing.B) {
 		store, dirs := missiontest.RealStore(b)
-		run(b, benchService(b, store, dirs, opts...))
+		svc := benchService(b, store, dirs, opts...)
+		b.ResetTimer()
+		run(b, svc)
 	})
 }
 
