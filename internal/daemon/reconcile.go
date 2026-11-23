@@ -379,11 +379,15 @@ func (s *Service) applyTimers(ms *mission.Mission, now time.Time) {
 func (s *Service) persistReconciled(before, ms mission.Mission) {
 	var updated mission.Mission
 
-	err := s.store.Mutate("mission.reconcile", func(snap *mission.Snapshot) error {
+	// Reconciliation reruns on a timer and after a restart, so only a lane
+	// change is worth a write of its own.
+	err := s.store.MutateDeferred("mission.reconcile", func(snap *mission.Snapshot) (bool, error) {
 		stored, ok := snap.Mission(ms.ID)
 		if !ok || !stored.UpdatedAt.Equal(before.UpdatedAt) || !sameReconciled(stored, before) {
-			return mission.ErrUnchanged
+			return false, mission.ErrUnchanged
 		}
+
+		laneChanged := stored.Status != ms.Status
 
 		// The snapshot still matches. Carry over only fields reconciliation owns.
 		stored.Status = ms.Status
@@ -397,7 +401,7 @@ func (s *Service) persistReconciled(before, ms mission.Mission) {
 		updated = stored
 		snap.PutMission(stored)
 
-		return nil
+		return laneChanged, nil
 	})
 	if err != nil {
 		s.warn("recording reconciliation", "error", err)

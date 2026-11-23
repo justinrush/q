@@ -84,7 +84,7 @@ func assembleService(
 	if err != nil {
 		logger.Warn("agent tooling is unavailable", "error", err)
 
-		return daemon.NewService(store, hub, dirs, opts...), func() {}, nil
+		return daemon.NewService(store, hub, dirs, opts...), closeStore(store, logger, func() {}), nil
 	}
 
 	run := runner.OS{Logger: logger}
@@ -141,7 +141,19 @@ func assembleService(
 		)),
 	)
 
-	return daemon.NewService(store, hub, dirs, opts...), stop, nil
+	return daemon.NewService(store, hub, dirs, opts...), closeStore(store, logger, stop), nil
+}
+
+// closeStore extends a service's cleanup to write the store's deferred changes
+// and release its event log.
+func closeStore(store *mission.Store, logger *slog.Logger, stop func()) func() {
+	return func() {
+		stop()
+
+		if err := store.Close(); err != nil {
+			logger.Warn("writing state on shutdown", "error", err)
+		}
+	}
 }
 
 // pairingOptions wires what sharing missions with another machine needs.
