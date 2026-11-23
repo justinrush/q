@@ -53,7 +53,8 @@ type Store struct {
 
 	// enc is snap encoded, so a mutation that changes nothing is recognized
 	// without writing.
-	enc encoded
+	enc   encoded
+	codec missionCodec
 	// diskClosed is what ClosedStateFile holds, and diskClosedIDs the missions
 	// in it.
 	diskClosed    []byte
@@ -112,7 +113,7 @@ func Open(dirs paths.Dirs, opts ...StoreOption) (*Store, error) {
 		return nil, err
 	}
 
-	enc, err := encode(snap)
+	enc, err := s.codec.encode(snap)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +161,7 @@ func (s *Store) ensureIdentity() error {
 	snap.SchemaVersion = SchemaVersion
 	snap.UpdatedAt = s.now()
 
-	enc, err := encode(snap)
+	enc, err := s.codec.encode(snap)
 	if err != nil {
 		return err
 	}
@@ -301,7 +302,7 @@ func (s *Store) mutate(label string, fn func(*Snapshot) (bool, error), stamped, 
 
 	hot, closed := split(next)
 
-	enc, err := encodeParts(hot, closed)
+	enc, err := s.codec.encodeParts(hot, closed)
 	if err != nil {
 		return err
 	}
@@ -313,7 +314,7 @@ func (s *Store) mutate(label string, fn func(*Snapshot) (bool, error), stamped, 
 	next.UpdatedAt = now
 	hot.UpdatedAt = now
 
-	if enc.hot, err = marshalState(hot); err != nil {
+	if enc.hot, err = s.codec.marshalState(hot); err != nil {
 		return err
 	}
 
@@ -545,38 +546,6 @@ func closedIDs(snap Snapshot) map[MissionID]bool {
 	}
 
 	return ids
-}
-
-// encode renders a snapshot as its two files.
-func encode(snap Snapshot) (encoded, error) {
-	hot, closed := split(snap)
-
-	return encodeParts(hot, closed)
-}
-
-func encodeParts(hot Snapshot, closed closedState) (encoded, error) {
-	hotData, err := marshalState(hot)
-	if err != nil {
-		return encoded{}, err
-	}
-
-	closedData, err := json.Marshal(closed)
-	if err != nil {
-		return encoded{}, fmt.Errorf("encoding closed missions: %w", err)
-	}
-
-	return encoded{hot: hotData, closed: append(closedData, '\n')}, nil
-}
-
-// marshalState encodes the main state file. It is compact: indentation added a
-// third to every write for a file people rarely read.
-func marshalState(snap Snapshot) ([]byte, error) {
-	data, err := json.Marshal(snap)
-	if err != nil {
-		return nil, fmt.Errorf("encoding state: %w", err)
-	}
-
-	return append(data, '\n'), nil
 }
 
 // writeWithBackup replaces path with data, first keeping the current file as
