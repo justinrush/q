@@ -384,7 +384,7 @@ func (s *Service) recordMirror(ms mission.Mission, provisioned mission.Mission, 
 		}
 	})
 
-	updated, ok := s.store.Snapshot().Mission(ms.ID)
+	updated, ok := s.store.Mission(ms.ID)
 	if !ok {
 		return ms
 	}

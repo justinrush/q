@@ -67,14 +67,10 @@ func (r AnalyticsRecord) Usage() Usage {
 }
 
 func cloneAnalytics(records map[MissionID]AnalyticsRecord) map[MissionID]AnalyticsRecord {
-	if records == nil {
-		return nil
-	}
-	out := make(map[MissionID]AnalyticsRecord, len(records))
-	for id, r := range records {
-		out[id] = r.Clone()
-	}
-	return out
+	// A record is replaced, never modified in place: whoever changes one edits
+	// its Clone. So a copy of the map can share them, and must, because the
+	// store copies the analytics of every mission that ever ran on every read.
+	return maps.Clone(records)
 }
 
 // captureAnalytics runs inside the same transaction as every state change. The

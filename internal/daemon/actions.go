@@ -489,7 +489,7 @@ func (s *Service) implementPlan(id mission.MissionID) {
 	ctx, cancel := context.WithTimeout(context.Background(), planSwitchTimeout)
 	defer cancel()
 
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if ok && ms.CrossToolPlan() && ms.ToolHandoff.State != mission.ToolHandoffVerified {
 		if _, err := s.approveToolPlan(ctx, ms); err != nil {
 			s.warn("tool handoff failed", "mission", id, "error", err)
@@ -501,7 +501,7 @@ func (s *Service) implementPlan(id mission.MissionID) {
 			return
 		}
 		defer s.planFlights.release(id)
-		ms, _ = s.store.Snapshot().Mission(id)
+		ms, _ = s.store.Mission(id)
 		if ms.PlanTransition.State != mission.PlanTransitionPending || !s.holds(ms) || ms.Status.Terminal() {
 			return
 		}
@@ -545,7 +545,7 @@ func (s *Service) Dispatch(
 	if controls > 1 {
 		return mission.Mission{}, fmt.Errorf("%w: choose only one memory finish action", ErrInvalid)
 	}
-	current, ok := s.store.Snapshot().Mission(id)
+	current, ok := s.store.Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
@@ -598,7 +598,7 @@ func (s *Service) Dispatch(
 
 // Message sends text to a mission's agent, wherever it is running.
 func (s *Service) Message(ctx context.Context, id mission.MissionID, text string) (mission.Mission, error) {
-	current, ok := s.store.Snapshot().Mission(id)
+	current, ok := s.store.Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}
@@ -636,7 +636,7 @@ func (s *Service) sessionAlive(ctx context.Context, ms mission.Mission) bool {
 
 // requireLaunched fetches a mission that has been started.
 func (s *Service) requireLaunched(id mission.MissionID) (mission.Mission, error) {
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if !ok {
 		return mission.Mission{}, fmt.Errorf("%w: mission %s", ErrNotFound, id)
 	}

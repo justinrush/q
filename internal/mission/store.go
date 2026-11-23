@@ -217,6 +217,20 @@ func (s *Store) Snapshot() Snapshot {
 	return s.snap.Clone()
 }
 
+// Mission returns a copy of one mission, without copying the rest of the
+// board as Snapshot does.
+func (s *Store) Mission(id MissionID) (Mission, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ms, ok := s.snap.Mission(id)
+	if !ok {
+		return Mission{}, false
+	}
+
+	return cloneMission(ms), true
+}
+
 // Mutate applies fn to the state and persists the result.
 //
 // fn receives a copy: if it returns an error, nothing is written and the store

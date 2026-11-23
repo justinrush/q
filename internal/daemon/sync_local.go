@@ -235,7 +235,7 @@ func (s *Service) clearLocal(id mission.MissionID) {
 // agent is resumed into the conversation it had, which is worth more than a
 // fresh start even though part of the story happened on another machine.
 func (s *Service) standDown(ctx context.Context, id mission.MissionID) {
-	ms, ok := s.store.Snapshot().Mission(id)
+	ms, ok := s.store.Mission(id)
 	if !ok || ms.TmuxSession == "" {
 		return
 	}

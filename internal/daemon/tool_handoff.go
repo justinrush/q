@@ -22,7 +22,7 @@ func (s *Service) approveToolPlan(ctx context.Context, ms mission.Mission) (miss
 	defer s.inflight.release(ms.ID)
 	ctx, cancel := context.WithTimeout(ctx, planSwitchTimeout)
 	defer cancel()
-	ms, _ = s.store.Snapshot().Mission(ms.ID)
+	ms, _ = s.store.Mission(ms.ID)
 	if !s.holds(ms) || ms.Status.Terminal() {
 		return ms, fmt.Errorf("%w: mission is not owned by this host", ErrConflict)
 	}
@@ -179,7 +179,7 @@ func (s *Service) observeToolDestination(ctx context.Context, ms mission.Mission
 				s.applyRuntimeReading(ms.ID, reading)
 			}
 		}
-		ms, _ = s.store.Snapshot().Mission(ms.ID)
+		ms, _ = s.store.Mission(ms.ID)
 		if ms.AgentSessionID != "" && (ms.Tool == mission.ToolCodex || ms.LastEventAt.After(ms.ToolHandoffStartedAt)) {
 			return ms, nil
 		}
@@ -274,7 +274,7 @@ func (s *Service) recoverToolDestination(ctx context.Context, ms mission.Mission
 			}
 			if found {
 				s.applyRuntimeReading(ms.ID, reading)
-				ms, _ = s.store.Snapshot().Mission(ms.ID)
+				ms, _ = s.store.Mission(ms.ID)
 			}
 		}
 	}
