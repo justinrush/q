@@ -77,18 +77,11 @@ func cloneMission(t Mission) Mission {
 	t.LocalBadges = slices.Clone(t.LocalBadges)
 	t.BaseBranches = maps.Clone(t.BaseBranches)
 	t.ChildReports = maps.Clone(t.ChildReports)
-	t.PriorToolUsage = t.PriorToolUsage.Clone()
-	t.Usage = t.Usage.Clone()
-	t.CodexUsage = t.CodexUsage.Clone()
+	// Usage values and the Codex checkpoint are shared, not copied: neither is
+	// ever modified in place (see their types). Together they are most of a busy
+	// board's size, and the snapshot is copied several times a second.
 
-	if t.UsageByHost != nil {
-		byHost := make(map[HostID]Usage, len(t.UsageByHost))
-		for host, usage := range t.UsageByHost {
-			byHost[host] = usage.Clone()
-		}
-
-		t.UsageByHost = byHost
-	}
+	t.UsageByHost = maps.Clone(t.UsageByHost)
 	t.ExtraRepos = slices.Clone(t.ExtraRepos)
 	t.LaunchRepos = slices.Clone(t.LaunchRepos)
 

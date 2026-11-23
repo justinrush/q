@@ -1,6 +1,7 @@
 package mission
 
 import (
+	"maps"
 	"reflect"
 	"time"
 )
@@ -39,12 +40,9 @@ type AnalyticsRecord struct {
 }
 
 func (r AnalyticsRecord) Clone() AnalyticsRecord {
-	r.Legacy = r.Legacy.Clone()
+	// Usage values are shared, not copied: see [Usage].
 	c := make(map[HostID]AnalyticsContribution, len(r.Contributions))
-	for host, v := range r.Contributions {
-		v.Usage = v.Usage.Clone()
-		c[host] = v
-	}
+	maps.Copy(c, r.Contributions)
 	r.Contributions = c
 	if r.StartedAt != nil {
 		t := *r.StartedAt
