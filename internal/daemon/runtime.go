@@ -105,16 +105,19 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 	var updated mission.Mission
 	var switchModel bool
 
-	err := s.store.Mutate("mission.runtime_status", func(snap *mission.Snapshot) error {
+	// The poll runs every second, and what it learns is learned again by the
+	// first poll after a restart, so most of it is written behind. What a
+	// restart could not recover is written at once: see runtimeUrgent.
+	err := s.store.MutateDeferred("mission.runtime_status", func(snap *mission.Snapshot) (bool, error) {
 		ms, ok := snap.Mission(id)
 		if !ok || ms.Status.Terminal() || !s.holds(ms) ||
 			reading.HookEpoch != 0 && reading.HookEpoch != ms.HookEpoch {
-			return mission.ErrUnchanged
+			return false, mission.ErrUnchanged
 		}
 
 		if ms.AgentSessionID != "" && ms.AgentSessionID != reading.SessionID &&
 			ms.AgentSessionID != reading.PreviousSessionID {
-			return mission.ErrUnchanged
+			return false, mission.ErrUnchanged
 		}
 
 		before := ms
@@ -138,7 +141,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		// the same every time. Saying so keeps the store from rewriting the
 		// whole state file several times a second to record nothing.
 		if sameRuntimeState(before, ms) && before.Finish == ms.Finish {
-			return mission.ErrUnchanged
+			return false, mission.ErrUnchanged
 		}
 
 		if ms.Status != before.Status {
@@ -152,7 +155,7 @@ func (s *Service) applyRuntimeReadingNow(id mission.MissionID, reading mission.R
 		updated = ms
 		snap.PutMission(ms)
 
-		return nil
+		return switchModel || runtimeUrgent(before, ms), nil
 	})
 	if err != nil {
 		s.warn("applying agent runtime status", "error", err)
@@ -283,6 +286,22 @@ func applyActivity(ms *mission.Mission, reading mission.Reading, now time.Time) 
 	case mission.ActivityUnknown:
 		return
 	}
+}
+
+// runtimeUrgent reports whether a runtime reading changed something that must
+// reach the disk at once rather than with the next flush.
+//
+// The session id above all: a restart that forgot a session switch would reject
+// every later reading as belonging to some other session. Lane, plan and
+// finish-capture changes are rare, and a board restarted onto a stale lane, or
+// a plan or capture step taken twice, is worse than the write they cost.
+func runtimeUrgent(before, after mission.Mission) bool {
+	return before.AgentSessionID != after.AgentSessionID ||
+		before.Status != after.Status ||
+		before.PlanApproved != after.PlanApproved ||
+		before.PlanPending != after.PlanPending ||
+		before.PlanTransition != after.PlanTransition ||
+		before.Finish != after.Finish
 }
 
 // sameRuntimeState reports whether a reading changed anything worth persisting.

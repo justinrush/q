@@ -97,10 +97,10 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 		switched bool
 	)
 
-	err := s.store.Mutate("mission.hook."+mission.HookEventSlug(payload.Event), func(snap *mission.Snapshot) error {
+	err := s.store.MutateDeferred("mission.hook."+mission.HookEventSlug(payload.Event), func(snap *mission.Snapshot) (bool, error) {
 		ms, ok := snap.Mission(id)
 		if !ok {
-			return nil
+			return false, mission.ErrUnchanged
 		}
 
 		now := s.now()
@@ -108,7 +108,7 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 		s.stabilizeApproval(ms, payload, &res, now)
 
 		if !res.Changed {
-			return nil
+			return false, mission.ErrUnchanged
 		}
 
 		next := res.Mission
@@ -130,7 +130,7 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 			!next.RunningTool().PlanSwitchesItself()
 		snap.PutMission(next)
 
-		return nil
+		return !routineHook(payload.Event) || switched || runtimeUrgent(ms, next), nil
 	})
 	if err != nil {
 		s.warn("applying a hook", "event", payload.Event, "error", err)
@@ -147,6 +147,13 @@ func (s *Service) applyReduction(id mission.MissionID, payload mission.HookEvent
 	if switched {
 		go s.implementPlan(id)
 	}
+}
+
+// routineHook reports whether a hook event is one an agent sends around every
+// tool call. Unless it moves the card, what it records can wait for the next
+// flush; every other hook is written at once.
+func routineHook(event string) bool {
+	return event == mission.EventPreToolUse || event == mission.EventPostToolUse
 }
 
 // stabilizeApproval damps a hook-reported approval for an agent whose own runtime

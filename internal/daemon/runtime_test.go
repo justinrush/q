@@ -464,3 +464,80 @@ func TestSteadyRuntimeReadingWritesNothing(t *testing.T) {
 		})
 	}
 }
+
+// readStoredMission reads a mission back from disk, as a restarted daemon would.
+func readStoredMission(t *testing.T, svc *Service, id mission.MissionID) mission.Mission {
+	t.Helper()
+
+	store, err := mission.Open(svc.dirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ms, ok := store.Snapshot().Mission(id)
+	if !ok {
+		t.Fatalf("mission %s is not on disk", id)
+	}
+
+	return ms
+}
+
+// A session switch must survive a restart that comes before the next flush:
+// the restarted poll would otherwise reject the new session as someone else's.
+func TestRuntimeSessionSwitchIsWrittenAtOnce(t *testing.T) {
+	svc := newTestService(t)
+	ms := seedCodexMission(t, svc, mission.StatusActive, "")
+	svc.apply(WithRuntime(mission.ToolCodex, fakeRuntime{
+		found:   true,
+		reading: mission.Reading{SessionID: "thr-2", PreviousSessionID: "thr-1", Activity: mission.ActivityBusy},
+	}))
+
+	svc.pollRuntimes(t.Context())
+
+	if got := readStoredMission(t, svc, ms.ID).AgentSessionID; got != "thr-2" {
+		t.Errorf("AgentSessionID on disk = %q, want thr-2", got)
+	}
+}
+
+// What the poll reports each second and would report again after a restart is
+// written behind, so a busy agent costs a write every few seconds at most.
+func TestRoutineRuntimeReadingIsWrittenBehind(t *testing.T) {
+	svc := newTestService(t)
+	ms := seedCodexMission(t, svc, mission.StatusActive, "")
+	settings := mission.TurnSettings{SessionID: "thr-1", Model: "gpt-observed", At: time.Now()}
+	svc.apply(WithRuntime(mission.ToolCodex, fakeRuntime{
+		found:   true,
+		reading: mission.Reading{SessionID: "thr-1", Activity: mission.ActivityBusy, Settings: settings},
+	}))
+
+	svc.pollRuntimes(t.Context())
+
+	if got, _ := svc.Snapshot().Mission(ms.ID); got.ObservedSettings.Model != "gpt-observed" {
+		t.Fatalf("reading not applied: %+v", got.ObservedSettings)
+	}
+
+	if got := readStoredMission(t, svc, ms.ID).ObservedSettings.Model; got != "" {
+		t.Errorf("routine reading written at once: model %q on disk", got)
+	}
+
+	if err := svc.store.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readStoredMission(t, svc, ms.ID).ObservedSettings.Model; got != "gpt-observed" {
+		t.Errorf("after flush, model on disk = %q", got)
+	}
+}
+
+// A hook for a mission q does not know must not rewrite the state.
+func TestHookForUnknownMissionWritesNothing(t *testing.T) {
+	svc := newTestService(t)
+	seedCodexMission(t, svc, mission.StatusActive, "")
+	settled := svc.Snapshot().UpdatedAt
+
+	svc.applyReduction("ms_000000000000", mission.HookEvent{Event: mission.EventPreToolUse})
+
+	if got := svc.Snapshot().UpdatedAt; !got.Equal(settled) {
+		t.Errorf("state rewritten by a hook that changed nothing: UpdatedAt %v, want %v", got, settled)
+	}
+}

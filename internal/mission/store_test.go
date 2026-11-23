@@ -2,6 +2,7 @@ package mission
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -366,8 +367,12 @@ func TestMutateAppendsToEventLog(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	for _, label := range []string{"operation.create", "mission.create", "mission.status"} {
-		if err := store.Mutate(label, func(s *Snapshot) error { return nil }); err != nil {
+	for i, label := range []string{"operation.create", "mission.create", "mission.status"} {
+		if err := store.Mutate(label, func(s *Snapshot) error {
+			s.PutOperation(sampleOperation(fmt.Sprintf("Operation %d", i)))
+
+			return nil
+		}); err != nil {
 			t.Fatalf("Mutate(%q): %v", label, err)
 		}
 	}

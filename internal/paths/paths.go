@@ -90,8 +90,18 @@ func (d Dirs) StateFile() string { return filepath.Join(d.Data, "state.json") }
 // BackupFile is the previous good snapshot, used to recover a corrupt state file.
 func (d Dirs) BackupFile() string { return filepath.Join(d.Data, "state.json.bak") }
 
+// ClosedStateFile holds the closed missions, kept apart from StateFile because
+// they rarely change and make up most of the state's size.
+func (d Dirs) ClosedStateFile() string { return filepath.Join(d.Data, "state-closed.json") }
+
+// ClosedBackupFile is the previous ClosedStateFile.
+func (d Dirs) ClosedBackupFile() string { return filepath.Join(d.Data, "state-closed.json.bak") }
+
 // EventsFile is the append-only log of accepted mutations, for audit and replay.
 func (d Dirs) EventsFile() string { return filepath.Join(d.Data, "events.ndjson") }
+
+// EventsArchiveFile is the previous EventsFile, kept after it is rotated.
+func (d Dirs) EventsArchiveFile() string { return filepath.Join(d.Data, "events.ndjson.1") }
 
 // MissionsDir holds one directory per mission, each containing that mission's worktrees.
 func (d Dirs) MissionsDir() string { return filepath.Join(d.Data, "missions") }
