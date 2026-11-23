@@ -3,6 +3,7 @@ package mission
 import (
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -55,6 +56,30 @@ func classOf(f reflect.StructField) fieldClass {
 	return fieldClass(f.Tag.Get(classTag))
 }
 
+// classFields caches, per struct type, the indices of the fields in each
+// class. The comparisons below run over every mission on every mutation, and
+// parsing struct tags each time was most of their cost.
+var classFields sync.Map // reflect.Type -> map[fieldClass][]int
+
+// fieldsOf returns the indices of typ's fields that declare class.
+func fieldsOf(typ reflect.Type, class fieldClass) []int {
+	if cached, ok := classFields.Load(typ); ok {
+		if byClass, ok := cached.(map[fieldClass][]int); ok {
+			return byClass[class]
+		}
+	}
+
+	byClass := map[fieldClass][]int{}
+	for i := range typ.NumField() {
+		c := classOf(typ.Field(i))
+		byClass[c] = append(byClass[c], i)
+	}
+
+	classFields.Store(typ, byClass)
+
+	return byClass[class]
+}
+
 // unclassified names every field of the shared types that declares no class,
 // or one q does not know.
 func unclassified() []string {
@@ -96,10 +121,8 @@ func copyClass[T any](dst *T, src T, class fieldClass) {
 	to := reflect.ValueOf(dst).Elem()
 	from := reflect.ValueOf(src)
 
-	for i := range to.NumField() {
-		if classOf(to.Type().Field(i)) == class {
-			to.Field(i).Set(from.Field(i))
-		}
+	for _, i := range fieldsOf(to.Type(), class) {
+		to.Field(i).Set(from.Field(i))
 	}
 }
 
@@ -107,10 +130,8 @@ func copyClass[T any](dst *T, src T, class fieldClass) {
 func zeroClass[T any](dst *T, class fieldClass) {
 	to := reflect.ValueOf(dst).Elem()
 
-	for i := range to.NumField() {
-		if classOf(to.Type().Field(i)) == class {
-			to.Field(i).SetZero()
-		}
+	for _, i := range fieldsOf(to.Type(), class) {
+		to.Field(i).SetZero()
 	}
 }
 
@@ -122,9 +143,8 @@ func zeroClass[T any](dst *T, class fieldClass) {
 func equalClass[T any](a, b T, class fieldClass) bool {
 	av, bv := reflect.ValueOf(a), reflect.ValueOf(b)
 
-	for i := range av.NumField() {
-		field := av.Type().Field(i)
-		if classOf(field) != class || field.Name == "UpdatedAt" {
+	for _, i := range fieldsOf(av.Type(), class) {
+		if av.Type().Field(i).Name == "UpdatedAt" {
 			continue
 		}
 

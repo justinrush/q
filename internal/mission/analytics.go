@@ -85,17 +85,34 @@ func (s *Snapshot) captureAnalytics(before Snapshot) {
 	if s.Analytics == nil {
 		s.Analytics = map[MissionID]AnalyticsRecord{}
 	}
+	live := make(map[MissionID]bool, len(s.Missions))
+	ops := operationIndex(s.Operations)
 	for _, ms := range s.Missions {
-		s.captureRecord(ms, *s, false)
+		live[ms.ID] = true
+		s.captureRecord(ms, ops, false)
 	}
+	var beforeOps map[OperationID]Operation
 	for _, ms := range before.Missions {
-		if _, ok := s.Mission(ms.ID); !ok {
-			s.captureRecord(ms, before, true)
+		if !live[ms.ID] {
+			if beforeOps == nil {
+				beforeOps = operationIndex(before.Operations)
+			}
+			s.captureRecord(ms, beforeOps, true)
 		}
 	}
 }
 
-func (s *Snapshot) captureRecord(ms Mission, source Snapshot, deleted bool) {
+// operationIndex maps operations by id, so a pass over every mission need not
+// search the operation list once for each.
+func operationIndex(ops []Operation) map[OperationID]Operation {
+	out := make(map[OperationID]Operation, len(ops))
+	for _, op := range ops {
+		out[op.ID] = op
+	}
+	return out
+}
+
+func (s *Snapshot) captureRecord(ms Mission, ops map[OperationID]Operation, deleted bool) {
 	old := s.Analytics[ms.ID]
 	// Its final record has already arrived; local cleanup must not replace it
 	// with a stale pre-deletion mission snapshot.
@@ -119,7 +136,7 @@ func (s *Snapshot) captureRecord(ms Mission, source Snapshot, deleted bool) {
 	next.SpecRev = ms.SpecRev
 	next.Lease = ms.Lease
 	next.Deleted = old.Deleted || deleted
-	if op, ok := source.Operation(ms.OperationID); ok {
+	if op, ok := ops[ms.OperationID]; ok {
 		next.OperationName = op.Name
 		next.OperationRev = op.Rev
 	}

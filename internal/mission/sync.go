@@ -281,10 +281,18 @@ func stamp(old Snapshot, next *Snapshot, now time.Time) {
 // stampOperations bumps the revision of every edited operation and buries the
 // deleted ones.
 func stampOperations(old Snapshot, next *Snapshot, now time.Time) {
+	previous := make(map[OperationID]Operation, len(old.Operations))
+	for _, op := range old.Operations {
+		previous[op.ID] = op
+	}
+
+	kept := make(map[OperationID]bool, len(next.Operations))
+
 	for i := range next.Operations {
 		op := &next.Operations[i]
+		kept[op.ID] = true
 
-		before, existed := old.Operation(op.ID)
+		before, existed := previous[op.ID]
 
 		switch {
 		case !existed:
@@ -295,20 +303,32 @@ func stampOperations(old Snapshot, next *Snapshot, now time.Time) {
 	}
 
 	for _, before := range old.Operations {
-		if _, ok := next.Operation(before.ID); !ok {
+		if !kept[before.ID] {
 			next.bury(TombstoneOperation, string(before.ID), now)
 		}
 	}
 }
 
 // stampMissions does the same for missions, and settles who holds each one.
+//
+// It runs on every mutation over every mission, so lookups go through an index:
+// searching the old snapshot once per mission made a mutation cost grow with
+// the square of the mission count.
 func stampMissions(old Snapshot, next *Snapshot, now time.Time) {
 	self := next.Self.ID
 
+	previous := make(map[MissionID]int, len(old.Missions))
+	for i, ms := range old.Missions {
+		previous[ms.ID] = i
+	}
+
+	kept := make(map[MissionID]bool, len(next.Missions))
+
 	for i := range next.Missions {
 		ms := &next.Missions[i]
+		kept[ms.ID] = true
 
-		before, existed := old.Mission(ms.ID)
+		at, existed := previous[ms.ID]
 		if !existed {
 			ms.SpecRev = max(ms.SpecRev, 1)
 
@@ -318,6 +338,8 @@ func stampMissions(old Snapshot, next *Snapshot, now time.Time) {
 
 			continue
 		}
+
+		before := old.Missions[at]
 
 		if !specEqual(before, *ms) {
 			ms.SpecRev = before.SpecRev + 1
@@ -331,7 +353,7 @@ func stampMissions(old Snapshot, next *Snapshot, now time.Time) {
 	}
 
 	for _, before := range old.Missions {
-		if _, ok := next.Mission(before.ID); !ok {
+		if !kept[before.ID] {
 			next.bury(TombstoneMission, string(before.ID), now)
 		}
 	}
